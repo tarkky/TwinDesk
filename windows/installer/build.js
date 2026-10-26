@@ -83,6 +83,10 @@ async function main() {
     if (fs.existsSync(from)) copy(from, path.join(STAGE, 'windows-helper', 'bin', f));
     else console.log('note: no windows-helper/bin/' + f + ' — no virtual camera there (build the helper with Visual Studio’s C++ tools)');
   }
+  // Remote › Real gamepad (gamepad.js): the Xbox 360 controller's feeder, likewise C++.
+  const pad = path.join(ROOT, 'windows-helper', 'bin', 'twindesk-pad.exe');
+  if (fs.existsSync(pad)) copy(pad, path.join(STAGE, 'windows-helper', 'bin', 'twindesk-pad.exe'));
+  else console.log('note: no windows-helper/bin/twindesk-pad.exe — no Real gamepad there (build the helper with Visual Studio’s C++ tools)');
   // A phone: its screen, apps and input go through adb and scrcpy-server (phone-bridge.js).
   if (!fs.existsSync(path.join(WIN, 'vendor', 'scrcpy-server'))) {
     copy(path.join(ROOT, 'mac', 'vendor', 'scrcpy-server'), path.join(STAGE, 'windows', 'vendor', 'scrcpy-server'));

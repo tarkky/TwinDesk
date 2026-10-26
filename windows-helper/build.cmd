@@ -52,3 +52,5 @@ set PSModulePath=
 powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0calls\pack.ps1" -Bin "%BIN%" || exit /b 1
 rem The virtual camera (windows/vcam.js), C++: built when Visual Studio's C++ tools are there.
 call "%~dp0vcam\build.cmd" || exit /b 1
+rem Real gamepad (windows/gamepad.js: Remote), C++ likewise.
+call "%~dp0pad\build.cmd" || exit /b 1

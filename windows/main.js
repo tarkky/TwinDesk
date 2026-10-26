@@ -436,7 +436,8 @@ function startPhone(server, pairing) {
   });
   btAudio.on('change', pushState);
   phoneViews.on('change', pushState);
-  phoneRemote = new PhoneRemote({ server: pl, helper, getSettings: () => settings, atHome: () => !kvm || kvm.mode === 'home', onChange: pushState });
+  phoneRemote = new PhoneRemote({ server: pl, helper, getSettings: () => settings, atHome: () => !kvm || kvm.mode === 'home', onChange: pushState,
+    loadPad: () => require('./gamepad'), save: saveSettings }); // Real gamepad: loaded when turned on
   viaWifi(phoneViews, 'openScreen', 'phone');
   viaWifi(phoneViews, 'openApp', 'phone');
   // On Wi-Fi after Bluetooth, wireless debugging takes a moment more: the window opens once it's up.

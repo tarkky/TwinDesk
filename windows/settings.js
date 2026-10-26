@@ -94,7 +94,8 @@ function normalize(s) {
       framegen: bool(mon.framegen, false), // in-between frames on the GPU (shared/framegen.js), off by default
     },
     // Remote tab (shared/phone-remote.js): the phone's Remote page moves the pointer and types here
-    remote: { allow: bool((s.remote || {}).allow, true) },
+    // Real gamepad (pad): its sticks and buttons as a controller here, off until turned on
+    remote: { allow: bool((s.remote || {}).allow, true), pad: bool((s.remote || {}).pad, false) },
     // Camera tab (shared/camshare.js): this computer's camera to the other one, off until turned
     // on; device: which camera (a deviceId), '' = the default one; virtual: the running camera's
     // picture also goes to the virtual camera (shared/vcam.js), off until turned on; rotate: its

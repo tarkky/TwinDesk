@@ -585,7 +585,9 @@ app.whenReady().then(() => {
   setupHub();
   svc.kvm.local = svc.phone.bridge;
   // The phone's Remote page: touchpad, keyboard and gamepad here, taken only with the mouse at home.
-  svc.phoneRemote = new PhoneRemote({ server: peer, helper: svc.helper, getSettings: () => settings, atHome: () => svc.kvm.mode === 'home', onChange: pushState });
+  // No Real gamepad: a virtual controller on macOS needs a DriverKit driver, which needs Apple's paid signing.
+  svc.phoneRemote = new PhoneRemote({ server: peer, helper: svc.helper, getSettings: () => settings, atHome: () => svc.kvm.mode === 'home', onChange: pushState,
+    padNote: 'A Mac can’t take a gamepad over Wi-Fi: macOS needs a signed DriverKit driver for that. Instead, on {name} turn on Remote › As a Bluetooth gamepad and pair it with this Mac in System Settings › Bluetooth: it works as a game controller with no driver' });
   svc.kvm.on('where', () => svc.phoneRemote.refresh());
   const blockEdge = svc.kvm.blockEdge;
   svc.kvm.blockEdge = () => blockEdge() || svc.phoneViews.focused; // moving inside the phone window never crosses

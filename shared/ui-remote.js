@@ -3,6 +3,9 @@
 // or a gamepad whose buttons press keys — moves this computer's pointer, clicks, scrolls and types
 // (shared/phone-remote.js). Its switch at the top lets it, on until turned off; it's taken only
 // while this computer's own mouse is at home (not on the phone or another computer: Cursor).
+// Real gamepad: the gamepad page as a real controller here (an Xbox 360 controller on Windows, a
+// uinput gamepad on Linux), its driver installed the first time it's turned on; the Mac says why
+// it can't and points to the phone's As a Bluetooth gamepad.
 'use strict';
 
 UI.tab({
@@ -25,9 +28,22 @@ UI.tab({
     const how = UI.row('On {name}', 'Open TwinDesk › Remote there, then Touchpad and keyboard or Gamepad. Its speed, tap to click and the gamepad’s keys are set there');
     const card = UI.card('{name} as a remote', [status, how]);
     const note = UI.note('warn', '');
-    body.append(note, card);
+    const padSwitch = UI.switch((v) => UI.api.setRemote({ pad: v }), { label: 'Real gamepad' });
+    const padRow = UI.row('Real gamepad', '', [padSwitch]);
+    const padNote = UI.note('info', '');
+    const padCard = UI.card('Gamepad', [padRow, padNote], { cls: 'keep-on' });
+    body.append(note, card, padCard);
     return (s) => {
       const r = s.remote || {};
+      const p = r.pad || {};
+      padSwitch.set(p.on);
+      padSwitch.disable(!p.supported || !!p.busy);
+      padRow.setHint(!p.supported ? 'Not on this computer'
+        : p.busy ? p.busy
+          : !p.on ? 'Off: the gamepad page’s sticks and buttons press keys (WASD, the mouse), as set on {name}'
+            : p.live ? `On: {name}’s gamepad page is a game controller here${p.name ? ` (${p.name})` : ''}`
+              : 'On: ready when {name} is connected');
+      padNote.set(p.message || '');
       status.setHint(!r.allow ? 'Off: {name}’s Remote page can’t move or type here'
         : r.why ? r.why
           : r.using ? 'In use: {name} is moving the pointer or typing here'

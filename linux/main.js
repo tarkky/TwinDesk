@@ -437,7 +437,8 @@ function startPhone(server, pairing) {
   phone.bridge.on('popup', (kind, text) => hud.show(kind, text));
   phoneViews = new PhoneViews({ bridge: phone.bridge, phone, getSettings: () => settings, server: pl, fileSend: fileDrop });
   phoneViews.vcam = vcam;
-  phoneRemote = new PhoneRemote({ server: pl, helper, getSettings: () => settings, atHome: () => !kvm || kvm.mode === 'home', onChange: pushState });
+  phoneRemote = new PhoneRemote({ server: pl, helper, getSettings: () => settings, atHome: () => !kvm || kvm.mode === 'home', onChange: pushState,
+    loadPad: () => require('./gamepad'), save: saveSettings }); // Real gamepad: loaded when turned on
   nowPlaying = new NowPlaying({ server: pl, cfg: () => settings.audio });
   nowPlaying.on('change', pushState);
   // Audio › Play phone sound here (Bluetooth): this computer as the phone's Bluetooth speaker (a2dp.js).

@@ -60,6 +60,8 @@ async function main() {
   copy(path.join(ROOT, 'linux-helper', 'bin', 'twindesk-wifiap'), path.join(STAGE, 'linux-helper', 'bin', 'twindesk-wifiap'));
   // Camera › Virtual camera's writer (vcam.js).
   copy(path.join(ROOT, 'linux-helper', 'bin', 'twindesk-vcam'), path.join(STAGE, 'linux-helper', 'bin', 'twindesk-vcam'));
+  // Remote › Real gamepad's writer (gamepad.js).
+  copy(path.join(ROOT, 'linux-helper', 'bin', 'twindesk-pad'), path.join(STAGE, 'linux-helper', 'bin', 'twindesk-pad'));
   // A phone: its screen, apps and input go through adb and scrcpy-server (phone-bridge.js).
   if (!fs.existsSync(path.join(LIN, 'vendor', 'scrcpy-server'))) {
     copy(path.join(ROOT, 'mac', 'vendor', 'scrcpy-server'), path.join(STAGE, 'linux', 'vendor', 'scrcpy-server'));

@@ -77,6 +77,8 @@
               $CC -O2 -Wall -Wextra -std=gnu11 linux-helper/wifiap/wifiap.c \
                 -o linux-helper/bin/twindesk-wifiap
 
+              $CC -O2 -Wall -Wextra -std=gnu11 linux-helper/pad/pad.c                 -o linux-helper/bin/twindesk-pad
+
               runHook postBuild
             '';
 
@@ -101,6 +103,7 @@
               cp linux-helper/bin/macshare-linuxhelper "$share/linux-helper/bin/"
               cp linux-helper/bin/macshare-linuxhelper-multi "$share/linux-helper/bin/"
               cp linux-helper/bin/twindesk-wifiap "$share/linux-helper/bin/"
+              cp linux-helper/bin/twindesk-pad "$share/linux-helper/bin/"
               cp linux-helper/bin/twindesk-wifiap "$out/libexec/twindesk-wifiap"
 
               # Install twindesk-connector helper and polkit policy for Extend virtual display

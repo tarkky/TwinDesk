@@ -5,7 +5,9 @@
 // remote.state (whether it takes input from here). opts come from Remote.kt.
 //   touchpad  slide = move (never clicks) · tap = left click ("Tap to click", on unless switched off)
 //             hold = right click · two fingers = scroll · two-finger tap = right click
-//   gamepad   left stick = four keys (WASD) · right stick = the mouse · buttons = their keys
+//   gamepad   left stick = four keys (WASD) · right stick = the mouse · buttons = their keys; or, when
+//             the computer takes it as a real gamepad (remote.state pad: Remote › Real gamepad there),
+//             the sticks, triggers and buttons as they are (remote.pad)
 'use strict';
 
 (() => {
@@ -15,6 +17,7 @@
   let opts = { mode: 'pad', name: 'the computer', me: 'this device', connected: true, os: '', ble: false, speed: 1, tap: true, smooth: true, pad: {} };
   let allowed = null; // the computer's remote.state
   let why = ''; // …and why it doesn't take it now
+  let real = false; // the computer takes the gamepad as a real one (remote.pad)
 
   // ---- keys and buttons held down: counted (two controls may press the same key), all let go on close ----
   const held = new Map(); // KeyboardEvent.code or 'Mouse0'/'Mouse1'/'Mouse2' -> how many controls hold it
@@ -38,6 +41,7 @@
   function releaseAll() {
     for (const code of [...held.keys()]) { held.set(code, 1); press(code, false); }
     dropMods();
+    padRelease();
   }
 
   // ---- what the page shows ----
@@ -45,7 +49,7 @@
     const game = opts.mode === 'gamepad';
     document.body.classList.toggle('gamepad', game);
     document.body.classList.toggle('pad', !game);
-    $('name').textContent = `${game ? 'Gamepad' : 'Touchpad'} · ${opts.name}`;
+    $('name').textContent = `${game ? (real ? 'Gamepad (real)' : 'Gamepad') : 'Touchpad'} · ${opts.name}`;
     const note = !opts.connected ? `Not connected to ${opts.name}. Connect from TwinDesk’s Overview.`
       : allowed === false ? (why || `${opts.name} doesn’t take input from ${opts.me}. On ${opts.name}, turn on Remote in TwinDesk.`)
         : allowed === null && (opts.os === 'mac' || opts.os === 'linux') ? `${opts.name} doesn’t answer the remote: update TwinDesk there.`
@@ -62,6 +66,7 @@
       allowed = m.allowed === true;
       why = typeof m.why === 'string' ? m.why : '';
       if (!allowed) releaseAll();
+      if ((m.pad === true) !== real) { releaseAll(); real = m.pad === true; } // what's held goes the old way
     } else return;
     render();
   };
@@ -303,7 +308,56 @@
 
   // ---- gamepad ----
   const padKey = (id) => (opts.pad && opts.pad[id]) || '';
-  for (const el of document.querySelectorAll('#game button[data-id]')) holdable(el, () => padKey(el.dataset.id));
+
+  // As a real gamepad: its whole state (remote.pad) on change, at most every 8 ms (33 through Bluetooth).
+  const BIT = { a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, back: 6, start: 7, l3: 8, r3: 9, up: 10, down: 11, left: 12, right: 13 };
+  const gp = { b: 0, lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0 };
+  let padSent = 0, padTimer = 0;
+  function padSend() {
+    if (padTimer) return;
+    const wait = (opts.ble ? BLE_MS : 8) - (performance.now() - padSent);
+    if (wait > 0) { padTimer = setTimeout(() => { padTimer = 0; padSend(); }, wait); return; }
+    padSent = performance.now();
+    send({ t: 'remote.pad', ...gp });
+  }
+  function padSet(k, v, k2, v2) { // one value, or a stick's two
+    if (gp[k] === v && (!k2 || gp[k2] === v2)) return;
+    gp[k] = v;
+    if (k2) gp[k2] = v2;
+    padSend();
+  }
+  function padRelease() {
+    if (!gp.b && !gp.lx && !gp.ly && !gp.rx && !gp.ry && !gp.lt && !gp.rt) return;
+    Object.assign(gp, { b: 0, lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0 });
+    padSend();
+  }
+  function padButton(id, down) {
+    if (id === 'lt' || id === 'rt') return padSet(id, down ? 1 : 0);
+    if (id in BIT) padSet('b', down ? gp.b | (1 << BIT[id]) : gp.b & ~(1 << BIT[id]));
+  }
+
+  // A button: its key, or as a real gamepad's button; let go the way it was pressed.
+  for (const el of document.querySelectorAll('#game button[data-id]')) {
+    const id = el.dataset.id;
+    let pressed = null; // the key, or true (the real gamepad's)
+    const up = () => {
+      if (pressed == null) return;
+      el.classList.remove('down');
+      if (pressed === true) padButton(id, false); else press(pressed, false);
+      pressed = null;
+    };
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      if (pressed != null) return;
+      pressed = real ? true : padKey(id);
+      el.classList.add('down');
+      if (pressed === true) padButton(id, true); else press(pressed, true);
+      tick();
+    });
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+  }
 
   // A stick: where the finger is from its middle, -1..1 each way.
   function stick(el, onMove) {
@@ -346,6 +400,7 @@
     if (on) { lsHeld[id] = padKey(id); press(lsHeld[id], true); } else { press(lsHeld[id], false); delete lsHeld[id]; }
   }
   stick($('ls'), (x, y) => {
+    if (real) return padSet('lx', x, 'ly', y);
     const T = 0.4;
     lsSet('lsUp', y < -T);
     lsSet('lsDown', y > T);
@@ -365,6 +420,7 @@
     rsFrame = requestAnimationFrame(rsStep);
   }
   stick($('rs'), (x, y) => {
+    if (real) { rs = { x: 0, y: 0 }; return padSet('rx', x, 'ry', y); }
     rs = { x, y };
     if (!rsFrame && Math.hypot(x, y) >= 0.12) rsFrame = requestAnimationFrame(rsStep);
   });

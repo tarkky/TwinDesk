@@ -121,7 +121,8 @@ function setupIpc(ctx) {
   // Remote tab: the phone's Remote page here (shared/phone-remote.js).
   handle('setRemote', (m) => {
     if (!m || typeof m !== 'object' || !ctx.phoneRemote) return;
-    ctx.phoneRemote.setAllow(m.allow === true);
+    if ('allow' in m) ctx.phoneRemote.setAllow(m.allow === true);
+    if ('pad' in m) ctx.phoneRemote.setPad(m.pad === true); // Real gamepad
     ctx.save();
   });
   handle('setTerminal', (partial) => {

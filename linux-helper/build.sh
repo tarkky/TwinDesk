@@ -22,4 +22,6 @@ ${CC:-gcc} -O2 -Wall -Wextra -std=gnu11 -DMULTI src/*.c -o bin/macshare-linuxhel
 ${CC:-gcc} -O2 -Wall -Wextra -std=gnu11 wifiap/wifiap.c -o bin/twindesk-wifiap
 # Camera › Virtual camera's writer (linux/vcam.js): frames to the v4l2loopback device.
 ${CC:-gcc} -O2 -Wall -Wextra -std=gnu11 vcam/vcam.c -o bin/twindesk-vcam
-echo "built bin/macshare-linuxhelper bin/macshare-linuxhelper-multi bin/twindesk-wifiap bin/twindesk-vcam"
+# Remote › Real gamepad's writer (linux/gamepad.js): a uinput gamepad.
+${CC:-gcc} -O2 -Wall -Wextra -std=gnu11 pad/pad.c -o bin/twindesk-pad
+echo "built bin/macshare-linuxhelper bin/macshare-linuxhelper-multi bin/twindesk-wifiap bin/twindesk-vcam bin/twindesk-pad"

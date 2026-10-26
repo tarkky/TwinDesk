@@ -5,9 +5,15 @@
 // switch is on (settings.remote.allow, on until turned off) and this computer's own mouse is at home
 // (not driving the phone or another computer). When it isn't taken, the phone is told why
 // (remote.state {allowed, why}), and the Remote tab says it too.
+// Real gamepad (settings.remote.pad, off until turned on): the gamepad page's sticks, triggers and
+// buttons as a real controller here instead of keys (remote.pad; remote.state {pad: true} while it's
+// taken). Its driver (windows/gamepad.js, linux/gamepad.js) is loaded only when it's turned on and
+// installs what it needs the first time; its feed process runs only while the phone is connected.
 //
 // server: the phone's session (on('t:<type>'), on('closed'), current, sendToClient);
-// helper: helper.js; getSettings(); atHome(): this computer's mouse is its own; onChange().
+// helper: helper.js; getSettings(); atHome(): this computer's mouse is its own; onChange();
+// loadPad() → the pad driver {check() → {supported, installed, message}, install(), feed(onExit) →
+// ChildProcess}, or none where there's no way (padNote says why); save().
 'use strict';
 
 const P = require('./protocol.js');
@@ -19,9 +25,30 @@ const BUTTONS = new Set(Object.values(P.BUTTON));
 const CODE = /^[A-Za-z0-9]{1,32}$/; // KeyboardEvent.code names (KeyA, ArrowLeft, MediaPlayPause…)
 const USING_MS = 3000; // input this recent: "in use now"
 
+// remote.pad -> the feed's 12 bytes: u16 buttons, i16 lx ly rx ry (y down), u8 lt rt, little-endian.
+function padBytes(m) {
+  const b = Buffer.alloc(12);
+  const axis = (v) => Math.round(Math.max(-1, Math.min(1, Number(v) || 0)) * 32767);
+  const trigger = (v) => Math.round(Math.max(0, Math.min(1, Number(v) || 0)) * 255);
+  b.writeUInt16LE((Number(m.b) >>> 0) & 0x3fff, 0);
+  b.writeInt16LE(axis(m.lx), 2);
+  b.writeInt16LE(axis(m.ly), 4);
+  b.writeInt16LE(axis(m.rx), 6);
+  b.writeInt16LE(axis(m.ry), 8);
+  b[10] = trigger(m.lt);
+  b[11] = trigger(m.rt);
+  return b;
+}
+const PAD_ZERO = padBytes({});
+
 class PhoneRemote {
-  constructor({ server, helper, getSettings, atHome, onChange = () => {} }) {
-    Object.assign(this, { server, helper, getSettings, atHome, onChange });
+  constructor({ server, helper, getSettings, atHome, onChange = () => {}, loadPad = null, padNote = '', save = () => {} }) {
+    Object.assign(this, { server, helper, getSettings, atHome, onChange, loadPad, padNote, save });
+    this.pad = null; // the driver, once Real gamepad was turned on
+    this.padProc = null; // its feed process
+    this.padBusy = ''; // 'Checking…', 'Installing…'
+    this.padMessage = ''; // why it isn't working
+    this.padSupported = !!loadPad;
     this.held = false; // keys or buttons the phone may still hold down here
     this.refusedAt = 0;
     this.lastInput = 0;
@@ -29,6 +56,7 @@ class PhoneRemote {
     const on = (t, fn) => server.on(`t:${t}`, (m) => isPhone(server.current) && fn(m || {}));
     on(T.REMOTE_HELLO, () => {
       this.opened = true;
+      if (this.padOn) this._padStart();
       this._state();
       this.onChange();
     });
@@ -39,6 +67,7 @@ class PhoneRemote {
     on(T.REMOTE_WHEEL, (m) => this._ev({ t: T.K_WHEEL, dx: num(m.dx, 4000), dy: num(m.dy, 4000), mode: 'pixel' }));
     on(T.REMOTE_KEY_DOWN, (m) => typeof m.code === 'string' && CODE.test(m.code) && this._ev({ t: T.K_KEY_DOWN, code: m.code }));
     on(T.REMOTE_KEY_UP, (m) => typeof m.code === 'string' && CODE.test(m.code) && this._ev({ t: T.K_KEY_UP, code: m.code }));
+    on(T.REMOTE_PAD, (m) => this.padProc && this._take() && this.padProc.stdin.write(padBytes(m)));
     on(T.REMOTE_RELEASE, () => {
       this.release();
       this.opened = false; // the page closed
@@ -47,6 +76,7 @@ class PhoneRemote {
     // The phone went away holding a key (Wi-Fi dropped mid-press): let it go here.
     server.on('closed', () => {
       this.release();
+      this._padStop();
       this.opened = false;
       this.onChange();
     });
@@ -73,6 +103,74 @@ class PhoneRemote {
     this.onChange();
   }
 
+  get padOn() {
+    const r = this.getSettings().remote;
+    return !!(r && r.pad === true);
+  }
+
+  // The Remote tab's Real gamepad switch: on installs the driver the first time.
+  setPad(on) {
+    const s = this.getSettings();
+    s.remote = { ...(s.remote || {}), pad: !!on };
+    this.save();
+    this.padMessage = '';
+    if (on) this._padStart();
+    else this._padStop();
+    this._state();
+    this.onChange();
+  }
+
+  async _padStart() {
+    if (this.padProc || this.padBusy || !this.loadPad || !isPhone(this.server.current)) return;
+    const say = (busy, message = this.padMessage) => {
+      this.padBusy = busy;
+      this.padMessage = message;
+      this.onChange();
+    };
+    try {
+      if (!this.pad) this.pad = this.loadPad();
+      say('Checking…');
+      const c = await this.pad.check();
+      if (!c.supported) {
+        this.padSupported = false;
+        return say('', c.message || 'Not on this computer');
+      }
+      if (!c.installed) {
+        say('Installing…');
+        await this.pad.install();
+      }
+      say('');
+    } catch (e) {
+      // Not installed (the prompt declined, the download failed): off again, and why.
+      const s = this.getSettings();
+      s.remote = { ...(s.remote || {}), pad: false };
+      this.save();
+      say('', e.message || String(e));
+      this._state();
+      return;
+    }
+    if (!this.padOn || this.padProc || !isPhone(this.server.current)) return;
+    const p = this.pad.feed((code) => {
+      if (this.padProc !== p) return;
+      this.padProc = null;
+      if (this.padOn && code !== 0 && code !== null) this.padMessage = 'The controller stopped: turn Real gamepad off and on again';
+      this._state();
+      this.onChange();
+    });
+    this.padProc = p;
+    this._state();
+    this.onChange();
+  }
+
+  _padStop() {
+    const p = this.padProc;
+    if (!p) return;
+    this.padProc = null; // unplugged when its stdin closes
+    p.stdin.write(PAD_ZERO);
+    p.stdin.end();
+    setTimeout(() => { try { p.kill(); } catch {} }, 2000);
+  }
+
   // This computer's mouse went to another device or came back: the phone hears whether it's taken.
   refresh() {
     this._state();
@@ -82,10 +180,11 @@ class PhoneRemote {
   _state() {
     if (!isPhone(this.server.current)) return;
     const why = this.why;
-    this.server.sendToClient({ t: T.REMOTE_STATE, allowed: !why, why });
+    this.server.sendToClient({ t: T.REMOTE_STATE, allowed: !why, why, pad: !why && !!this.padProc });
   }
 
-  _ev(ev) {
+  // Input from the phone is taken now (or the phone hears why not); it's "in use".
+  _take() {
     if (this.why) {
       // Tell the phone (it says why on its Remote page), at most once a second.
       const now = Date.now();
@@ -94,18 +193,24 @@ class PhoneRemote {
         this._state();
         this.onChange();
       }
-      return;
+      return false;
     }
     const was = this.lastInput;
     this.lastInput = Date.now();
     if (this.lastInput - was > USING_MS) this.onChange(); // "in use now"
     clearTimeout(this.usingTimer);
     this.usingTimer = setTimeout(() => this.onChange(), USING_MS + 100);
+    return true;
+  }
+
+  _ev(ev) {
+    if (!this._take()) return;
     if (ev.t === T.K_DOWN || ev.t === T.K_KEY_DOWN) this.held = true;
     this.helper.send('inject', { ev });
   }
 
   release() {
+    if (this.padProc) this.padProc.stdin.write(PAD_ZERO);
     if (!this.held) return;
     this.held = false;
     if (this.atHome()) this.helper.send('releaseAll');
@@ -118,8 +223,16 @@ class PhoneRemote {
       why: this.why,
       opened: this.opened && isPhone(this.server.current),
       using: Date.now() - this.lastInput < USING_MS,
+      pad: {
+        on: this.padOn,
+        supported: this.padSupported,
+        live: !!this.padProc,
+        busy: this.padBusy,
+        message: this.padSupported ? this.padMessage : (this.padMessage || this.padNote),
+        name: this.pad ? this.pad.name : '',
+      },
     };
   }
 }
 
-module.exports = { PhoneRemote };
+module.exports = { PhoneRemote, padBytes };
