@@ -620,7 +620,7 @@ app.whenReady().then(() => {
     if (svc.phoneRemote || settings.remote.allow === false) return svc.phoneRemote || null;
     const { PhoneRemote } = require('../shared/phone-remote.js');
     svc.phoneRemote = new PhoneRemote({ server: peer, helper: svc.helper, getSettings: () => settings, atHome: () => svc.kvm.mode === 'home', onChange: pushState,
-      padNote: 'A Mac can’t take a gamepad over Wi-Fi: macOS needs a signed DriverKit driver for that. Instead, on {name} turn on Remote › As a Bluetooth gamepad and pair it with this Mac in System Settings › Bluetooth: it works as a game controller with no driver' });
+      padNote: 'Real gamepad isn’t on the Mac. To use {name} as a gamepad, turn on Remote › As a Bluetooth gamepad on {name}, then pair it with this Mac in System Settings › Bluetooth' });
     svc.phoneRemote.refresh(); // its page may be open already
     return svc.phoneRemote;
   };
