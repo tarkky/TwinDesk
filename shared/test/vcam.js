@@ -112,6 +112,36 @@ function fakeDriver({ installed = false, fail = '' } = {}) {
     ipcMain.removeAllListeners('vcam:frame');
   }
 
+  // Targets (the Mac: TwinDesk Camera or OBS Virtual Camera): each checked, removed and fed as itself.
+  {
+    const seen = [];
+    const driver = Object.assign(fakeDriver(), {
+      targets: [{ value: 'twindesk', label: 'TwinDesk Camera' }, { value: 'obs', label: 'OBS Virtual Camera' }],
+      nameOf: (t) => (t === 'obs' ? 'OBS Virtual Camera' : 'TwinDesk Camera'),
+      removable: (t) => t !== 'obs',
+      async check(t) { seen.push(t); return t === 'obs' ? { supported: true, installed: true } : { supported: false, message: 'Not in this build' }; },
+    });
+    const feed = driver.feed;
+    driver.feed = (onExit, t) => { seen.push('feed:' + t); return feed(onExit); };
+    const cfg = { virtual: true, target: 'nope' };
+    const v = new VirtualCam({ driver, cfg: () => cfg, save: () => {}, onChange: () => {} });
+    await v.check();
+    assert.strictEqual(v.target, 'twindesk');
+    assert.strictEqual(v.view().supported, false);
+    assert.strictEqual(v.view().ready, false);
+    await v.setTarget('obs');
+    assert.strictEqual(cfg.target, 'obs');
+    assert.deepStrictEqual(v.view().name, 'OBS Virtual Camera');
+    assert.strictEqual(v.view().removable, false);
+    assert.strictEqual(v.view().ready, true);
+    ipcMain.emit('vcam:frame', {}, new ArrayBuffer(FRAME));
+    assert.deepStrictEqual(seen, ['twindesk', 'obs', 'feed:obs']);
+    await v.setTarget('elsewhere'); // not one of them: unchanged
+    assert.strictEqual(cfg.target, 'obs');
+    v.stop();
+    ipcMain.removeAllListeners('vcam:frame');
+  }
+
   // No driver (a platform without one): not supported.
   {
     const v = new VirtualCam({ driver: null, cfg: () => ({}), save: () => {}, onChange: () => {} });

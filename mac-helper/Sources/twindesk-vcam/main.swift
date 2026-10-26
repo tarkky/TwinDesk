@@ -7,14 +7,21 @@
 //   deactivate  removes it
 //   status      {"camera":true|false}: is "TwinDesk Camera" among this Mac's cameras
 //   feed        frames on stdin, each 1280×720 NV12 (shared/vcam-feed.js), into the camera's sink stream
+// status and feed take --name <camera>: another camera with a sink stream, "OBS Virtual Camera"
+// (OBS Studio's Camera Extension, written into the way OBS does), in the format its sink takes.
 import CoreMediaIO
 import CoreMedia
 import CoreVideo
 import Foundation
 import SystemExtensions
+import VideoToolbox
 
 let extensionID = "org.macshare.mac.camera"
-let cameraName = "TwinDesk Camera"
+let args = Array(CommandLine.arguments.dropFirst())
+let cameraName: String = {
+  if let i = args.firstIndex(of: "--name"), i + 1 < args.count { return args[i + 1] }
+  return "TwinDesk Camera"
+}()
 let width = 1280, height = 720
 let frameBytes = width * height * 3 / 2
 
@@ -88,6 +95,15 @@ func sinkStream(_ device: CMIOObjectID) -> CMIOStreamID? {
   return streams.first { property($0, kCMIOStreamPropertyDirection, UInt32(1)).first == 0 } ?? streams.last
 }
 
+// The format the sink takes (OBS's: its own size and pixel format), if it says.
+func sinkFormat(_ stream: CMIOStreamID) -> CMVideoFormatDescription? {
+  var addr = CMIOObjectPropertyAddress(mSelector: CMIOObjectPropertySelector(kCMIOStreamPropertyFormatDescription), mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal), mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
+  var value: Unmanaged<CMFormatDescription>?
+  var used: UInt32 = 0
+  guard CMIOObjectGetPropertyData(stream, &addr, 0, nil, UInt32(MemoryLayout<Unmanaged<CMFormatDescription>?>.size), &used, &value) == noErr, let v = value else { return nil }
+  return v.takeRetainedValue()
+}
+
 func readAll(_ buf: UnsafeMutablePointer<UInt8>, _ count: Int) -> Bool {
   var got = 0
   while got < count {
@@ -107,7 +123,7 @@ func feed() -> Never {
     usleep(100_000)
   }
   guard let dev = device, let stream = sinkStream(dev) else {
-    FileHandle.standardError.write("no TwinDesk Camera\n".data(using: .utf8)!)
+    FileHandle.standardError.write("no \(cameraName)\n".data(using: .utf8)!)
     exit(1)
   }
   var queue: Unmanaged<CMSimpleQueue>?
@@ -118,17 +134,33 @@ func feed() -> Never {
   }
   CMIODeviceStartStream(dev, stream)
 
+  // NV12 at 1280×720 as it comes, or turned into the sink's own size and pixel format.
+  let target = sinkFormat(stream)
+  let dims = target.map { CMVideoFormatDescriptionGetDimensions($0) }
+  let outW = dims.map { Int($0.width) } ?? width, outH = dims.map { Int($0.height) } ?? height
+  let nv12 = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+  let outPixel = target.map { CMFormatDescriptionGetMediaSubType($0) } ?? nv12
+  let convert = outW != width || outH != height || outPixel != nv12
+  var transfer: VTPixelTransferSession?
+  if convert {
+    VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault, pixelTransferSessionOut: &transfer)
+    if let t = transfer { VTSessionSetProperty(t, key: kVTPixelTransferPropertyKey_ScalingMode, value: kVTScalingMode_Letterbox) }
+    FileHandle.standardError.write("\(cameraName): \(outW)×\(outH) \(String(format: "%08x", outPixel))\n".data(using: .utf8)!)
+  }
+  func makePool(_ w: Int, _ h: Int, _ pixel: OSType) -> CVPixelBufferPool? {
+    var pool: CVPixelBufferPool?
+    let attrs: [String: Any] = [
+      kCVPixelBufferWidthKey as String: w,
+      kCVPixelBufferHeightKey as String: h,
+      kCVPixelBufferPixelFormatTypeKey as String: pixel,
+      kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+    ]
+    CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attrs as CFDictionary, &pool)
+    return pool
+  }
+  let pool = makePool(width, height, nv12)
+  let outPool = convert ? makePool(outW, outH, outPixel) : nil
   var format: CMFormatDescription?
-  let ext: [String: Any] = [kCVImageBufferYCbCrMatrixKey as String: kCVImageBufferYCbCrMatrix_ITU_R_601_4]
-  CMVideoFormatDescriptionCreate(allocator: kCFAllocatorDefault, codecType: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, width: Int32(width), height: Int32(height), extensions: ext as CFDictionary, formatDescriptionOut: &format)
-  var pool: CVPixelBufferPool?
-  let attrs: [String: Any] = [
-    kCVPixelBufferWidthKey as String: width,
-    kCVPixelBufferHeightKey as String: height,
-    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-    kCVPixelBufferIOSurfacePropertiesKey as String: [:],
-  ]
-  CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attrs as CFDictionary, &pool)
   let frame = UnsafeMutablePointer<UInt8>.allocate(capacity: frameBytes)
   while readAll(frame, frameBytes) {
     // The camera takes one at a time: a frame it hasn't taken yet is replaced by a newer one later.
@@ -144,9 +176,18 @@ func feed() -> Never {
       for r in 0..<rows { memcpy(base + r * stride, src + r * width, width) }
     }
     CVPixelBufferUnlockBaseAddress(buf, [])
+    CVBufferSetAttachment(buf, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_601_4, .shouldPropagate)
+    var image = buf
+    if convert {
+      var ob: CVPixelBuffer?
+      guard let t = transfer, let op = outPool, CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, op, &ob) == kCVReturnSuccess, let o = ob,
+            VTPixelTransferSessionTransferImage(t, from: buf, to: o) == noErr else { continue }
+      image = o
+    }
+    if format == nil { CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: image, formatDescriptionOut: &format) }
     var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30), presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()), decodeTimeStamp: .invalid)
     var sample: CMSampleBuffer?
-    guard let f = format, CMSampleBufferCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: buf, dataReady: true, makeDataReadyCallback: nil, refcon: nil, formatDescription: f, sampleTiming: &timing, sampleBufferOut: &sample) == noErr, let s = sample else { continue }
+    guard let f = format, CMSampleBufferCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: image, dataReady: true, makeDataReadyCallback: nil, refcon: nil, formatDescription: f, sampleTiming: &timing, sampleBufferOut: &sample) == noErr, let s = sample else { continue }
     let element = Unmanaged.passRetained(s)
     if CMSimpleQueueEnqueue(q, element: element.toOpaque()) != noErr { element.release() }
   }
@@ -154,12 +195,12 @@ func feed() -> Never {
   exit(0)
 }
 
-switch CommandLine.arguments.dropFirst().first ?? "" {
+switch args.first ?? "" {
 case "activate": install(true)
 case "deactivate": install(false)
 case "status": say(["ok": true, "camera": findCamera() != nil])
 case "feed": feed()
 default:
-  FileHandle.standardError.write("usage: twindesk-vcam activate|deactivate|status|feed\n".data(using: .utf8)!)
+  FileHandle.standardError.write("usage: twindesk-vcam activate|deactivate|status|feed [--name <camera>]\n".data(using: .utf8)!)
   exit(2)
 }

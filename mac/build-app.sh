@@ -116,7 +116,9 @@ PLIST
 # app's (MAC_APP_PROFILE, App ID org.macshare.mac) and the extension's (MAC_CAMERA_PROFILE, App ID
 # org.macshare.mac.camera), both with the app group <team>.org.macshare.mac. Without them it isn't
 # in the app, and the Camera tab says the virtual camera needs a release build.
+# twindesk-vcam is in every build: it also feeds OBS Virtual Camera (OBS's own Camera Extension).
 TEAM=${MAC_TEAM_ID:-$APPLE_TEAM_ID}
+cp "$ROOT/mac-helper/.build/release/twindesk-vcam" dist/TwinDesk.app/Contents/MacOS/twindesk-vcam
 SYSEXT=dist/TwinDesk.app/Contents/Library/SystemExtensions/org.macshare.mac.camera.systemextension
 CAMERA=""
 if [ -n "$MAC_IDENTITY" ] && [ -n "$TEAM" ] && [ -f "$MAC_APP_PROFILE" ] && [ -f "$MAC_CAMERA_PROFILE" ]; then
@@ -125,7 +127,6 @@ if [ -n "$MAC_IDENTITY" ] && [ -n "$TEAM" ] && [ -f "$MAC_APP_PROFILE" ] && [ -f
   cp "$ROOT/mac-helper/.build/release/twindesk-camera" "$SYSEXT/Contents/MacOS/org.macshare.mac.camera"
   cp "$MAC_CAMERA_PROFILE" "$SYSEXT/Contents/embedded.provisionprofile"
   cp "$MAC_APP_PROFILE" dist/TwinDesk.app/Contents/embedded.provisionprofile
-  cp "$ROOT/mac-helper/.build/release/twindesk-vcam" dist/TwinDesk.app/Contents/MacOS/twindesk-vcam
   cat > "$SYSEXT/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -212,6 +213,8 @@ if [ -n "$MAC_IDENTITY" ]; then
     codesign --force $OPTIONS $SIGN "$ID" --entitlements dist/camera.entitlements "$SYSEXT"
     codesign --force $OPTIONS $SIGN "$ID" -i org.macshare.mac --entitlements dist/app.entitlements "$APP/Contents/MacOS/twindesk-vcam"
     ENTITLEMENTS=dist/app.entitlements
+  else
+    codesign --force $OPTIONS $SIGN "$ID" -i org.macshare.mac --entitlements "$ENTITLEMENTS" "$APP/Contents/MacOS/twindesk-vcam"
   fi
   codesign --force $OPTIONS $SIGN "$ID" --entitlements "$ENTITLEMENTS" "$APP"
 else
@@ -219,6 +222,7 @@ else
   # TwinDesk's own certificate macOS keeps its permissions across updates; ad-hoc works, but each
   # update asks for them again.
   for b in "$APP"/Contents/Resources/app/mac-helper/.build/release/*; do [ -f "$b" ] && codesign --force $SIGN "$ID" "$b"; done
+  codesign --force $SIGN "$ID" -i org.macshare.mac "$APP/Contents/MacOS/twindesk-vcam"
   codesign --force --deep $SIGN "$ID" "$APP"
   codesign --force $SIGN "$ID" --entitlements dist/share.entitlements "$APPEX" # --deep dropped its sandbox
   codesign --force $SIGN "$ID" "$APP"

@@ -40,7 +40,7 @@ echo "built .build/release/macshare-calls"
 # it (packed into TwinDesk.app by mac/build-app.sh when it's signed for system extensions).
 swiftc -O -swift-version 5 -target "$TARGET" -framework CoreMediaIO -framework CoreMedia -framework CoreVideo -framework IOKit   Sources/twindesk-camera/main.swift -o .build/release/twindesk-camera
 echo "built .build/release/twindesk-camera"
-swiftc -O -swift-version 5 -target "$TARGET" -framework CoreMediaIO -framework CoreMedia -framework CoreVideo -framework SystemExtensions   Sources/twindesk-vcam/main.swift -o .build/release/twindesk-vcam
+swiftc -O -swift-version 5 -target "$TARGET" -framework CoreMediaIO -framework CoreMedia -framework CoreVideo -framework SystemExtensions -framework VideoToolbox   Sources/twindesk-vcam/main.swift -o .build/release/twindesk-vcam
 echo "built .build/release/twindesk-vcam"
 # Share menu extension (packed into TwinDesk.app/Contents/PlugIns by mac/build-app.sh).
 swiftc -O -swift-version 5 -target "$TARGET" -application-extension -parse-as-library \

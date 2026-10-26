@@ -9,6 +9,9 @@
 // Camera › Rotate (settings.camera.rotate, quarter turns) turns the picture everywhere.
 //
 // driver: {name, always?, check() → {supported, installed, message}, install(say), remove(), feed(onExit) → ChildProcess}
+//   targets?: [{value, label}], cameras it can feed (the Mac: TwinDesk Camera or OBS Virtual Camera),
+//   chosen in settings.camera.target and passed to check, install, remove and feed as their last
+//   argument; nameOf(target), removable(target).
 //   say(text): what installing waits for now (the Mac: the person allowing it in System Settings).
 //   always: the feed runs all the while it's on (Linux: an apps sees the camera only while
 //   something writes to it), not only while frames come.
@@ -72,6 +75,24 @@ class VirtualCam {
     for (const wc of this.sources) this._tell(wc);
   }
 
+  // The camera it feeds (driver.targets), the first unless another is chosen.
+  get target() {
+    const t = this.driver && this.driver.targets;
+    if (!t || !t.length) return undefined;
+    return t.some((x) => x.value === this.cfg().target) ? this.cfg().target : t[0].value;
+  }
+
+  // Camera › Virtual camera › Send to: another camera (it's checked, and fed from the next frame).
+  async setTarget(target) {
+    const t = this.driver && this.driver.targets;
+    if (!t || !t.some((x) => x.value === target) || target === this.target || this.state.busy) return;
+    this.cfg().target = target;
+    this.save();
+    this._stopFeed();
+    this._set({ installed: false, message: '' });
+    await this.check();
+  }
+
   get on() {
     return this.cfg().virtual === true;
   }
@@ -84,7 +105,7 @@ class VirtualCam {
   async check() {
     if (!this.driver) return this._set({ checked: true, supported: false, message: 'Not on this computer' });
     try {
-      const r = await this.driver.check();
+      const r = await this.driver.check(this.target);
       this._set({ checked: true, supported: r.supported !== false, installed: !!r.installed, message: r.message || '' });
     } catch (e) {
       this._set({ checked: true, message: 'Couldn’t check the virtual camera: ' + e.message });
@@ -104,8 +125,8 @@ class VirtualCam {
     if (this.state.busy || !this.driver) return;
     this._set({ busy: 'install', message: '' });
     try {
-      await this.driver.install((text) => this._set({ message: String(text || '') }));
-      const r = await this.driver.check();
+      await this.driver.install((text) => this._set({ message: String(text || '') }), this.target);
+      const r = await this.driver.check(this.target);
       this.state.installed = !!r.installed;
       this.state.message = r.installed ? '' : (r.message || 'It didn’t install');
     } catch (e) {
@@ -122,13 +143,13 @@ class VirtualCam {
     this._set({ busy: 'remove', message: '' });
     this._stopFeed();
     try {
-      await this.driver.remove();
+      await this.driver.remove(this.target);
       this.state.installed = false;
     } catch (e) {
       this.state.message = 'Couldn’t remove it: ' + e.message;
     }
     try {
-      const r = await this.driver.check();
+      const r = await this.driver.check(this.target);
       this.state.installed = !!r.installed;
     } catch {}
     this._set({ busy: '' });
@@ -160,7 +181,7 @@ class VirtualCam {
       this.blocked = false;
       // Linux: it runs all the while it's on (again a moment after it stops).
       if (this.driver.always) setTimeout(() => this._sync(), 2000);
-    });
+    }, this.target);
   }
 
   _stopFeed() {
@@ -200,7 +221,10 @@ class VirtualCam {
       ...this.state,
       on: this.on,
       ready: this.ready,
-      name: this.driver ? this.driver.name : '',
+      name: !this.driver ? '' : this.driver.nameOf ? this.driver.nameOf(this.target) : this.driver.name,
+      targets: (this.driver && this.driver.targets) || null,
+      target: this.target || '',
+      removable: !this.driver || !this.driver.removable || this.driver.removable(this.target),
       live: this.ready && Date.now() - this.lastFrame < LIVE_MS, // the virtual camera gets frames
       picture: Date.now() - this.lastPreview < LIVE_MS, // the tab gets its picture
       rotate: this.rotate,

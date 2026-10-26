@@ -154,7 +154,8 @@ function setupIpc(ctx) {
         for (const v of ctx.phoneViews.list()) if (v.kind === 'screen') ctx.phoneViews.close(v.id);
       } else ctx.phoneViews.openScreen();
     },
-    phoneCamera(open, opts) {
+    phoneCamera(m) {
+      const { open, opts } = m && typeof m === 'object' ? m : { open: m }; // preload-control: {open, opts}
       if (open === false) {
         for (const v of ctx.phoneViews.list()) if (v.kind === 'camera') ctx.phoneViews.close(v.id);
       } else ctx.phoneViews.openCamera(opts);
@@ -479,6 +480,7 @@ function setupIpc(ctx) {
       // Camera › Virtual camera (shared/vcam.js).
       else if (m.do === 'virtual' && vcam) vcam.setOn(m.on === true);
       else if (m.do === 'vcamRemove' && vcam) vcam.remove();
+      else if (m.do === 'vcamTarget' && vcam) vcam.setTarget(m.target);
       else if (m.do === 'rotate' && vcam) vcam.turn();
     },
     // Remote tab: the phone's Remote page here (shared/phone-remote.js).

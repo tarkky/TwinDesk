@@ -91,7 +91,10 @@
       const virtual = UI.switch((v) => cam({ do: 'virtual', on: v }), { label: 'Virtual camera' });
       const vRemove = UI.button('Remove', () => cam({ do: 'vcamRemove' }));
       const vRow = UI.row('Virtual camera', '', [vRemove, virtual]);
-      const vCard = UI.card('Virtual camera', [vRow]);
+      // Which camera it feeds, where there's a choice (the Mac: TwinDesk Camera or OBS Virtual Camera).
+      const vTarget = UI.select([], (t) => cam({ do: 'vcamTarget', target: t }));
+      const vTargetRow = UI.row('Send to', 'The camera other apps pick', [vTarget]);
+      const vCard = UI.card('Virtual camera', [vTargetRow, vRow]);
 
       // This computer's camera there.
       const share = UI.switch((v) => cam({ do: 'share', on: v }), { label: 'Share this camera' });
@@ -149,7 +152,13 @@
         // Virtual camera.
         virtual.set(!!v.on);
         virtual.disable(v.supported === false || !!v.busy);
-        vRemove.hidden = !v.installed || !!v.on || !!v.busy;
+        vRemove.hidden = !v.installed || !!v.on || !!v.busy || v.removable === false;
+        vTargetRow.hidden = !(v.targets && v.targets.length > 1);
+        if (!vTargetRow.hidden) {
+          vTarget.options(v.targets);
+          vTarget.set(v.target || v.targets[0].value);
+          vTarget.el.disabled = !!v.busy;
+        }
         vRow.setHint(!v.checked ? 'Checking…'
           : v.supported === false ? v.message
             : v.busy === 'install' ? (v.message || 'Installing…')

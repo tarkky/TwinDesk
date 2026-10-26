@@ -24,5 +24,7 @@ const api = {
   pathsOf: (files) => [...files].map((f) => webUtils.getPathForFile(f)).filter(Boolean), // dropped files -> paths
 };
 for (const name of ACTIONS) api[name] = (arg) => ipcRenderer.send(name, arg);
+// The one action with two arguments (Camera › Start and Window: {facing, show}): sent as one.
+api.phoneCamera = (open, opts) => ipcRenderer.send('phoneCamera', { open, opts });
 
 contextBridge.exposeInMainWorld('macshare', api);
