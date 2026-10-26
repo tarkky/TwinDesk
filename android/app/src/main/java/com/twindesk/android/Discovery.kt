@@ -23,10 +23,15 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
 // Screen off: two beacons per DEVICE_STALE_MS, so a computer keeps listing us while we're awake.
 private const val BEACON_SCREEN_OFF_MS = 5000L
+// A packet's handling that takes this long is stuck: its stack goes to the log, and a new worker
+// takes the packets after it.
+private const val STUCK_MS = 5000L
 
 data class Found(
     val id: String,
@@ -52,6 +57,33 @@ class Discovery(
     private var lock: WifiManager.MulticastLock? = null
     @Volatile private var screenOn = true
     private var screenWatch: BroadcastReceiver? = null
+
+    // Each packet is handled on the worker, never on the thread reading the socket: a handler that
+    // blocked (an invite's connect, a lock held elsewhere) stopped the reading, and every beacon,
+    // probe and invite after it was dropped by the kernel. The phone looked gone to the computers,
+    // and clicking it there did nothing, until the app started again.
+    private class Worker {
+        @Volatile var busySince = 0L
+        @Volatile var thread: Thread? = null
+        val exec: ExecutorService = Executors.newSingleThreadExecutor { r -> Thread(r, "td-discovery-work").apply { isDaemon = true; thread = this } }
+    }
+    @Volatile private var worker = Worker()
+
+    private fun dispatch(block: () -> Unit) {
+        val w = worker
+        val since = w.busySince
+        if (since != 0L && System.currentTimeMillis() - since > STUCK_MS) {
+            val where = w.thread?.stackTrace?.joinToString("\n  at ") ?: "?"
+            Log.w("TwinDesk", "discovery: a packet's handling is stuck (${System.currentTimeMillis() - since} ms), going on without it:\n  at $where")
+            w.exec.shutdownNow()
+            worker = Worker()
+        }
+        val now = worker
+        now.exec.execute {
+            now.busySince = System.currentTimeMillis()
+            try { block() } catch (e: Exception) { Log.w("TwinDesk", "discovery: ${e.message}") } finally { now.busySince = 0L }
+        }
+    }
 
     fun start() {
         if (running) return
@@ -151,12 +183,16 @@ class Discovery(
                 while (running) {
                     val p = DatagramPacket(buf, buf.size)
                     s.receive(p)
-                    handle(String(p.data, 0, p.length), p.address.hostAddress ?: continue, p.port)
+                    val text = String(p.data, 0, p.length)
+                    val from = p.address.hostAddress ?: continue
+                    val port = p.port
+                    dispatch { handle(text, from, port) }
                 }
             } catch (e: Exception) {
                 if (!running) return
                 error = "Can’t listen (${e.message})"
                 Log.w("TwinDesk", "discovery: ${e.message}")
+                runCatching { sock?.close() } // its port is free for the next one
                 onChange()
                 Thread.sleep(5000)
             }
