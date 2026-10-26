@@ -134,6 +134,10 @@ class Netlink(core: Core) : Feature(core) {
     private var pass = ""
     private var linger: ScheduledFuture<*>? = null
     private var deadline: ScheduledFuture<*>? = null
+    // Hosting here after a join that failed, once a session: done again and again (or right away),
+    // join after join, then a group on another channel, hung a Galaxy A05's Wi-Fi (MT6769), and its
+    // driver panicked the kernel resetting it (gl_rst.c): the phone rebooted.
+    @Volatile private var swapped = false
 
     companion object {
         const val FILES_IDLE_MS = 20000L
@@ -152,6 +156,7 @@ class Netlink(core: Core) : Feature(core) {
     override fun onWelcome(host: Host) {
         synchronized(this) {
             peerCaps = null
+            swapped = false
             if (ticker == null) ticker = core.bg.scheduleWithFixedDelay({ tick() }, 1, 1, TimeUnit.SECONDS)
         }
         if (!onBle) return
@@ -287,6 +292,8 @@ class Netlink(core: Core) : Feature(core) {
 
     private fun ensure(why: String) {
         if (state in setOf("asking", "hosting", "joining", "joined")) return
+        // Seen on the network already (the phone's Wi-Fi came back): Core moves the session there.
+        if (core.host?.let { core.discovery.found[it.id] } != null) return
         val p = plan() ?: return fail("Neither side can host Wi-Fi")
         error = ""
         if (p == "me") return startHost()
@@ -323,10 +330,13 @@ class Netlink(core: Core) : Feature(core) {
             // on another network, the computer's group on its own Wi-Fi's channel): ours instead, on
             // the channel this phone is on, when the computer can join one (shared/netlink.js: it
             // hears net.joined {retry} and waits for our net.join).
-            val swap = direct.can() && synchronized(this) { peerCaps?.optBoolean("join") == true }
+            val swap = !swapped && direct.can() && synchronized(this) { peerCaps?.optBoolean("join") == true }
             if (swap) {
+                swapped = true
                 Log.i("TwinDesk", "netlink: couldn’t join $s (${e.message}): hosting here")
                 core.link.send(msg(Proto.T.NET_JOINED, "ok" to false, "error" to (e.message ?: "failed"), "retry" to true))
+                Thread.sleep(2000) // the Wi-Fi chip settles after the joins first
+                if (state != "joining") return
                 return startHost()
             }
             core.link.send(msg(Proto.T.NET_JOINED, "ok" to false, "error" to (e.message ?: "failed")))
