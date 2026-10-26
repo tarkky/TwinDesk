@@ -52,7 +52,14 @@ class Remote(core: Core) : Feature(core) {
     fun opts(): JSONObject {
         ble = core.link.ble
         return msg("opts", "mode" to mode, "name" to (core.host?.name ?: "the computer"), "me" to core.store.deviceName, "connected" to (core.host != null),
-            "os" to (core.host?.os ?: ""), "ble" to core.link.ble, "speed" to speed.toDouble(), "tap" to tapClick, "smooth" to smooth, "pad" to padMap())
+            "os" to (core.host?.os ?: ""), "ble" to core.link.ble, "speed" to speed.toDouble(), "tap" to tapClick, "smooth" to smooth, "pad" to padMap(),
+            "bt" to (core.btPadMade && core.btPad.connected), "btName" to (if (core.btPadMade) core.btPad.hostName else ""))
+    }
+
+    // As a Bluetooth gamepad (BtPad) connected or not: an open page follows.
+    fun btChanged() {
+        host?.post(opts())
+        core.changed()
     }
 
     private fun push() {

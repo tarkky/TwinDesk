@@ -7,7 +7,8 @@
 //             hold = right click · two fingers = scroll · two-finger tap = right click
 //   gamepad   left stick = four keys (WASD) · right stick = the mouse · buttons = their keys; or, when
 //             the computer takes it as a real gamepad (remote.state pad: Remote › Real gamepad there),
-//             the sticks, triggers and buttons as they are (remote.pad)
+//             the sticks, triggers and buttons as they are (remote.pad); or, while a computer is
+//             connected to this device as a Bluetooth gamepad (opts.bt: BtPad.kt), as HID reports (TD.pad)
 'use strict';
 
 (() => {
@@ -18,6 +19,7 @@
   let allowed = null; // the computer's remote.state
   let why = ''; // …and why it doesn't take it now
   let real = false; // the computer takes the gamepad as a real one (remote.pad)
+  const asPad = () => opts.bt === true || real; // the gamepad as a real one, here or through Bluetooth
 
   // ---- keys and buttons held down: counted (two controls may press the same key), all let go on close ----
   const held = new Map(); // KeyboardEvent.code or 'Mouse0'/'Mouse1'/'Mouse2' -> how many controls hold it
@@ -49,8 +51,10 @@
     const game = opts.mode === 'gamepad';
     document.body.classList.toggle('gamepad', game);
     document.body.classList.toggle('pad', !game);
-    $('name').textContent = `${game ? (real ? 'Gamepad (real)' : 'Gamepad') : 'Touchpad'} · ${opts.name}`;
-    const note = !opts.connected ? `Not connected to ${opts.name}. Connect from TwinDesk’s Overview.`
+    $('name').textContent = game && opts.bt ? `Bluetooth gamepad · ${opts.btName || 'connected'}`
+      : `${game ? (real ? 'Gamepad (real)' : 'Gamepad') : 'Touchpad'} · ${opts.name}`;
+    const note = game && opts.bt ? ''
+      : !opts.connected ? `Not connected to ${opts.name}. Connect from TwinDesk’s Overview.`
       : allowed === false ? (why || `${opts.name} doesn’t take input from ${opts.me}. On ${opts.name}, turn on Remote in TwinDesk.`)
         : allowed === null && (opts.os === 'mac' || opts.os === 'linux') ? `${opts.name} doesn’t answer the remote: update TwinDesk there.`
           : '';
@@ -60,8 +64,9 @@
 
   window.tdRecv = (m) => {
     if (m.t === 'opts') {
+      if ((m.bt === true) !== (opts.bt === true)) releaseAll(); // what's held goes the old way
       opts = { ...opts, ...m };
-      if (!opts.connected) { allowed = null; releaseAll(); }
+      if (!opts.connected && !opts.bt) { allowed = null; releaseAll(); }
     } else if (m.t === 'remote.state') {
       allowed = m.allowed === true;
       why = typeof m.why === 'string' ? m.why : '';
@@ -315,10 +320,11 @@
   let padSent = 0, padTimer = 0;
   function padSend() {
     if (padTimer) return;
-    const wait = (opts.ble ? BLE_MS : 8) - (performance.now() - padSent);
+    const wait = (opts.ble && !opts.bt ? BLE_MS : 8) - (performance.now() - padSent);
     if (wait > 0) { padTimer = setTimeout(() => { padTimer = 0; padSend(); }, wait); return; }
     padSent = performance.now();
-    send({ t: 'remote.pad', ...gp });
+    if (opts.bt) TD.pad(gp.b, gp.lx, gp.ly, gp.rx, gp.ry, gp.lt, gp.rt);
+    else send({ t: 'remote.pad', ...gp });
   }
   function padSet(k, v, k2, v2) { // one value, or a stick's two
     if (gp[k] === v && (!k2 || gp[k2] === v2)) return;
@@ -350,7 +356,7 @@
       e.preventDefault();
       el.setPointerCapture(e.pointerId);
       if (pressed != null) return;
-      pressed = real ? true : padKey(id);
+      pressed = asPad() ? true : padKey(id);
       el.classList.add('down');
       if (pressed === true) padButton(id, true); else press(pressed, true);
       tick();
@@ -400,7 +406,7 @@
     if (on) { lsHeld[id] = padKey(id); press(lsHeld[id], true); } else { press(lsHeld[id], false); delete lsHeld[id]; }
   }
   stick($('ls'), (x, y) => {
-    if (real) return padSet('lx', x, 'ly', y);
+    if (asPad()) return padSet('lx', x, 'ly', y);
     const T = 0.4;
     lsSet('lsUp', y < -T);
     lsSet('lsDown', y > T);
@@ -420,7 +426,7 @@
     rsFrame = requestAnimationFrame(rsStep);
   }
   stick($('rs'), (x, y) => {
-    if (real) { rs = { x: 0, y: 0 }; return padSet('rx', x, 'ry', y); }
+    if (asPad()) { rs = { x: 0, y: 0 }; return padSet('rx', x, 'ry', y); }
     rs = { x, y };
     if (!rsFrame && Math.hypot(x, y) >= 0.12) rsFrame = requestAnimationFrame(rsStep);
   });

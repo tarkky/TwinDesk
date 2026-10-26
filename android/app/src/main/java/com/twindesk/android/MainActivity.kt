@@ -62,6 +62,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -1053,7 +1054,10 @@ private fun RemotePage(core: Core, v: Int) {
     val name = them(core)
     val me = core.store.deviceName
     PageHead("Remote", "Use this device as $name’s touchpad and keyboard, or as a gamepad.")
-    if (core.host == null) return NotConnected(core, v)
+    if (core.host == null) {
+        NotConnected(core, v)
+        return BtPadCard(core) // works without TwinDesk on the computer
+    }
     if (r.unsupported) Note("$name doesn’t answer the remote: update TwinDesk there.", "warn")
     else if (r.allowed == false) Note(r.why.ifEmpty { "$name doesn’t take input from here. On $name, turn on Remote in TwinDesk." }, "warn")
     val open = { mode: String -> ctx.startActivity(Intent(ctx, RemoteActivity::class.java).putExtra("mode", mode)) }
@@ -1078,6 +1082,7 @@ private fun RemotePage(core: Core, v: Int) {
         }
         MacRow("Reset", "WASD on the left stick, Space on A, the mouse buttons on the triggers…") { Secondary("Reset") { r.resetPad() } }
     }
+    BtPadCard(core)
     Note(
         when {
             core.link.wired -> "On the USB cable: the quickest way for games."
@@ -1085,6 +1090,45 @@ private fun RemotePage(core: Core, v: Int) {
             else -> "Over Wi-Fi it’s as quick as the delay at the top of the app. For games, a USB cable is quickest."
         },
     )
+}
+
+// As a Bluetooth gamepad (BtPad.kt): any computer, the Mac too, no driver and no TwinDesk there.
+@Composable
+private fun BtPadCard(core: Core) {
+    val ctx = LocalContext.current
+    val made = core.btPadMade
+    val on = core.store.flag("remote.btpad", false)
+    val pad = if (made || on) core.btPad else null
+    LaunchedEffect(on) { if (on) core.btPad.start() }
+    val findable = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { core.changed() }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { got ->
+        if (got.values.all { it }) { core.btPad.setOn(true); findable.launch(core.btPad.discoverableIntent()) }
+        else ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}")))
+    }
+    val state = pad?.state ?: "off"
+    MacCard("As a Bluetooth gamepad") {
+        SwitchRow("As a Bluetooth gamepad", "A game controller for any computer over Bluetooth, the Mac too: no driver and no TwinDesk needed there. " +
+            "Games that take any controller (Steam, emulators); Xbox-only games on Windows want Real gamepad on the PC instead", on, first = true) { v ->
+            if (!v) core.btPad.setOn(false)
+            else if (!core.btPad.allowed()) ask.launch(BtPad.permissions())
+            else { core.btPad.setOn(true); findable.launch(core.btPad.discoverableIntent()) }
+        }
+        if (on) {
+            MacRow("Now", when (state) {
+                "starting" -> "Starting…"
+                "unavailable" -> pad?.message ?: ""
+                "connected" -> "Connected to ${pad?.hostName}: open the gamepad"
+                "ready" -> "Ready: waiting for a computer"
+                else -> pad?.message?.ifEmpty { "Off" } ?: "Off"
+            }) { if (state == "connected") Primary("Open") { ctx.startActivity(Intent(ctx, RemoteActivity::class.java).putExtra("mode", "gamepad")) } }
+            if (state == "ready") {
+                MacRow("Pair it once", "On the computer: Bluetooth settings › Add device (Windows: Bluetooth; Mac: System Settings › Bluetooth; Linux: Bluetooth › +), " +
+                    "then pick “${core.store.deviceName}”. Afterwards it connects by itself while this is on") {
+                    Secondary("Let computers find it") { findable.launch(core.btPad.discoverableIntent()) }
+                }
+            }
+        }
+    }
 }
 
 // A gamepad control's key: tap for the list (keys, mouse buttons, or nothing).

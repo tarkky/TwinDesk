@@ -64,6 +64,10 @@ class Core private constructor(val ctx: Context) : Link.Events {
     val shortcuts = Shortcuts(this)
     val kvm = Kvm(this)
     val remote = Remote(this) // this phone as the computer's touchpad, keyboard and gamepad (the Remote page)
+    // …and as a Bluetooth gamepad for any computer: made only when it's on or the Remote page asks.
+    private val btPadLazy = lazy { BtPad(this) }
+    val btPad by btPadLazy
+    val btPadMade: Boolean get() = btPadLazy.isInitialized()
     val updates = Updates(this)
     val net = Netlink(this)
     val hub = Hub(this) // Calls, Messages and Photos on the computer: nothing runs until one is on
@@ -79,6 +83,7 @@ class Core private constructor(val ctx: Context) : Link.Events {
         discovery.start()
         Notify.channels(ctx)
         updates.start()
+        if (store.flag("remote.btpad", false)) btPad.start()
         bg.scheduleWithFixedDelay({ runCatching { bleTick() }.onFailure { Log.e("TwinDesk", "ble", it) } }, 2, 2, TimeUnit.SECONDS)
     }
 
