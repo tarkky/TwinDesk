@@ -42,7 +42,7 @@ async function hubNode(name) {
   links.bindServer(server);
   const mesh = new Mesh({ selfId: id });
   const hub = new Hub({ device: { id, name }, links, server, pairing, mesh });
-  const n = { name, id, port: server.port, fp: cert.fp, server, pairing, links, mesh, hub, log: [], kvm: null, extra: [], settings: normalize({}) };
+  const n = { name, id, port: server.port, fp: cert.fp, server, pairing, links, mesh, hub, log: [], kvm: null, extra: [], settings: normalize({ kvm: { mouse: true, keyboard: true } }) }; // saved settings with the cursor on (a fresh install has it off)
   n.layoutSync = new LayoutSync({
     bus: hub.bus,
     mesh,
