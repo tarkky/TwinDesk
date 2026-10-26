@@ -128,6 +128,7 @@ class PhoneViews extends EventEmitter {
   // Window), its light and zoom from the window's buttons. Closing the window only hides it. The other facing with it
   // running: the same window switches (_flip).
   openCamera(opts) {
+    if (!this.cameraOn) return; // Camera is off here: the phone's Camera page says so (cameraState)
     opts = opts && typeof opts === 'object' ? opts : {};
     const want = opts.facing === 'front' || opts.facing === 'back' ? opts.facing : null;
     const open = [...this.views.values()].find((v) => v.kind === 'camera' && !v.ending);
@@ -178,7 +179,14 @@ class PhoneViews extends EventEmitter {
   }
 
   // For the phone's Camera page (phone-bridge.js): its camera here, which one, and the virtual camera.
+  // The Camera tab's switch (settings.camera.on): off, no camera runs here.
+  get cameraOn() {
+    const c = this.getSettings().camera;
+    return !c || c.on !== false;
+  }
+
   cameraState() {
+    if (!this.cameraOn) return { on: false, facing: null, error: 'Camera is off on this computer: turn it on in TwinDesk’s Camera tab there', virtual: false };
     const v = [...this.views.values()].find((x) => x.kind === 'camera' && !x.ending);
     return { on: !!v, facing: v ? v.facing : null, error: v ? v.error || '' : '', virtual: !!(this.vcam && this.vcam.ready) };
   }

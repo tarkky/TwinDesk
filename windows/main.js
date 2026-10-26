@@ -19,8 +19,6 @@ const { Pairing: HostPairing } = require('./hostpair');
 const identity = require('./identity');
 const Screen = require('./screen');
 const Clip = require('./clip');
-const { CamShare } = require('../shared/camshare.js');
-const { VirtualCam } = require('../shared/vcam.js');
 const setupIpc = require('./ipc');
 const Helper = require('./helper');
 const Kvm = require('./kvm');
@@ -49,7 +47,6 @@ const { PhoneDrive } = require('./phonedrive');
 const { Phone } = require('./phone');
 const { PhoneBridge } = require('./phone-bridge');
 const { PhoneViews } = require('./phoneview');
-const { PhoneRemote } = require('../shared/phone-remote.js');
 const { BleHost, BleGuest, BlePhones } = require('../shared/blepipe.js');
 const { wifiQuiet } = require('../shared/blepolicy.js');
 const { NetLink } = require('../shared/netlink.js');
@@ -188,20 +185,7 @@ function start() {
     pushState();
   });
   clip = new Clip(link, () => settings.clipboard, pushState, { popup: (kind, text) => hud && hud.show(kind, text), peerName });
-  // With a computer (a phone's camera is phoneview.js openCamera).
-  const computer = () => link.status.state === 'connected' && !(link.current && link.current.os === P.OS.ANDROID);
-  // On or off, the phone's Camera page says so (phone-bridge.js).
-  vcam = new VirtualCam({ driver: require('./vcam'), cfg: () => settings.camera, save: saveSettings, onChange: pushState, onReady: () => phoneViews && phoneViews.bridge._tellPhone(), ui: () => mainWin });
-  camShare = new CamShare({
-    link: { on: (t, fn) => link.on(t, fn), send: (m) => link.send(m), connected: computer, ble: () => !!(link.current && link.current.transport === 'ble'), closed: (fn) => link.on('closed', fn) },
-    cfg: () => settings.camera,
-    save: saveSettings,
-    popup: (kind, text) => hud && hud.show(kind, text),
-    peerName,
-    onChange: pushState,
-  });
-  if (phoneViews) phoneViews.vcam = vcam; // the phone may have started first
-  vcam.check();
+  loadCamera(); // only while it's on
   screen = new Screen({
     link,
     clip,
@@ -332,7 +316,7 @@ function start() {
   });
   updates.start();
   const ipc = setupIpc({ link, discovery, screen, clip, kvm, sshd, fileDrop, smb, apps, sound, pcScreen, pcApps, peerApps, vdd, notifs, fileClip, wake, updates, settings, save: saveSettings, push: pushState, buildState,
-    get phone() { return phone; }, get phoneViews() { return phoneViews; }, get camShare() { return camShare; }, get vcam() { return vcam; }, get phoneRemote() { return phoneRemote; }, get nowPlaying() { return nowPlaying; }, get btAudio() { return btAudio; }, get phoneDrive() { return phoneDrive; }, get terminal() { return terminal; }, loadNowPlaying, loadBtAudio, loadTerminal, connectPhoneDev, cancelPhoneInvite, hub: loadHub,
+    get phone() { return phone; }, get phoneViews() { return phoneViews; }, get camShare() { return camShare; }, get vcam() { return vcam; }, get phoneRemote() { return phoneRemote; }, get nowPlaying() { return nowPlaying; }, get btAudio() { return btAudio; }, get phoneDrive() { return phoneDrive; }, get terminal() { return terminal; }, loadRemote, setCamera, loadNowPlaying, loadBtAudio, loadTerminal, connectPhoneDev, cancelPhoneInvite, hub: loadHub,
     get net() { return net; }, applyNet, joinHotspot,
     checkFirewall, fixFirewall, setStartup, onApp: updateTray });
   pairSync = new PairSync({ link, settings, save: saveSettings, set: ipc.set }); // Two-way switches per pair
@@ -422,8 +406,10 @@ function startPhone(server, pairing) {
   loadNowPlaying(); // each only while it's on
   loadBtAudio();
   phoneViews.on('change', pushState);
-  phoneRemote = new PhoneRemote({ server: pl, helper, getSettings: () => settings, atHome: () => !kvm || kvm.mode === 'home', onChange: pushState,
-    loadPad: () => require('./gamepad'), save: saveSettings }); // Real gamepad: loaded when turned on
+  // Remote off: its page hears so; on, PhoneRemote answers instead.
+  pl.on(`t:${P.T.REMOTE_HELLO}`, () => !phoneRemote && pl.current && pl.current.os === P.OS.ANDROID
+    && pl.sendToClient({ t: P.T.REMOTE_STATE, allowed: false, why: 'Remote is off on this computer: turn it on in TwinDesk’s Remote page there' }));
+  loadRemote();
   viaWifi(phoneViews, 'openScreen', 'phone');
   viaWifi(phoneViews, 'openApp', 'phone');
   // On Wi-Fi after Bluetooth, wireless debugging takes a moment more: the window opens once it's up.
@@ -479,6 +465,59 @@ function loadBtAudio() {
   btAudio.apply();
   return btAudio;
 }
+
+// Camera: the cameras of the two computers (shared/camshare.js; a phone's is phoneview.js
+// openCamera), and the running one's picture to the tab and the virtual camera (shared/vcam.js).
+function loadCamera() {
+  if (camShare || !settings.camera.on) return camShare;
+  const { CamShare } = require('../shared/camshare.js');
+  const { VirtualCam } = require('../shared/vcam.js');
+  // On or off, the phone's Camera page says so (phone-bridge.js).
+  vcam = new VirtualCam({ driver: require('./vcam'), cfg: () => settings.camera, save: saveSettings, onChange: pushState, onReady: () => phoneViews && phoneViews.bridge._tellPhone(), ui: () => mainWin });
+  const computer = () => link.status.state === 'connected' && !(link.current && link.current.os === P.OS.ANDROID);
+  camShare = new CamShare({
+    link: { on: (t, fn) => link.on(t, fn), send: (m) => link.send(m), connected: computer, ble: () => !!(link.current && link.current.transport === 'ble'), closed: (fn) => link.on('closed', fn) },
+    cfg: () => settings.camera,
+    save: saveSettings,
+    popup: (kind, text) => hud && hud.show(kind, text),
+    peerName,
+    onChange: pushState,
+  });
+  if (phoneViews) phoneViews.vcam = vcam; // the phone may have started first
+  vcam.check();
+  camShare.sendPolicy(); // connected already: the other computer hears whether it's shared
+  return camShare;
+}
+
+// Camera's switch: on loads it; off, whatever runs stops (the phone's camera too) and nothing is shared.
+function setCamera(on) {
+  settings.camera.on = !!on;
+  saveSettings();
+  if (on) loadCamera();
+  else {
+    if (camShare) {
+      camShare.closeView();
+      camShare.stopSending();
+      camShare.sendPolicy();
+    }
+    if (phoneViews) for (const v of phoneViews.list()) if (v.kind === 'camera') phoneViews.close(v.id);
+  }
+  if (phoneViews) phoneViews.bridge._tellPhone();
+  pushState();
+}
+
+// Remote: the phone's Remote page here (shared/phone-remote.js). Off, the page hears why (remote.state).
+function loadRemote() {
+  if (phoneRemote || !phoneServer || !settings.remote.allow) return phoneRemote;
+  const { PhoneRemote } = require('../shared/phone-remote.js');
+  phoneRemote = new PhoneRemote({ server: phoneServer, helper, getSettings: () => settings, atHome: () => !kvm || kvm.mode === 'home', onChange: pushState,
+    loadPad: () => require('./gamepad'), save: saveSettings }); // Real gamepad: loaded when turned on
+  phoneRemote.refresh(); // its page may be open already
+  return phoneRemote;
+}
+
+// What the Remote tab shows while Remote isn't loaded.
+const REMOTE_OFF = { allow: false, why: '', opened: false, using: false, pad: { on: false, supported: true, live: false, busy: '', message: '', name: '' } };
 
 // Terminal: a shell on the other computer.
 function loadTerminal() {
@@ -855,9 +894,9 @@ function buildState() {
     keys: settings.keys,
     monitor: settings.monitor,
     clipboard: { ...settings.clipboard, ...clip.view },
-    camera: camShare.state,
-    vcam: vcam.view(),
-    remote: phoneRemote ? phoneRemote.view : null,
+    camera: camShare ? { ...camShare.state, on: true } : { on: false },
+    vcam: vcam ? vcam.view() : { checked: true, supported: true, on: false },
+    remote: phoneRemote ? phoneRemote.view : phoneServer ? REMOTE_OFF : null,
     phoneMedia: nowPlaying ? nowPlaying.view : null,
     btAudio: btAudio ? btAudio.view : null,
     ui: settings.ui,

@@ -33,7 +33,15 @@ function write(name, data) {
   fs.renameSync(tmp, target);
 }
 
-// Settings with defaults; missing keys are filled in.
+// Settings with defaults; missing keys are filled in. Every feature is off until it's turned on (a
+// fresh install); settings saved before keep theirs, and features off here were on for them (WAS_ON).
+// The features that defaulted to on before they all started off: a settings file saved then has
+// them on where it doesn't say.
+const WAS_ON = {
+  kvm: ['mouse', 'keyboard'], clipboard: ['enabled'], audio: ['phoneMedia'], remote: ['allow'], camera: ['on'],
+  files: ['acceptDrops', 'dragEdge', 'shortcuts'], notifs: ['receive'], apps: ['offer'], papps: ['on'], receive: ['on'], smb: ['connectPc'],
+};
+
 const DEFAULT_SETTINGS = {
   macId: null,
   macName: null,
@@ -49,8 +57,8 @@ const DEFAULT_SETTINGS = {
   streamMaxHeight: 1080, // 0 = capture at the display's pixel size; else scale down (GPU) to this height
   kvm: {
     pcSide: 'right',
-    mouse: true, // Cursor tab
-    keyboard: true, // Keyboard tab
+    mouse: false, // Cursor tab
+    keyboard: false, // Keyboard tab
     driveOther: true,
     beDriven: true,
     resistancePx: 120,
@@ -66,7 +74,7 @@ const DEFAULT_SETTINGS = {
   // on/off (shared/cursorlock.js): F14, where a PC keyboard's Scroll Lock lands on a Mac
   keys: { swapCtrlCmd: true, hotkey: 'AltRight', lockKeys: 'F14' },
   clipboard: {
-    enabled: true,
+    enabled: false,
     send: true, // this Mac -> PC
     receive: true, // PC -> this Mac
     mode: 'instant', // 'instant' (whenever you copy, the default) | 'switch' (Monitor 2 focus, crossing)
@@ -80,15 +88,15 @@ const DEFAULT_SETTINGS = {
   ui: { tab: 'overview', setupSkipped: '', setupDone: false },
   app: { openAtLogin: false, keepAwake: true, hud: true }, // hud = popup when switching computers
   updates: { auto: true, notified: '' }, // check GitHub for new releases; notified = last version announced
-  audio: { send: false, receive: false, muteLocal: false, volume: 1, phoneMedia: true }, // Independent, both ways; phoneMedia: a phone's media controls on Overview
-  remote: { allow: true }, // Remote tab (shared/phone-remote.js): the phone's Remote page moves the pointer and types here
-  camera: { share: false, device: '', virtual: false, rotate: 0 }, // Camera tab (shared/camshare.js): this Mac's camera to the other computer, off until turned on; virtual: the running camera's picture also goes to the virtual camera (shared/vcam.js); rotate: its picture turned clockwise
+  audio: { send: false, receive: false, muteLocal: false, volume: 1, phoneMedia: false }, // Independent, both ways; phoneMedia: a phone's media controls on Overview
+  remote: { allow: false }, // Remote tab (shared/phone-remote.js): the phone's Remote page moves the pointer and types here
+  camera: { on: false, share: false, device: '', virtual: false, rotate: 0 }, // Camera tab (shared/camshare.js): this Mac's camera to the other computer, off until turned on; virtual: the running camera's picture also goes to the virtual camera (shared/vcam.js); rotate: its picture turned clockwise
   terminal: { allowPc: false, connectPc: false }, // the other computer -> this Mac shell; this Mac -> the other one (`ssh twindesk`)
-  files: { acceptDrops: true, folder: '', reveal: true, dragEdge: true, // '' = Downloads; dragEdge = drag.policy
-    shortcuts: true, copyKeys: 'Control+Alt+C', pasteKeys: 'Control+Alt+V' }, // Copy/paste files
-  notifs: { send: false, receive: true, hideText: false, muted: [] },
-  apps: { offer: true }, // The PC can list and open this Mac's apps
-  papps: { on: true }, // PC apps on this Mac, each window here with its own Dock icon
+  files: { acceptDrops: false, folder: '', reveal: true, dragEdge: false, // '' = Downloads; dragEdge = drag.policy
+    shortcuts: false, copyKeys: 'Control+Alt+C', pasteKeys: 'Control+Alt+V' }, // Copy/paste files
+  notifs: { send: false, receive: false, hideText: false, muted: [] },
+  apps: { offer: false }, // The PC can list and open this Mac's apps
+  papps: { on: false }, // PC apps on this Mac, each window here with its own Dock icon
   // A phone as the peer: its screen window, apps and setup.
   phone: { sound: false, bitrateMbps: 8, maxSize: 0, wallpaper: true, input: 'adb', inputPicked: false, enterSends: true, arrowSwipe: false }, // input: 'adb' | 'phone' (phone-bridge.js ctl), automatic until picked (inputMode)
   mount: { on: false }, // the phone in Finder (phonedrive.js), only when Mount is clicked
@@ -100,10 +108,10 @@ const DEFAULT_SETTINGS = {
   net: { ble: true, blePc: false, bleWifiOff: true, hotspots: {} }, // ble: with phones, blePc: with computers; bleWifiOff: none on the same Wi-Fi (blepolicy.js wifiQuiet)
 
   // The other computer's screen in a window here; framegen: shared/framegen.js.
-  receive: { on: true, fullScreen: false, input: true, framegen: false },
+  receive: { on: false, fullScreen: false, input: true, framegen: false },
   wake: { peers: {} }, // {deviceId: {name, macs, address, at}} from wol.info, for Wake
   pairSync: {}, // {deviceId: {feature: {out, in}}} two-way switches per pair (pairsync.js)
-  smb: { connectPc: true, sharing: false, folder: '', secret: '' }, // secret = safeStorage
+  smb: { connectPc: false, sharing: false, folder: '', secret: '' }, // secret = safeStorage
 };
 
 function loadSettings() {
@@ -111,6 +119,9 @@ function loadSettings() {
   if (s.sharing) s.sharing.on = false; // screen sharing never starts by itself
   const out = { ...DEFAULT_SETTINGS, ...s };
   for (const k of ['wake', 'sharing', 'virtual', 'kvm', 'keys', 'clipboard', 'ui', 'app', 'audio', 'terminal', 'files', 'smb', 'apps', 'receive', 'papps', 'notifs', 'updates', 'phone', 'mount', 'hub', 'camera', 'remote']) out[k] = { ...DEFAULT_SETTINGS[k], ...(s[k] || {}) };
+  if (Object.keys(s).length) {
+    for (const [k, keys] of Object.entries(WAS_ON)) for (const f of keys) if (!s[k] || s[k][f] === undefined) out[k][f] = true;
+  }
   if (s.ui && s.ui.setupSkipped && s.ui.setupDone === undefined) out.ui.setupDone = true;
   if ((s.rev || 0) < 7) { // Clipboard instant by default
     out.clipboard.mode = 'instant';

@@ -463,7 +463,8 @@ function setupIpc(ctx) {
     // Camera tab: the other computer's camera here, this Mac's there (shared/camshare.js). macOS
     // asks for the camera when sharing is first turned on.
     camera(m) {
-      const c = ctx.camShare;
+      if (m && m.do === 'on') return ctx.setCamera(m.on === true); // Camera's switch: loads it, or stops it
+      const { camShare: c, vcam } = ctx.cam();
       if (!c || !m || typeof m !== 'object') return;
       const allowed = async () => {
         const st = systemPreferences.getMediaAccessStatus('camera');
@@ -476,15 +477,19 @@ function setupIpc(ctx) {
       else if (m.do === 'stop') c.stopSending();
       else if (m.do === 'devices') c.listDevices();
       // Camera › Virtual camera (shared/vcam.js).
-      else if (m.do === 'virtual' && ctx.vcam) ctx.vcam.setOn(m.on === true);
-      else if (m.do === 'vcamRemove' && ctx.vcam) ctx.vcam.remove();
-      else if (m.do === 'rotate' && ctx.vcam) ctx.vcam.turn();
+      else if (m.do === 'virtual' && vcam) vcam.setOn(m.on === true);
+      else if (m.do === 'vcamRemove' && vcam) vcam.remove();
+      else if (m.do === 'rotate' && vcam) vcam.turn();
     },
     // Remote tab: the phone's Remote page here (shared/phone-remote.js).
     setRemote(m) {
-      if (!m || typeof m !== 'object' || !ctx.phoneRemote) return;
-      if ('allow' in m) ctx.phoneRemote.setAllow(m.allow === true);
+      if (!m || typeof m !== 'object') return;
+      // Off at start: not loaded; turned on, it loads (and answers the phone).
+      const r = ctx.remote();
+      if ('allow' in m && !r && m.allow === true) { settings.remote.allow = true; ctx.loadRemote(); }
+      else if ('allow' in m && r) r.setAllow(m.allow === true);
       save();
+      ctx.pushState();
     },
     // "Share sound with the screen" (Display › Mac → PC).
     setScreenSound(on) {

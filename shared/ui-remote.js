@@ -31,7 +31,7 @@ UI.tab({
     const padSwitch = UI.switch((v) => UI.api.setRemote({ pad: v }), { label: 'Real gamepad' });
     const padRow = UI.row('Real gamepad', '', [padSwitch]);
     const padNote = UI.note('info', '');
-    const padCard = UI.card('Gamepad', [padRow, padNote], { cls: 'keep-on' });
+    const padCard = UI.card('Gamepad', [padRow, padNote]);
     body.append(note, card, padCard);
     return (s) => {
       const r = s.remote || {};

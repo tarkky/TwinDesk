@@ -55,9 +55,6 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 const P = require('../shared/protocol.js');
-const { CamShare } = require('../shared/camshare.js');
-const { VirtualCam } = require('../shared/vcam.js');
-const { PhoneRemote } = require('../shared/phone-remote.js');
 const CL = require('../shared/cursorlock.js');
 const store = require('./store');
 const identity = require('./identity');
@@ -212,9 +209,10 @@ function pushState() {
     state.kvm = settings.kvm;
     state.keys = settings.keys;
     state.clipboard = clip ? { ...settings.clipboard, ...clip.view } : null;
-    state.camera = svc && svc.camShare ? svc.camShare.state : null;
-    state.vcam = svc && svc.vcam ? svc.vcam.view() : null;
-    state.remote = svc && svc.phoneRemote ? svc.phoneRemote.view : null;
+    state.camera = svc && svc.camShare ? { ...svc.camShare.state, on: true } : svc ? { on: false } : null;
+    state.vcam = svc && svc.vcam ? svc.vcam.view() : svc ? { checked: true, supported: true, on: false } : null;
+    state.remote = svc && svc.phoneRemote ? svc.phoneRemote.view
+      : svc ? { allow: false, why: '', opened: false, using: false, pad: { on: false, supported: false, live: false, busy: '', message: '', name: '' } } : null;
     state.phoneMedia = svc && svc.nowPlaying ? svc.nowPlaying.view : null;
     state.btAudio = null; // macOS can't be a phone's Bluetooth speaker
     state.ui = settings.ui;
@@ -554,34 +552,60 @@ app.whenReady().then(() => {
     return svc.nowPlaying;
   };
   svc.loadNowPlaying();
-  // Camera tab: the cameras of the two computers (shared/camshare.js; a phone's is phoneViews.openCamera).
-  const computer = () => !!peer.current && peer.current.os !== P.OS.ANDROID;
-  // Camera › Virtual camera (shared/vcam.js, vcam.js): the running camera's picture also goes to a
-  // camera apps can pick.
-  svc.vcam = new VirtualCam({
-    driver: require('./vcam'),
-    cfg: () => settings.camera,
-    save: () => store.saveSettings(settings),
-    onChange: pushState,
-    onReady: () => svc.phone.bridge._tellPhone(), // the phone's Camera page says so
-    ui: () => win,
-  });
-  svc.phoneViews.vcam = svc.vcam;
-  svc.camShare = new CamShare({
-    link: {
-      on: (t, fn) => (t === 'welcome' ? peer.on('client', (ctx) => ctx.os !== P.OS.ANDROID && fn()) : peer.on(`t:${t}`, (m) => fn(m))),
-      send: (m) => peer.sendToClient(m),
-      connected: computer,
-      ble: () => !!(peer.current && peer.current.transport === 'ble'),
-      closed: (fn) => peer.on('closed', fn),
-    },
-    cfg: () => settings.camera,
-    save: () => store.saveSettings(settings),
-    popup: (kind, text) => hud && hud.show(kind, text),
-    peerName: () => (peer.current && peer.current.name) || 'the other computer',
-    onChange: pushState,
-  });
-  svc.vcam.check();
+  // Camera tab: the cameras of the two computers (shared/camshare.js; a phone's is phoneViews.openCamera),
+  // loaded only while Camera is on. ipc reaches them through svc.cam() (its ctx is a copy of svc).
+  svc.loadCamera = () => {
+    if (svc.camShare || settings.camera.on === false) return svc.camShare || null;
+    const { CamShare } = require('../shared/camshare.js');
+    const { VirtualCam } = require('../shared/vcam.js');
+    const computer = () => !!peer.current && peer.current.os !== P.OS.ANDROID;
+    // Camera › Virtual camera (shared/vcam.js, vcam.js): the running camera's picture also goes to a
+    // camera apps can pick.
+    svc.vcam = new VirtualCam({
+      driver: require('./vcam'),
+      cfg: () => settings.camera,
+      save: () => store.saveSettings(settings),
+      onChange: pushState,
+      onReady: () => svc.phone.bridge._tellPhone(), // the phone's Camera page says so
+      ui: () => win,
+    });
+    svc.phoneViews.vcam = svc.vcam;
+    svc.camShare = new CamShare({
+      link: {
+        on: (t, fn) => (t === 'welcome' ? peer.on('client', (ctx) => ctx.os !== P.OS.ANDROID && fn()) : peer.on(`t:${t}`, (m) => fn(m))),
+        send: (m) => peer.sendToClient(m),
+        connected: computer,
+        ble: () => !!(peer.current && peer.current.transport === 'ble'),
+        closed: (fn) => peer.on('closed', fn),
+      },
+      cfg: () => settings.camera,
+      save: () => store.saveSettings(settings),
+      popup: (kind, text) => hud && hud.show(kind, text),
+      peerName: () => (peer.current && peer.current.name) || 'the other computer',
+      onChange: pushState,
+    });
+    svc.vcam.check();
+    svc.camShare.sendPolicy(); // connected already: the other computer hears whether it's shared
+    return svc.camShare;
+  };
+  svc.cam = () => ({ camShare: svc.camShare || null, vcam: svc.vcam || null });
+  // Camera's switch: on loads it; off, whatever runs stops (the phone's camera too) and nothing is shared.
+  svc.setCamera = (on) => {
+    settings.camera.on = !!on;
+    store.saveSettings(settings);
+    if (on) svc.loadCamera();
+    else {
+      if (svc.camShare) {
+        svc.camShare.closeView();
+        svc.camShare.stopSending();
+        svc.camShare.sendPolicy();
+      }
+      for (const v of svc.phoneViews.list()) if (v.kind === 'camera') svc.phoneViews.close(v.id);
+    }
+    svc.phone.bridge._tellPhone();
+    pushState();
+  };
+  svc.loadCamera();
   svc.phoneViews.on('change', pushState);
   // A phone notification clicked here: its app in a window.
   svc.notifs.on('click', (m) => peer.current && peer.current.os === P.OS.ANDROID && svc.phoneViews.openNotified(m.app, m.appName));
@@ -593,9 +617,20 @@ app.whenReady().then(() => {
   svc.kvm.local = svc.phone.bridge;
   // The phone's Remote page: touchpad, keyboard and gamepad here, taken only with the mouse at home.
   // No Real gamepad: a virtual controller on macOS needs a DriverKit driver, which needs Apple's paid signing.
-  svc.phoneRemote = new PhoneRemote({ server: peer, helper: svc.helper, getSettings: () => settings, atHome: () => svc.kvm.mode === 'home', onChange: pushState,
-    padNote: 'A Mac can’t take a gamepad over Wi-Fi: macOS needs a signed DriverKit driver for that. Instead, on {name} turn on Remote › As a Bluetooth gamepad and pair it with this Mac in System Settings › Bluetooth: it works as a game controller with no driver' });
-  svc.kvm.on('where', () => svc.phoneRemote.refresh());
+  // Loaded only while Remote is on (off, its page hears so); ipc reaches it through svc.remote().
+  svc.loadRemote = () => {
+    if (svc.phoneRemote || settings.remote.allow === false) return svc.phoneRemote || null;
+    const { PhoneRemote } = require('../shared/phone-remote.js');
+    svc.phoneRemote = new PhoneRemote({ server: peer, helper: svc.helper, getSettings: () => settings, atHome: () => svc.kvm.mode === 'home', onChange: pushState,
+      padNote: 'A Mac can’t take a gamepad over Wi-Fi: macOS needs a signed DriverKit driver for that. Instead, on {name} turn on Remote › As a Bluetooth gamepad and pair it with this Mac in System Settings › Bluetooth: it works as a game controller with no driver' });
+    svc.phoneRemote.refresh(); // its page may be open already
+    return svc.phoneRemote;
+  };
+  svc.remote = () => svc.phoneRemote || null;
+  peer.on(`t:${P.T.REMOTE_HELLO}`, () => !svc.phoneRemote && peer.current && peer.current.os === P.OS.ANDROID
+    && peer.sendToClient({ t: P.T.REMOTE_STATE, allowed: false, why: 'Remote is off on this computer: turn it on in TwinDesk’s Remote page there' }));
+  svc.loadRemote();
+  svc.kvm.on('where', () => svc.phoneRemote && svc.phoneRemote.refresh());
   const blockEdge = svc.kvm.blockEdge;
   svc.kvm.blockEdge = () => blockEdge() || svc.phoneViews.focused; // moving inside the phone window never crosses
   svc.apps.setSharing = (on, by) => actions.setSharing(on, by);

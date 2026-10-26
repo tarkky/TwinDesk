@@ -1,5 +1,6 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
-// Camera tab (Mac, PC and Linux): the other device's camera running here, its switch at the top. A
+// Camera tab (Mac, PC and Linux): its switch at the top turns Camera on (off: nothing of it is
+// loaded or runs, and nothing is shared); Start runs the other device's camera here. A
 // phone's, back or front, through wireless debugging (phoneview.js openCamera, Android 12 or later;
 // the phone's own Camera page starts it too); the other computer's, which it shares only with
 // "Let … see this camera" on there (camshare.js). Its picture shows on the page (turned with
@@ -47,9 +48,8 @@
     desc: 'The other device’s camera here, and as a camera other apps can pick.',
     badge: (s) => (s.camera && s.camera.sending ? 'warn' : running(s) ? 'on' : ''),
     master: {
-      get: (s) => running(s),
-      set: (v) => start(v),
-      disabled: (s) => !running(s) && !!blocked(s),
+      get: (s) => !!(s.camera && s.camera.on),
+      set: (v) => UI.api.camera({ do: 'on', on: v }),
     },
     build(body) {
       const { api, el } = UI;
@@ -83,14 +83,15 @@
       rotate.title = 'A quarter turn clockwise: here, in its window and in the virtual camera';
       const windowBtn = UI.button('Window', () => start(true, true));
       windowBtn.title = 'Open it in a window';
-      const controls = UI.row('{name}’s camera', '', [facingSeg, rotate, windowBtn]);
+      const startBtn = UI.button('Start', () => cur && start(!running(cur)));
+      const controls = UI.row('{name}’s camera', '', [startBtn, facingSeg, rotate, windowBtn]);
       const picCard = UI.card('', [box, controls]);
 
       // Virtual camera: the picture also goes to a camera other apps can pick.
       const virtual = UI.switch((v) => cam({ do: 'virtual', on: v }), { label: 'Virtual camera' });
       const vRemove = UI.button('Remove', () => cam({ do: 'vcamRemove' }));
       const vRow = UI.row('Virtual camera', '', [vRemove, virtual]);
-      const vCard = UI.card('Virtual camera', [vRow], { cls: 'keep-on' });
+      const vCard = UI.card('Virtual camera', [vRow]);
 
       // This computer's camera there.
       const share = UI.switch((v) => cam({ do: 'share', on: v }), { label: 'Share this camera' });
@@ -99,7 +100,7 @@
       const deviceRow = UI.row('Camera', 'Which of {me}’s cameras it shows', [device]);
       const stop = UI.button('Stop', () => cam({ do: 'stop' }), 'danger');
       const liveRow = UI.row('{name} is viewing it now', 'The camera is on while it’s running there', [stop]);
-      const ourCard = UI.card('{me}’s camera', [shareRow, deviceRow, liveRow], { cls: 'keep-on' });
+      const ourCard = UI.card('{me}’s camera', [shareRow, deviceRow, liveRow]);
 
       const note = UI.note('info', '');
       body.append(picCard, vCard, ourCard, note);
@@ -121,7 +122,8 @@
         // The picture, or what it's waiting for.
         const why = blocked(s);
         let text = '';
-        if (!on) text = why ? UI.fill(why) : 'Off: turn on Camera at the top';
+        if (!c.on) text = 'Off: turn on Camera at the top';
+        else if (!on) text = UI.fill(why || 'Press Start to run {name}’s camera here');
         else if (phone && w && w.error) text = `It stopped: ${w.error}`;
         else if (!phone && c.viewStatus === 'refused') text = UI.fill('Turn on “Let {me} see this camera” on {name}');
         else if (!phone && c.viewStatus === 'failed') text = `It didn’t start: ${c.viewError || 'unknown'}`;
@@ -135,6 +137,9 @@
           url = '';
           img.removeAttribute('src');
         }
+        startBtn.textContent = on ? 'Stop' : 'Start';
+        startBtn.disabled = !c.on || (!on && !!why);
+        startBtn.title = !on && why ? UI.fill(why) : '';
         facingSeg.el.hidden = !phone;
         rotate.disabled = !on;
         windowBtn.disabled = !on;

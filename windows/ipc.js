@@ -105,6 +105,7 @@ function setupIpc(ctx) {
   handle('phoneBtPick', (id) => typeof id === 'string' && id && ctx.btAudio && ctx.btAudio.pick(id));
   // Camera tab: the other computer's camera here, this one's there (shared/camshare.js).
   handle('camera', (m) => {
+    if (m && m.do === 'on') return ctx.setCamera(m.on === true); // Camera's switch: loads it, or stops it
     const c = ctx.camShare;
     if (!c || !m || typeof m !== 'object') return;
     if (m.do === 'view') c.view(m.show === true); // show: its window too
@@ -120,10 +121,13 @@ function setupIpc(ctx) {
   });
   // Remote tab: the phone's Remote page here (shared/phone-remote.js).
   handle('setRemote', (m) => {
-    if (!m || typeof m !== 'object' || !ctx.phoneRemote) return;
-    if ('allow' in m) ctx.phoneRemote.setAllow(m.allow === true);
-    if ('pad' in m) ctx.phoneRemote.setPad(m.pad === true); // Real gamepad
+    if (!m || typeof m !== 'object') return;
+    // Off at start: not loaded; turned on, it loads (and answers the phone).
+    if ('allow' in m && !ctx.phoneRemote && m.allow === true) { ctx.settings.remote.allow = true; ctx.loadRemote(); }
+    else if ('allow' in m && ctx.phoneRemote) ctx.phoneRemote.setAllow(m.allow === true);
+    if ('pad' in m && ctx.phoneRemote) ctx.phoneRemote.setPad(m.pad === true); // Real gamepad
     ctx.save();
+    ctx.push();
   });
   handle('setTerminal', (partial) => {
     const p = partial && typeof partial === 'object' ? { enabled: partial.enabled, allowMac: partial.allowMac } : {};

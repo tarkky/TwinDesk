@@ -139,18 +139,21 @@ class Netlink(core: Core) : Feature(core) {
     private val onBle get() = core.link.connected && core.link.ble
     private fun hostOs() = core.host?.os ?: "mac"
 
-    init {
-        core.bg.scheduleWithFixedDelay({ tick() }, 1, 1, TimeUnit.SECONDS)
-    }
+    // Once a second while a computer is connected (nothing to let go of otherwise): no wake-ups when idle.
+    private var ticker: java.util.concurrent.ScheduledFuture<*>? = null
 
     override fun onWelcome(host: Host) {
-        synchronized(this) { peerCaps = null }
+        synchronized(this) {
+            peerCaps = null
+            if (ticker == null) ticker = core.bg.scheduleWithFixedDelay({ tick() }, 1, 1, TimeUnit.SECONDS)
+        }
         if (!onBle) return
         core.link.send(msg(Proto.T.NET_CAPS, "host" to direct.can(), "join" to direct.can(), "hotspot" to true))
     }
 
     override fun onClosed() {
         synchronized(this) {
+            ticker?.cancel(false); ticker = null
             needs.clear(); peerNeeds.clear(); peerCaps = null
             linger?.cancel(false); deadline?.cancel(false)
             flushLocked()

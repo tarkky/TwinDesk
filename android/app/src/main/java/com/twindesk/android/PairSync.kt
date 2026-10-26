@@ -16,7 +16,8 @@ class PairSync(core: Core) : Feature(core) {
     )
 
     // Shared values, the same on both sides (the Mac's VALUES): stored as strings.
-    private val valueDefaults = mapOf("keyboard" to "true", "speed" to "1", "reverseScroll" to "false", "gestures" to "true", "pace" to "fast", "ble" to "true")
+    // keyboard: off on a fresh install, like every feature.
+    private val valueDefaults = mapOf("keyboard" to core.store.was.toString(), "speed" to "1", "reverseScroll" to "false", "gestures" to "true", "pace" to "fast", "ble" to "true")
 
     fun value(key: String): String = core.store.prefsString("value.$key", valueDefaults[key] ?: "")
 
@@ -34,7 +35,7 @@ class PairSync(core: Core) : Feature(core) {
 
     fun get(feature: String, dir: String): Boolean {
         val (o, i) = keys.getValue(feature)
-        return core.store.flag(if (dir == "out") o else i, feature != "audio" && !(feature == "cursor" && dir == "out"))
+        return core.store.flag(if (dir == "out") o else i, core.store.was && feature != "audio" && !(feature == "cursor" && dir == "out"))
     }
 
     // The person flipped a switch here: tell the computer, which follows.

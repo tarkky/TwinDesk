@@ -70,7 +70,7 @@ class CamShare {
   }
 
   get share() {
-    return this.cfg().share === true;
+    return this.cfg().share === true && this.cfg().on !== false; // Camera's switch off: nothing shared
   }
 
   sendPolicy() {
