@@ -247,8 +247,13 @@ namespace MacShare
                 try { q.Add(new KeyValuePair<GattLocalCharacteristic, byte[]>(chr, data)); } catch (InvalidOperationException) { }
             }
 
+            // What's still queued doesn't go either (CompleteAdding alone lets the loop drain it): an old
+            // pipe's bytes after the phone's new open broke the new session's TLS.
+            volatile bool stopped;
+
             public void Stop()
             {
+                stopped = true;
                 q.CompleteAdding();
             }
 
@@ -283,8 +288,9 @@ namespace MacShare
             {
                 foreach (KeyValuePair<GattLocalCharacteristic, byte[]> taken in q.GetConsumingEnumerable())
                 {
+                    if (stopped) return;
                     Send(Merge(taken));
-                    while (held.HasValue)
+                    while (held.HasValue && !stopped)
                     {
                         KeyValuePair<GattLocalCharacteristic, byte[]> h = held.Value;
                         held = null;
@@ -299,7 +305,7 @@ namespace MacShare
                 try { max = Math.Max(20, (int)client.MaxNotificationSize); } catch (Exception) { }
                 byte[] data = item.Value;
                 int sent = 0;
-                for (int i = 0; i < data.Length; i += max)
+                for (int i = 0; i < data.Length && !stopped; i += max)
                 {
                     int n = Math.Min(max, data.Length - i);
                     byte[] chunk = new byte[n];
@@ -443,21 +449,18 @@ namespace MacShare
         }
 
         // A pipe on a link that is up (a phone's): start one, or end it and keep the link.
+        // Through the link's own queue, after what the pipe before it sent (Pipe.Next).
         public void OpenPipe(string dev)
         {
             Pipe p;
             if (!pipes.TryGetValue(dev, out p)) { Net.Event(ev + "close", dev, "error", "not linked"); return; }
-            Task.Run(async () =>
-            {
-                try { await p.WriteCtrl("{\"op\":\"open\"}"); Net.Event(ev + "opened", dev, null, null); }
-                catch (Exception e) { Net.Event(ev + "close", dev, "error", e.Message); }
-            });
+            p.Next("{\"op\":\"open\"}");
         }
 
         public void EndPipe(string dev)
         {
             Pipe p;
-            if (pipes.TryGetValue(dev, out p)) Task.Run(async () => { try { await p.WriteCtrl("{\"op\":\"close\"}"); } catch (Exception) { } });
+            if (pipes.TryGetValue(dev, out p)) p.Next("{\"op\":\"close\"}");
         }
 
         public void StopAll()
@@ -476,7 +479,14 @@ namespace MacShare
             GattSession session;
             GattDeviceService svc;
             GattCharacteristic ctrl, up, down;
-            readonly BlockingCollection<byte[]> q = new BlockingCollection<byte[]>();
+            // UP's bytes and a phone's open and close, in one queue: the phone takes what comes after
+            // its open as the new session's, so the open must follow everything the pipe before it
+            // sent, and what's left of that pipe once it's over never goes (one stale byte and the
+            // new session's TLS fails: "Unable to parse TLS packet header").
+            class Item { public byte[] Data; public string Ctrl; public int Gen; }
+            readonly BlockingCollection<Item> q = new BlockingCollection<Item>();
+            volatile int gen; // the pipe whose bytes go now (a phone's link outlives its pipes)
+            Item held; // taken while merging, but not bytes of this pipe: Loop's next
             volatile bool alive = true;
             IDisposable fast; // the short connection interval we asked for (Fast), while the pipe lives
 
@@ -508,9 +518,11 @@ namespace MacShare
                 this.ev = ev;
             }
 
-            public Task WriteCtrl(string text)
+            // A phone's pipe ends (close) or a new one starts (open): what's still queued is the old one's.
+            public void Next(string ctrlText)
             {
-                return Write(ctrl, text);
+                gen++;
+                try { q.Add(new Item { Ctrl = ctrlText, Gen = gen }); } catch (InvalidOperationException) { }
             }
 
             public async Task Open(string hello, bool open)
@@ -581,24 +593,26 @@ namespace MacShare
 
             public void Add(byte[] data)
             {
-                try { q.Add(data); } catch (InvalidOperationException) { }
+                try { q.Add(new Item { Data = data, Gen = gen }); } catch (InvalidOperationException) { }
             }
 
-            // Everything waiting, as one buffer (up to MERGE bytes): each write is a round trip on the
-            // radio, so a backlog goes in full-size writes, not one per message.
+            // Everything waiting for this pipe, as one buffer (up to MERGE bytes): each write is a round
+            // trip on the radio, so a backlog goes in full-size writes, not one per message.
             const int MERGE = 8192;
 
-            byte[] Merge(byte[] first)
+            byte[] Merge(byte[] first, int g)
             {
-                byte[] next;
-                if (first.Length >= MERGE || !q.TryTake(out next)) return first;
-                List<byte[]> parts = new List<byte[]> { first, next };
-                int total = first.Length + next.Length;
-                while (total < MERGE && q.TryTake(out next))
+                List<byte[]> parts = new List<byte[]> { first };
+                int total = first.Length;
+                Item next;
+                while (total < MERGE && held == null && q.TryTake(out next))
                 {
-                    parts.Add(next);
-                    total += next.Length;
+                    if (next.Gen != g) continue; // the pipe before's
+                    if (next.Data == null) { held = next; break; }
+                    parts.Add(next.Data);
+                    total += next.Data.Length;
                 }
+                if (parts.Count == 1) return first;
                 byte[] all = new byte[total];
                 int at = 0;
                 foreach (byte[] b in parts)
@@ -611,12 +625,28 @@ namespace MacShare
 
             void Loop()
             {
-                foreach (byte[] taken in q.GetConsumingEnumerable())
+                while (alive)
                 {
-                    byte[] data = Merge(taken);
+                    Item it = held;
+                    held = null;
+                    if (it == null && !q.TryTake(out it, Timeout.Infinite)) return;
+                    if (it.Gen != gen) continue; // the pipe before's
+                    if (it.Ctrl != null)
+                    {
+                        bool open = it.Ctrl.Contains("open");
+                        try
+                        {
+                            Write(ctrl, it.Ctrl).Wait();
+                            if (open) Net.Event(ev + "opened", dev, null, null);
+                        }
+                        catch (Exception e) { if (open) Net.Event(ev + "close", dev, "error", (e.InnerException ?? e).Message); }
+                        continue;
+                    }
+                    int g = it.Gen;
+                    byte[] data = Merge(it.Data, g);
                     int max = 20;
                     try { max = Math.Min(512, Math.Max(20, session.MaxPduSize - 3)); } catch (Exception) { } // an attribute value is at most 512 bytes
-                    for (int i = 0; i < data.Length && alive; i += max)
+                    for (int i = 0; i < data.Length && alive && g == gen; i += max)
                     {
                         int n = Math.Min(max, data.Length - i);
                         byte[] chunk = new byte[n];

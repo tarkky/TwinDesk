@@ -68,7 +68,10 @@ class BleServe(
     private var ctrl: BluetoothGattCharacteristic? = null
     private var down: BluetoothGattCharacteristic? = null
     @Volatile private var advertising = false
-    private val notes = LinkedBlockingQueue<Triple<BluetoothDevice, BluetoothGattCharacteristic, ByteArray>>()
+    // What goes to the PCs, in order; a pipe's bytes (peer set) don't once that pipe is over: the next
+    // pipe's session would take them as its own, and its TLS fails ("Unable to parse TLS packet header").
+    private class Note(val dev: BluetoothDevice, val c: BluetoothGattCharacteristic, val v: ByteArray, val peer: Peer? = null, val gen: Int = 0)
+    private val notes = LinkedBlockingQueue<Note>()
     private val noteSent = Semaphore(0)
     // A Linux computer's writes: their responses go from here until Android takes one (respond), and
     // notifications wait for them meanwhile.
@@ -234,7 +237,9 @@ class BleServe(
     // response on its way to Linux (respond).
     private fun notifyLoop() {
         while (true) {
-            val (dev, c, v) = notes.take()
+            val n = notes.take()
+            if (n.peer != null && n.peer.gen != n.gen) continue // that pipe is over
+            val dev = n.dev; val c = n.c; val v = n.v
             var waited = 0
             while (responding.get() > 0 && waited++ < 1500) Thread.sleep(2)
             val s = server ?: continue
@@ -264,12 +269,12 @@ class BleServe(
         @Volatile private var sock: Socket? = null
         @Volatile private var listener: ServerSocket? = null // waiting for the session's socket
         val piped get() = sock != null || listener != null
-        @Volatile private var gen = 0 // the pipe a DOWN chunk belongs to
+        @Volatile var gen = 0; private set // the pipe a DOWN chunk belongs to
         private val pending = java.io.ByteArrayOutputStream() // UP before the session's socket connected
 
         fun ctrlNote(o: JSONObject) {
             val c = ctrl ?: return
-            notes.add(Triple(dev, c, o.toString().toByteArray()))
+            notes.add(Note(dev, c, o.toString().toByteArray()))
         }
 
         fun onCtrl(v: ByteArray) {
@@ -340,7 +345,7 @@ class BleServe(
                 var i = 0
                 while (i < n) {
                     val len = minOf(max, n - i)
-                    notes.add(Triple(dev, c, buf.copyOfRange(i, i + len)))
+                    notes.add(Note(dev, c, buf.copyOfRange(i, i + len), this, g))
                     i += len
                 }
                 while (notes.size > 64 && sock === s) Thread.sleep(5) // don't run far ahead of the radio

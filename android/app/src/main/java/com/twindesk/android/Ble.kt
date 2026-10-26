@@ -203,6 +203,11 @@ class Ble(
         private val cb = object : BluetoothGattCallback() {
             override fun onConnectionStateChange(g: BluetoothGatt, status: Int, state: Int) {
                 if (state == BluetoothProfile.STATE_CONNECTED) {
+                    // Paired with it (Bluetooth settings, as for Remote's gamepad): Android keeps its
+                    // services from before, and the helper's handles can move each time it starts; read
+                    // with the old ones, CTRL's messages could come down as DOWN's bytes and break the
+                    // session's TLS. Forget them so they're read again.
+                    if (runCatching { dev.bondState }.getOrNull() == BluetoothDevice.BOND_BONDED) refresh(g)
                     op("mtu") { g.requestMtu(517) }
                 } else if (state == BluetoothProfile.STATE_DISCONNECTED) close()
             }
@@ -372,6 +377,11 @@ class Ble(
             gatt = null
             conns.remove(dev.address, this)
             readyWait.countDown()
+        }
+
+        // BluetoothGatt.refresh(): hidden, but there since 4.3 and allowed to apps (greylist).
+        private fun refresh(g: BluetoothGatt) {
+            runCatching { g.javaClass.getMethod("refresh").invoke(g) }.onFailure { Log.w("TwinDesk", "ble: refresh: ${it.message}") }
         }
 
         @Suppress("DEPRECATION")
