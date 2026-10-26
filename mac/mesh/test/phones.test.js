@@ -81,5 +81,19 @@ test('two phones: a stack each, routed by id, what each says about itself stays 
   }
 });
 
+// A phone this Mac can't drive itself goes through a connected computer that can (kvm.take with `via`):
+// the hub's sessions are a Sessions, listed, not a Map ("this.hub.sessions is not iterable" at an edge).
+test('a phone driven through another computer: the relay is found among the sessions', () => {
+  const { Kvm } = require('../kvm.js');
+  const k = Object.create(Kvm.prototype);
+  const sessions = [{ id: 'phone', connected: true }, { id: 'pc', connected: true }, { id: 'off', connected: false }];
+  k.hub = { sessions: { list: () => sessions } };
+  k._peerOs = (id) => (id === 'phone' ? P.OS.ANDROID : P.OS.WINDOWS);
+  k._canDriveTo = (id) => id !== 'off';
+  assert.strictEqual(k._relayFor('phone'), 'pc');
+  k._canDriveTo = () => false;
+  assert.strictEqual(k._relayFor('phone'), null);
+});
+
 const { runTests } = require('../../../windows/mesh/test/lib/run.js');
 runTests(tests);

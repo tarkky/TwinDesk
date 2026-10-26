@@ -408,7 +408,8 @@ class Kvm extends EventEmitter {
 
   // A connected computer (not a phone) we may drive, to drive the phone `id` through.
   _relayFor(id) {
-    for (const [sid, sess] of this.hub.sessions) {
+    for (const sess of this.hub.sessions.list()) {
+      const sid = sess.id;
       if (sid !== id && sess.connected && this._peerOs(sid) !== P.OS.ANDROID && this._canDriveTo(sid)) return sid;
     }
     return null;
