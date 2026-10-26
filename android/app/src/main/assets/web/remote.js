@@ -15,7 +15,7 @@
   const send = (m) => TD.send(JSON.stringify(m));
   const tick = () => { try { TD.tick(); } catch (_) { /* older app */ } };
   const $ = (id) => document.getElementById(id);
-  let opts = { mode: 'pad', name: 'the computer', me: 'this device', connected: true, os: '', ble: false, speed: 1, tap: true, smooth: true, pad: {} };
+  let opts = { mode: 'pad', name: 'the computer', me: 'this device', connected: true, os: '', ble: false, speed: 1, tap: true, smooth: true, pad: {}, controls: [], keys: [] };
   let allowed = null; // the computer's remote.state
   let why = ''; // …and why it doesn't take it now
   let real = false; // the computer takes the gamepad as a real one (remote.pad)
@@ -60,7 +60,37 @@
           : '';
     $('note').textContent = note;
     $('note').hidden = !note;
+    // A real controller: what the computer sees it as.
+    const sees = !game ? ''
+      : opts.bt ? `${opts.btName || 'The computer'} sees ${opts.me} as “TwinDesk Gamepad”, a Bluetooth game controller`
+        : real && opts.os === 'win' ? `Windows sees it as an Xbox 360 Controller: games take it as one (joy.cpl lists it under Game Controllers)`
+          : real && opts.os === 'linux' ? `${opts.name} sees it as “TwinDesk Gamepad”, an Xbox 360 controller`
+            : real ? `${opts.name} sees it as a game controller` : '';
+    $('pad-note').textContent = sees;
+    $('pad-note').hidden = !sees;
+    if (!$('map').hidden) mapFill();
   }
+
+  // ---- the gamepad's keys (Keys): what each control presses when it isn't a real controller ----
+  function mapFill() {
+    const list = $('map-list');
+    list.textContent = '';
+    for (const [id, label] of opts.controls || []) {
+      const row = document.createElement('label');
+      const sel = document.createElement('select');
+      for (const [code, name] of opts.keys || []) sel.add(new Option(name, code));
+      sel.value = padKey(id);
+      sel.onchange = () => TD.setPad(id, sel.value);
+      row.append(label, sel);
+      list.append(row);
+    }
+    $('map-hint').textContent = asPad()
+      ? 'It’s a real controller now: these keys are what it presses when it isn’t (Real gamepad off on the computer, not as a Bluetooth gamepad).'
+      : 'What each control presses on the computer. The left stick is four keys; the right stick moves the mouse.';
+  }
+  $('b-map').onclick = () => { releaseAll(); mapFill(); $('map').hidden = false; };
+  $('map-done').onclick = () => { $('map').hidden = true; };
+  $('map-reset').onclick = () => TD.event('padReset');
 
   window.tdRecv = (m) => {
     if (m.t === 'opts') {

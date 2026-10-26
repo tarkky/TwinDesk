@@ -53,7 +53,10 @@ class Remote(core: Core) : Feature(core) {
         ble = core.link.ble
         return msg("opts", "mode" to mode, "name" to (core.host?.name ?: "the computer"), "me" to core.store.deviceName, "connected" to (core.host != null),
             "os" to (core.host?.os ?: ""), "ble" to core.link.ble, "speed" to speed.toDouble(), "tap" to tapClick, "smooth" to smooth, "pad" to padMap(),
-            "bt" to (core.btPadMade && core.btPad.connected), "btName" to (if (core.btPadMade) core.btPad.hostName else ""))
+            "bt" to (core.btPadMade && core.btPad.connected), "btName" to (if (core.btPadMade) core.btPad.hostName else ""),
+            // The gamepad's Keys: its controls and what each can press.
+            "controls" to org.json.JSONArray(CONTROLS.map { org.json.JSONArray(listOf(it.first, it.second)) }),
+            "keys" to org.json.JSONArray(KEYS.map { org.json.JSONArray(listOf(it.first, it.second)) }))
     }
 
     // As a Bluetooth gamepad (BtPad) connected or not: an open page follows.
@@ -178,6 +181,7 @@ class RemoteActivity : ComponentActivity() {
                     if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
                     else ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
                 "keyboard" -> host?.keyboard(true)
+                "padReset" -> Core.get(this).remote.resetPad() // the gamepad's Keys › Reset
                 "keyboardOff" -> host?.keyboard(false)
             }
         }

@@ -12,6 +12,7 @@
     <span id="name">Remote</span>
     <button id="b-rotate" class="pad-only" aria-label="Rotate">Rotate</button>
     <button id="b-kbd" class="pad-only" aria-label="Keyboard">Keyboard</button>
+    <button id="b-map" class="game-only" aria-label="Keys">Keys</button>
     <button id="b-close" aria-label="Close">✕</button>
   </header>
   <div id="note" hidden></div>
@@ -26,12 +27,12 @@
     </div>
   </section>
 
-  <!-- Gamepad: each button presses the key the Remote page set for it -->
+  <!-- Gamepad: each button presses the key set for it (Keys), or is a real controller's -->
   <section id="game" class="game-only">
-    <button class="g shoulder" id="g-lt" data-id="lt">LT</button>
-    <button class="g shoulder" id="g-lb" data-id="lb">LB</button>
-    <button class="g shoulder" id="g-rb" data-id="rb">RB</button>
-    <button class="g shoulder" id="g-rt" data-id="rt">RT</button>
+    <button class="g shoulder trigger" id="g-lt" data-id="lt">LT</button>
+    <button class="g shoulder bumper" id="g-lb" data-id="lb">LB</button>
+    <button class="g shoulder bumper" id="g-rb" data-id="rb">RB</button>
+    <button class="g shoulder trigger" id="g-rt" data-id="rt">RT</button>
     <button class="g small" id="g-back" data-id="back">Back</button>
     <button class="g small" id="g-start" data-id="start">Start</button>
     <div class="stick" id="ls"><div class="knob"></div></div>
@@ -50,7 +51,15 @@
     </div>
     <button class="g small" id="g-l3" data-id="l3">L3</button>
     <button class="g small" id="g-r3" data-id="r3">R3</button>
+    <div id="pad-note" hidden></div>
   </section>
+
+  <!-- The gamepad's keys: what each control presses (Remote.kt keeps them) -->
+  <div id="map" class="game-only" hidden>
+    <header><b>Gamepad keys</b><button id="map-reset">Reset</button><button id="map-done">Done</button></header>
+    <p class="hint" id="map-hint"></p>
+    <div id="map-list"></div>
+  </div>
 
   <textarea id="kbd" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
   <script src="remote.js"></script>

@@ -342,6 +342,8 @@ function setupSeen() {
   store.saveSettings(settings);
 }
 
+// The window exists only while it's open: closing it (to the menu bar) frees its page, about
+// 50-100 MB; opening it again makes it anew (showWindow).
 function createWindow() {
   win = new BrowserWindow({
     width: 1060,
@@ -364,20 +366,15 @@ function createWindow() {
     if (e.level === 'warning' || e.level === 'error') console.log(`[window] ${e.level}: ${e.message}`);
   });
   win.loadFile(path.join(__dirname, 'control.html'));
-  win.once('ready-to-show', () => {
-    if (startHidden) startHidden = false; // started at login: stay in the menu bar
-    else showWindow();
-  });
+  win.once('ready-to-show', showWindow);
   // In the Dock and ⌘-Tab only while the window is open; menu bar only otherwise.
-  win.on('show', dockIcon);
-  win.on('hide', dockIcon);
-  win.on('closed', dockIcon);
-  win.on('focus', refreshPermissions);
-  win.on('close', (e) => {
-    if (!quitting) {
-      e.preventDefault();
-      win.hide();
-    }
+  const w = win;
+  w.on('show', dockIcon);
+  w.on('hide', dockIcon);
+  w.on('focus', refreshPermissions);
+  w.on('closed', () => {
+    if (win === w) win = null;
+    dockIcon();
   });
 }
 
@@ -707,7 +704,9 @@ app.whenReady().then(() => {
     trayPct = t;
     tray.setTitle(t, { fontType: 'monospacedDigit' });
   }, 500).unref();
-  createWindow();
+  // Started at login: in the menu bar only; the window is made when it's first opened.
+  if (startHidden) startHidden = false;
+  else createWindow();
   refreshPermissions();
   if (process.env.MACSHARE_DEV_TEST) require('./dev/m2m')({ role: process.env.MACSHARE_DEV_TEST, svc, actions, link, pairing, peer });
   readDefaultIf();

@@ -328,7 +328,7 @@ function start() {
     pendingMacApp = null;
   });
   createTray();
-  createMainWindow();
+  if (!startHidden) createMainWindow(); // in the tray: made when it's first opened
   if (!sendTo.handle(process.argv) && !openMacAppArg(process.argv)) openPhoneAppArg(process.argv);
   setTimeout(checkFirewall, 3000);
   if (process.argv.includes('--test-monitor')) screen.open(true); // dev: ?test=1 pattern
@@ -993,7 +993,9 @@ function statusLine(s) {
 
 // ---- windows and tray ----
 
-function createMainWindow() {
+// The main window exists only while it's open: closing it (to the tray) frees its page, about
+// 50-100 MB; opening it again makes it anew (showMain).
+function createMainWindow(tab) {
   const b = settings.windows.main || {};
   mainWin = new BrowserWindow({
     width: b.width || 900,
@@ -1014,14 +1016,14 @@ function createMainWindow() {
     },
   });
   mainWin.loadFile(path.join(__dirname, 'app.html'));
-  mainWin.once('ready-to-show', () => { if (!startHidden) mainWin.show(); });
-  mainWin.on('close', (e) => {
-    saveBounds();
-    if (!quitting) {
-      e.preventDefault();
-      mainWin.hide();
-    }
+  const win = mainWin;
+  win.once('ready-to-show', () => {
+    if (tab) win.webContents.send('go', tab);
+    win.show();
+    win.focus();
   });
+  win.on('close', () => saveBounds());
+  win.on('closed', () => { if (mainWin === win) mainWin = null; });
 }
 
 function saveBounds() {
@@ -1032,12 +1034,13 @@ function saveBounds() {
 
 // Show the window on one tab (tray items, popups).
 function goTab(tab) {
+  if (!mainWin || mainWin.isDestroyed()) return void createMainWindow(tab); // goes there once loaded
   showMain();
-  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('go', tab);
+  mainWin.webContents.send('go', tab);
 }
 
 function showMain() {
-  if (!mainWin || mainWin.isDestroyed()) return;
+  if (!mainWin || mainWin.isDestroyed()) return void createMainWindow();
   if (mainWin.isMinimized()) mainWin.restore();
   mainWin.show();
   mainWin.focus();

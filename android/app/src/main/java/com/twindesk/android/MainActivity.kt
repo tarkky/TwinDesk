@@ -33,7 +33,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -46,8 +45,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -1065,7 +1062,7 @@ private fun RemotePage(core: Core, v: Int) {
         MacRow("Touchpad and keyboard", "Slide to move $name’s pointer, tap to click, hold to right click, two fingers to scroll. Keys and media keys too", first = true) {
             Primary("Open") { open("pad") }
         }
-        MacRow("Gamepad", "Held sideways. The left stick is WASD, the right stick is the mouse, the buttons press the keys set below") {
+        MacRow("Gamepad", "Held sideways, like a controller. The left stick is WASD, the right stick is the mouse; Keys in its top bar sets what each button presses") {
             Primary("Open") { open("gamepad") }
         }
     }
@@ -1075,12 +1072,6 @@ private fun RemotePage(core: Core, v: Int) {
         }
         SwitchRow("Tap to click", "A quick tap left-clicks; a slide never clicks. Off: only the click buttons click", r.tapClick) { r.setTapClick(it) }
         SwitchRow("Smooth", "Even pointer motion on $name, about a frame later. Off: each move the moment it arrives", r.smooth) { r.setSmooth(it) }
-    }
-    MacCard("Gamepad buttons") {
-        Remote.CONTROLS.forEachIndexed { i, (id, label) ->
-            MacRow(label, "", first = i == 0) { KeyPicker(r.padKey(id)) { r.setPad(id, it) } }
-        }
-        MacRow("Reset", "WASD on the left stick, Space on A, the mouse buttons on the triggers…") { Secondary("Reset") { r.resetPad() } }
     }
     BtPadCard(core)
     Note(
@@ -1127,18 +1118,6 @@ private fun BtPadCard(core: Core) {
                     Secondary("Let computers find it") { findable.launch(core.btPad.discoverableIntent()) }
                 }
             }
-        }
-    }
-}
-
-// A gamepad control's key: tap for the list (keys, mouse buttons, or nothing).
-@Composable
-private fun KeyPicker(code: String, pick: (String) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        OutlinedButton(onClick = { open = true }, shape = RoundedCornerShape(8.dp)) { Text(Remote.keyName(code), color = pal.text) }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.heightIn(max = 360.dp)) {
-            for ((c, label) in Remote.KEYS) DropdownMenuItem(text = { Text(label) }, onClick = { open = false; pick(c) })
         }
     }
 }

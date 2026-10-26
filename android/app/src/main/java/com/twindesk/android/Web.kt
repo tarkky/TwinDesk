@@ -61,6 +61,10 @@ class WebHost(ctx: Context, page: String, private val core: Core, private val on
         @JavascriptInterface fun tick() = main.post { view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY) }.let { }
         // Something for the activity around the page (remote.html: "close", "keyboard", "keyboardOff").
         @JavascriptInterface fun event(name: String) = main.post { onEvent(name, null) }.let { }
+        // The gamepad's Keys: a control's key (Remote.CONTROLS id, a KeyboardEvent.code, Mouse0..2 or "").
+        @JavascriptInterface fun setPad(id: String, code: String) = main.post {
+            if (Remote.CONTROLS.any { it.first == id } && Remote.KEYS.any { it.first == code }) core.remote.setPad(id, code)
+        }.let { }
         // The gamepad's state, as a Bluetooth gamepad (BtPad: remote.html while a computer is connected to it).
         @JavascriptInterface fun pad(b: Int, lx: Double, ly: Double, rx: Double, ry: Double, lt: Double, rt: Double) {
             if (core.btPadMade) core.btPad.pad(b, lx, ly, rx, ry, lt, rt)

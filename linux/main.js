@@ -322,7 +322,7 @@ function start() {
   });
 
   createTray();
-  createMainWindow();
+  if (!startHidden) createMainWindow(); // in the tray: made when it's first opened
   if (!sendTo.handle(process.argv)) openMacAppArg(process.argv);
   checkFirewall();
   if (process.argv.includes('--test-monitor')) screen.open(true); // dev: ?test=1 pattern
@@ -1050,7 +1050,9 @@ function statusLine(s) {
 
 // ---- windows and tray ----
 
-function createMainWindow() {
+// The main window exists only while it's open: closing it (to the tray) frees its page, about
+// 50-100 MB; opening it again makes it anew (showMain).
+function createMainWindow(tab) {
   const b = settings.windows.main || {};
   mainWin = new BrowserWindow({
     width: b.width || 900,
@@ -1071,15 +1073,19 @@ function createMainWindow() {
     },
   });
   mainWin.loadFile(path.join(__dirname, 'app.html'));
-  mainWin.once('ready-to-show', () => { if (!startHidden) mainWin.show(); });
-  for (const ev of ['show', 'hide', 'minimize', 'restore']) mainWin.on(ev, () => applyBle()); // Bluetooth looks only while it's open
-  mainWin.on('show', () => lookForPhones());
-  mainWin.on('close', (e) => {
-    saveBounds();
-    if (!quitting && tray) { // no tray on this desktop: closing quits, or nothing would bring it back
-      e.preventDefault();
-      mainWin.hide();
-    }
+  const win = mainWin;
+  win.once('ready-to-show', () => {
+    if (tab) win.webContents.send('go', tab);
+    win.show();
+    win.focus();
+  });
+  for (const ev of ['show', 'hide', 'minimize', 'restore']) win.on(ev, () => applyBle()); // Bluetooth looks only while it's open
+  win.on('show', () => lookForPhones());
+  // No tray on this desktop: closing quits (window-all-closed), or nothing would bring it back.
+  win.on('close', () => saveBounds());
+  win.on('closed', () => {
+    if (mainWin === win) mainWin = null;
+    applyBle();
   });
 }
 
@@ -1090,12 +1096,13 @@ function saveBounds() {
 }
 
 function goTab(tab) {
+  if (!mainWin || mainWin.isDestroyed()) return void createMainWindow(tab); // goes there once loaded
   showMain();
-  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('go', tab);
+  mainWin.webContents.send('go', tab);
 }
 
 function showMain() {
-  if (!mainWin || mainWin.isDestroyed()) return;
+  if (!mainWin || mainWin.isDestroyed()) return void createMainWindow();
   if (mainWin.isMinimized()) mainWin.restore();
   mainWin.show();
   mainWin.focus();
