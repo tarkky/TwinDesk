@@ -92,7 +92,14 @@ class Direct(private val ctx: Context) {
         if (!can()) throw Exception(if (!supported()) "no Wi-Fi Direct" else "Nearby devices not allowed")
         ensureWifi(name)
         await("remove") { mgr!!.removeGroup(ch!!, it) }
-        await("create") { mgr!!.createGroup(ch!!, config(ssid, pass, band2), it) }?.let { throw Exception(it) }
+        // Right after a join that failed Android answers "busy" for a few seconds.
+        var err: String? = null
+        for (i in 0 until 6) {
+            err = await("create") { mgr!!.createGroup(ch!!, config(ssid, pass, band2), it) } ?: break
+            if (err != "busy") break
+            Thread.sleep(1500)
+        }
+        err?.let { throw Exception(it) }
         repeat(30) { if (groupUp(true)) return; Thread.sleep(500) }
         throw Exception("the group didn’t start")
     }
@@ -312,6 +319,16 @@ class Netlink(core: Core) : Feature(core) {
         try {
             direct.join(s, p, core.host?.name ?: "The computer")
         } catch (e: Exception) {
+            // Its network doesn't work here (a phone whose Wi-Fi can't be on two channels at once: it's
+            // on another network, the computer's group on its own Wi-Fi's channel): ours instead, on
+            // the channel this phone is on, when the computer can join one (shared/netlink.js: it
+            // hears net.joined {retry} and waits for our net.join).
+            val swap = direct.can() && synchronized(this) { peerCaps?.optBoolean("join") == true }
+            if (swap) {
+                Log.i("TwinDesk", "netlink: couldn’t join $s (${e.message}): hosting here")
+                core.link.send(msg(Proto.T.NET_JOINED, "ok" to false, "error" to (e.message ?: "failed"), "retry" to true))
+                return startHost()
+            }
             core.link.send(msg(Proto.T.NET_JOINED, "ok" to false, "error" to (e.message ?: "failed")))
             return fail("Couldn’t join $s: ${e.message}")
         }
