@@ -58,7 +58,6 @@ const P = require('../shared/protocol.js');
 const { CamShare } = require('../shared/camshare.js');
 const { VirtualCam } = require('../shared/vcam.js');
 const { PhoneRemote } = require('../shared/phone-remote.js');
-const { NowPlaying } = require('../shared/nowplaying.js');
 const CL = require('../shared/cursorlock.js');
 const store = require('./store');
 const identity = require('./identity');
@@ -545,8 +544,16 @@ app.whenReady().then(() => {
   svc.phoneViews = new PhoneViews({ bridge: svc.phone.bridge, phone: svc.phone, getSettings: () => settings, server: peer, fileSend: svc.fileSend });
   // What plays on the phone, for the Overview's media controls (shared/nowplaying.js). Its sound as
   // this Mac's Bluetooth speaker isn't here: macOS can't be one.
-  svc.nowPlaying = new NowPlaying({ server: peer, cfg: () => settings.audio });
-  svc.nowPlaying.on('change', pushState);
+  // Loaded only while Audio › Media controls is on: made when it's first turned on; returns it (or
+  // null), for ipc, whose ctx is a copy of svc.
+  svc.loadNowPlaying = () => {
+    if (svc.nowPlaying || settings.audio.phoneMedia === false) return svc.nowPlaying || null;
+    const { NowPlaying } = require('../shared/nowplaying.js');
+    svc.nowPlaying = new NowPlaying({ server: peer, cfg: () => settings.audio });
+    svc.nowPlaying.on('change', pushState);
+    return svc.nowPlaying;
+  };
+  svc.loadNowPlaying();
   // Camera tab: the cameras of the two computers (shared/camshare.js; a phone's is phoneViews.openCamera).
   const computer = () => !!peer.current && peer.current.os !== P.OS.ANDROID;
   // Camera › Virtual camera (shared/vcam.js, vcam.js): the running camera's picture also goes to a

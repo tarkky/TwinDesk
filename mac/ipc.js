@@ -450,11 +450,14 @@ function setupIpc(ctx) {
     setAudio(partial) {
       setGroup('audio', partial);
       ctx.audio.applySettings();
-      if (partial && 'phoneMedia' in partial && ctx.nowPlaying) ctx.nowPlaying.apply();
+      // Loaded when first turned on; off, the loaded one stops.
+      const np = partial && 'phoneMedia' in partial && ctx.loadNowPlaying ? ctx.loadNowPlaying() : null;
+      if (np) np.apply();
     },
     // The phone's media controls on the Overview (shared/nowplaying.js).
     phoneMedia(m) {
-      if (m && ctx.nowPlaying) ctx.nowPlaying.control(String(m.a || ''), m.pos);
+      const np = ctx.loadNowPlaying ? ctx.loadNowPlaying() : null;
+      if (m && np) np.control(String(m.a || ''), m.pos);
     },
     phoneBtPick() {}, // no Bluetooth speaker mode on macOS
     // Camera tab: the other computer's camera here, this Mac's there (shared/camshare.js). macOS

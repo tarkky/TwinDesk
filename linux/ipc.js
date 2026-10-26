@@ -11,7 +11,7 @@ const { apply } = require('./settings');
 // ctx: link, discovery, screen, clip, kvm, fileDrop, smb, fileClip, vdd, sound, pcScreen, notifs, wake, terminal,
 //      sshd, apps, pcApps, peerApps, phone, phoneViews, connectPhoneDev(d), settings, save(), push(), buildState(), checkFirewall(), fixFirewall(), setStartup(on)
 function setupIpc(ctx) {
-  const { link, discovery, screen, clip, kvm, fileDrop, smb, fileClip, sound, pcScreen, notifs, wake, terminal, sshd, apps, pcApps, peerApps, settings } = ctx;
+  const { link, discovery, screen, clip, kvm, fileDrop, smb, fileClip, sound, pcScreen, notifs, wake, sshd, apps, pcApps, peerApps, settings } = ctx;
 
   const handle = (name, fn) => ipcMain.handle(name, (_e, ...args) => fn(...args));
   const change = (section, partial, after) => {
@@ -98,8 +98,9 @@ function setupIpc(ctx) {
   handle('setMulti', (on) => require('./multi').set(on === true)); // Multi-device: TwinDesk restarts
   handle('setAudio', (partial) => change('audio', partial, () => {
     sound.apply();
-    if (partial && 'phoneMedia' in partial && ctx.nowPlaying) ctx.nowPlaying.apply();
-    if (partial && 'phoneBt' in partial && ctx.btAudio) ctx.btAudio.apply();
+    // Loaded when first turned on (applied then); off, the loaded one stops.
+    if (partial && 'phoneMedia' in partial && ctx.nowPlaying) ctx.nowPlaying.apply(); else if (partial && 'phoneMedia' in partial) ctx.loadNowPlaying();
+    if (partial && 'phoneBt' in partial && ctx.btAudio) ctx.btAudio.apply(); else if (partial && 'phoneBt' in partial) ctx.loadBtAudio();
   }));
   handle('phoneMedia', (m) => m && ctx.nowPlaying && ctx.nowPlaying.control(String(m.a || ''), m.pos));
   handle('phoneBtPick', (id) => typeof id === 'string' && id && ctx.btAudio && ctx.btAudio.pick(id));
@@ -128,10 +129,10 @@ function setupIpc(ctx) {
   handle('setTerminal', (partial) => {
     const p = partial && typeof partial === 'object' ? { enabled: partial.enabled, allowMac: partial.allowMac } : {};
     Object.keys(p).forEach((k) => p[k] === undefined && delete p[k]);
-    change('terminal', p, () => { terminal.apply(); sshd.apply(); });
+    change('terminal', p, () => { if (ctx.terminal) ctx.terminal.apply(); else ctx.loadTerminal(); sshd.apply(); });
   });
   handle('setupSshd', () => sshd.setup());
-  handle('openTerminal', () => terminal.open());
+  handle('openTerminal', () => ctx.terminal && ctx.terminal.open());
   // Apps: a Mac sends its own (apps.js, through its screen stream); a PC or Linux computer through peerapps.js.
   const macPeer = () => link.peerOs === P.OS.MAC;
   handle('listApps', () => (macPeer() ? apps.refresh() : peerApps.refresh()));

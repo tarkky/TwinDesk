@@ -29,9 +29,6 @@ const Clip = require('./clip');
 const { CamShare } = require('../shared/camshare.js');
 const { VirtualCam } = require('../shared/vcam.js');
 const { PhoneRemote } = require('../shared/phone-remote.js');
-const { NowPlaying } = require('../shared/nowplaying.js');
-const { BtAudio } = require('../shared/btaudio.js');
-const { LinuxA2dp } = require('./a2dp');
 const Helper = require('./helper');
 const Kvm = require('./kvm');
 const Hud = require('./hud');
@@ -48,7 +45,6 @@ const Sender = require('./sender');
 const Notifs = require('./notifs');
 const Wake = require('./wake');
 const theme = require('./theme');
-const Terminal = require('./terminal');
 const Sshd = require('./sshd');
 const Apps = require('./apps');
 const PcApps = require('./pcapps');
@@ -127,7 +123,8 @@ let wake = null;
 let updates = null;
 let updateNote = null; // the update notification, kept so it isn't collected before a click
 let pairSync = null;
-let terminal = null;
+let terminal = null; // only while Terminal is on (loadTerminal)
+let phoneServer = null; // the phones' session (PhoneLink), for features loaded later
 let sshd = null;
 let apps = null;
 let pcApps = null;
@@ -227,7 +224,7 @@ function start() {
   screen.fileDrop = fileDrop;
   sound = new Sound({ link, settings, onChange: pushState });
   smb = new Smb({ link, settings, save: saveSettings, onChange: pushState });
-  terminal = new Terminal({ link, settings, onChange: pushState });
+  loadTerminal(); // only while it's on
   sshd = new Sshd({ link, settings, save: saveSettings, onChange: pushState });
   // The helper: X11 (XInput2 + XTest), or on Wayland its uinput backend when /dev/uinput is ours.
   helper = new Helper(() => system.inputBlocker(session));
@@ -328,8 +325,8 @@ function start() {
     },
   });
   updates.start();
-  const ipc = setupIpc({ link, discovery, screen, clip, kvm, fileDrop, smb, fileClip, vdd, sound, pcScreen, notifs, wake, terminal, sshd, apps, pcApps, peerApps, updates, settings, save: saveSettings, push: pushState, buildState,
-    get phone() { return phone; }, get phoneViews() { return phoneViews; }, get camShare() { return camShare; }, get vcam() { return vcam; }, get phoneRemote() { return phoneRemote; }, get nowPlaying() { return nowPlaying; }, get btAudio() { return btAudio; }, get phoneDrive() { return phoneDrive; }, connectPhoneDev, cancelPhoneInvite, hub: loadHub,
+  const ipc = setupIpc({ link, discovery, screen, clip, kvm, fileDrop, smb, fileClip, vdd, sound, pcScreen, notifs, wake, sshd, apps, pcApps, peerApps, updates, settings, save: saveSettings, push: pushState, buildState,
+    get phone() { return phone; }, get phoneViews() { return phoneViews; }, get camShare() { return camShare; }, get vcam() { return vcam; }, get phoneRemote() { return phoneRemote; }, get nowPlaying() { return nowPlaying; }, get btAudio() { return btAudio; }, get phoneDrive() { return phoneDrive; }, get terminal() { return terminal; }, loadNowPlaying, loadBtAudio, loadTerminal, connectPhoneDev, cancelPhoneInvite, hub: loadHub,
     get net() { return net; }, get wifi() { return wifi; }, applyNet, joinHotspot, openBluetoothSettings,
     checkFirewall, fixFirewall, fixInput, setStartup, onApp: () => updateTray(buildState()) });
   pairSync = new PairSync({ link, settings, save: saveSettings, set: ipc.set }); // Two-way switches per pair
@@ -439,11 +436,9 @@ function startPhone(server, pairing) {
   phoneViews.vcam = vcam;
   phoneRemote = new PhoneRemote({ server: pl, helper, getSettings: () => settings, atHome: () => !kvm || kvm.mode === 'home', onChange: pushState,
     loadPad: () => require('./gamepad'), save: saveSettings }); // Real gamepad: loaded when turned on
-  nowPlaying = new NowPlaying({ server: pl, cfg: () => settings.audio });
-  nowPlaying.on('change', pushState);
-  // Audio › Play phone sound here (Bluetooth): this computer as the phone's Bluetooth speaker (a2dp.js).
-  btAudio = new BtAudio({ server: pl, backend: new LinuxA2dp(), cfg: () => settings.audio, save: saveSettings });
-  btAudio.on('change', pushState);
+  phoneServer = pl;
+  loadNowPlaying(); // each only while it's on
+  loadBtAudio();
   phoneViews.on('change', pushState);
   viaWifi(phoneViews, 'openScreen', 'phone');
   viaWifi(phoneViews, 'openApp', 'phone');
@@ -470,6 +465,37 @@ function startPhone(server, pairing) {
 let hub = null;
 let phoneLink = null; // phone-link.js, the phone's session (startPhone)
 let callwin = null;
+// Features loaded only while their switch is on: made (and applied) when it's first turned on.
+// Audio › Media controls: what plays on the phone.
+function loadNowPlaying() {
+  if (nowPlaying || !phoneServer || settings.audio.phoneMedia === false) return nowPlaying;
+  const { NowPlaying } = require('../shared/nowplaying.js');
+  nowPlaying = new NowPlaying({ server: phoneServer, cfg: () => settings.audio });
+  nowPlaying.on('change', pushState);
+  nowPlaying.apply();
+  return nowPlaying;
+}
+
+// Audio › Play phone sound here (Bluetooth): this computer as the phone's Bluetooth speaker (a2dp.js).
+function loadBtAudio() {
+  if (btAudio || !phoneServer || !settings.audio.phoneBt) return btAudio;
+  const { BtAudio } = require('../shared/btaudio.js');
+  const { LinuxA2dp } = require('./a2dp');
+  btAudio = new BtAudio({ server: phoneServer, backend: new LinuxA2dp(), cfg: () => settings.audio, save: saveSettings });
+  btAudio.on('change', pushState);
+  btAudio.apply();
+  return btAudio;
+}
+
+// Terminal: a shell on the other computer.
+function loadTerminal() {
+  if (terminal || !settings.terminal.enabled) return terminal;
+  const Terminal = require('./terminal');
+  terminal = new Terminal({ link, settings, onChange: pushState });
+  terminal.apply();
+  return terminal;
+}
+
 function setupHub(pl) {
   phoneLink = pl;
   const anyOn = () => settings.hub.calls || settings.hub.messages || settings.hub.media || settings.hub.files || settings.hub.shareServe;
@@ -898,7 +924,7 @@ function buildState() {
     audio: { ...settings.audio, ...sound.view() },
     pcScreen: pcScreen.view(),
     files: { ...settings.files, ...fileDrop.view(), received: receivedDir(settings, app.getPath('downloads')), smb: smb.view(), incoming: fileRecv.view(), drag: kvm.dragRecv.view(), macDrags: kvm.peerDrags, clip: fileClip.view(), session: session.type },
-    terminal: { ...settings.terminal, ...terminal.view(), installedKey: undefined, server: sshd.view() },
+    terminal: { ...settings.terminal, ...(terminal ? terminal.view() : { status: 'off', message: '', command: 'ssh twindesk' }), installedKey: undefined, server: sshd.view() },
     apps: link.peerOs === P.OS.MAC ? apps.view() : peerApps.view(), // a PC's or Linux computer's apps come through peerapps.js
     pcApps: pcApps.view(),
     macApps: settings.macApps,
