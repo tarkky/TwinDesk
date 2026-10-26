@@ -3,7 +3,7 @@
 // plays the picture (and its sound), and sends input back as in.* (normalized 0–1):
 //   touch   touchpad (opts.touch 'pad', the default): slide = move the pointer (never clicks) ·
 //           tap = left click ("Tap to click", on unless switched off) · hold = right click ·
-//           the Click button = left click (hold it and slide to drag) · two fingers = scroll
+//           two fingers = scroll
 //           direct ('direct'): tap = click · hold = right click · drag = drag · two fingers = scroll
 //           (the Mac's pointer follows the finger, so it is a touch screen for the Mac)
 //   mouse   and a hardware keyboard work as on a computer
@@ -282,31 +282,6 @@
     }
     one = null;
   }
-
-  // The touchpad's Click button: left button down for as long as it's touched, so holding it and
-  // sliding another finger drags. Its touches stay out of the ones above.
-  const clickBtn = document.getElementById('click');
-  let clickDown = false;
-  clickBtn.addEventListener('pointerdown', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    clickBtn.setPointerCapture(e.pointerId);
-    if (clickDown) return;
-    clickDown = true;
-    clickBtn.classList.add('down');
-    send({ t: 'in.md', x: cur.x, y: cur.y, b: B.LEFT });
-    if (TD.tick) TD.tick();
-  });
-  const clickUp = (e) => {
-    e.stopPropagation();
-    if (!clickDown) return;
-    clickDown = false;
-    clickBtn.classList.remove('down');
-    send({ t: 'in.mu', x: cur.x, y: cur.y, b: B.LEFT });
-  };
-  clickBtn.addEventListener('pointerup', clickUp);
-  clickBtn.addEventListener('pointercancel', clickUp);
-  clickBtn.addEventListener('pointermove', (e) => e.stopPropagation());
 
   // A mouse (or trackpad) on the phone: as on a computer.
   const BUTTONS = { 0: B.LEFT, 1: B.MIDDLE, 2: B.RIGHT, 3: 3, 4: 4 };

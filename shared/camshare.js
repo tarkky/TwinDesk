@@ -175,6 +175,7 @@ class CamShare {
   // the Camera tab and the virtual camera (shared/vcam.js); show: the window too (Camera › Window).
   // Closing that window only hides it: the camera stops with the switch.
   view(show = false) {
+    if (this.cfg().on === false) return; // Camera's switch is off
     if (!this.link.connected()) return this.popup('home', 'Not connected');
     const old = this.viewer;
     if (old && !old.win.isDestroyed()) {

@@ -209,7 +209,8 @@ function pushState() {
     state.kvm = settings.kvm;
     state.keys = settings.keys;
     state.clipboard = clip ? { ...settings.clipboard, ...clip.view } : null;
-    state.camera = svc && svc.camShare ? { ...svc.camShare.state, on: true } : svc ? { on: false } : null;
+    // on: the switch (turned off, CamShare stays loaded but stopped).
+    state.camera = svc && svc.camShare ? { ...svc.camShare.state, on: settings.camera.on !== false } : svc ? { on: false } : null;
     state.vcam = svc && svc.vcam ? svc.vcam.view() : svc ? { checked: true, supported: true, on: false } : null;
     state.remote = svc && svc.phoneRemote ? svc.phoneRemote.view
       : svc ? { allow: false, why: '', opened: false, using: false, pad: { on: false, supported: false, live: false, busy: '', message: '', name: '' } } : null;

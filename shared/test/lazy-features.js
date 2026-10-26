@@ -24,4 +24,11 @@ for (const [file, mods] of Object.entries(LAZY)) {
   for (const m of mods) assert.ok(new RegExp(`require\\(['"][./]*(shared/)?${m}(\\.js)?['"]\\)`).test(src), `${file}: ${m} is never loaded`);
 }
 
+// Turned off, Camera stays loaded (stopped): the tab's switch shows the setting, not that it's loaded
+// (it was on: true whenever CamShare existed, so the switch couldn't be turned off).
+for (const file of Object.keys(LAZY)) {
+  const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
+  assert.ok(!/camShare\.state, on: true/.test(src), `${file}: Camera's switch shows on whenever CamShare is loaded`);
+}
+
 console.log('lazy-features: passed');

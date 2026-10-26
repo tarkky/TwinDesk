@@ -915,7 +915,6 @@ private fun ScreenPage(core: Core, v: Int) {
             MacRow("Slide", "Move the pointer")
             MacRow("Tap", if (core.remote.tapClick) "Left click" else "Nothing (Remote › Tap to click is off)")
             MacRow("Hold", "Right click")
-            MacRow("Click button", "Left click. Hold it and slide to drag")
             MacRow("Two fingers", "Scroll")
         } else {
             MacRow("Tap", "Click")

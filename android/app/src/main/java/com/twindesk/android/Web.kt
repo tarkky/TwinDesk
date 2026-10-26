@@ -191,7 +191,7 @@ class Screen(core: Core) : Feature(core) {
 
     // name: the computer we're connected to, for the viewer's messages (stream.info's is the
     // display it shares, e.g. the Mac's "TwinDesk (virtual)"; a PC or Linux sends none).
-    // touch: "pad" (slide moves the pointer, no click; the Click button clicks) or "direct" (the
+    // touch: "pad" (slide moves the pointer, tap clicks) or "direct" (the
     // pointer goes where the finger is, tap = click); speed and tap are the Remote page's touchpad settings.
     fun opts(): JSONObject = msg("opts", "sound" to core.store.flag("screen.sound", false), "pacing" to (core.store.flag("screen.smooth", false).let { if (it) "smooth" else "fast" }),
         "name" to (core.host?.name ?: "the computer"), "touch" to (if (core.store.flag("screen.touchpad", true)) "pad" else "direct"),

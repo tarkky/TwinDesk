@@ -948,7 +948,7 @@ function buildState() {
     keys: settings.keys,
     monitor: settings.monitor,
     clipboard: { ...settings.clipboard, ...clip.view },
-    camera: camShare ? { ...camShare.state, on: true } : { on: false },
+    camera: camShare ? { ...camShare.state, on: !!settings.camera.on } : { on: false }, // on: the switch (off, it stays loaded but stopped)
     vcam: vcam ? vcam.view() : { checked: true, supported: true, on: false },
     remote: phoneRemote ? phoneRemote.view : phoneServer ? REMOTE_OFF : null,
     phoneMedia: nowPlaying ? nowPlaying.view : null,
