@@ -238,7 +238,7 @@
   $('b-kbd').onclick = () => {
     kbdOn = !kbdOn;
     $('b-kbd').classList.toggle('on', kbdOn);
-    if (kbdOn) { kbd.value = ''; kbd.focus(); TD.event('keyboard'); } else { kbd.blur(); TD.event('keyboardOff'); }
+    if (kbdOn) { kbd.value = ''; sent = ''; kbd.focus(); TD.event('keyboard'); } else { kbd.blur(); TD.event('keyboardOff'); }
   };
   kbd.addEventListener('blur', () => { kbdOn = false; $('b-kbd').classList.remove('on'); });
   const SHIFTED = '~!@#$%^&*()_+{}|:"<>?';
@@ -261,25 +261,44 @@
     if (shift) press('ShiftLeft', false);
     dropMods();
   }
-  kbd.addEventListener('beforeinput', (e) => {
-    e.preventDefault();
-    if (e.inputType === 'deleteContentBackward') return type('Backspace', false);
-    if (e.inputType === 'insertLineBreak') return type('Enter', false);
-    for (const ch of e.data || '') {
+  // The soft keyboard composes in the field (Gboard, Samsung Keyboard: "h", "he", "hel", then
+  // autocorrect), and composing can't be prevented: what's sent is the difference between the field
+  // and what was sent before (Backspaces for what went, then what came), and the field is emptied
+  // once nothing is being composed.
+  let sent = '';
+  let composing = false;
+  function sync() {
+    const v = kbd.value;
+    let i = 0;
+    while (i < sent.length && i < v.length && sent[i] === v[i]) i++;
+    for (const ch of sent.slice(i)) if (keyFor(ch)) type('Backspace', false);
+    for (const ch of v.slice(i)) {
       const k = keyFor(ch);
       if (k) type(k.code, k.shift);
     }
+    sent = v;
+  }
+  function settle() {
+    setTimeout(() => { if (!composing) { kbd.value = ''; sent = ''; } }, 0);
+  }
+  kbd.addEventListener('compositionstart', () => { composing = true; });
+  kbd.addEventListener('compositionend', () => { composing = false; sync(); settle(); });
+  kbd.addEventListener('input', (e) => {
+    sync();
+    if (!e.isComposing && !composing) settle();
   });
-  // A hardware keyboard on the phone: its keys as they are.
+  // A hardware keyboard on the phone (and the soft keyboard's Backspace or Enter on an empty field):
+  // its keys as they are; the field doesn't change, so nothing is sent twice.
+  const keyCode = (e) => e.code || ({ Backspace: 'Backspace', Enter: 'Enter' })[e.key] || '';
   window.addEventListener('keydown', (e) => {
-    if (!e.code || e.keyCode === 229 || e.repeat) return; // composing on the soft keyboard: see beforeinput
+    if (!keyCode(e) || e.keyCode === 229 || e.isComposing || e.repeat) return; // composing: see input
     e.preventDefault();
-    press(e.code, true);
+    press(keyCode(e), true);
   });
   window.addEventListener('keyup', (e) => {
-    if (!e.code || e.keyCode === 229) return;
+    if (!keyCode(e) || e.keyCode === 229 || e.isComposing) return;
     e.preventDefault();
-    press(e.code, false);
+    press(keyCode(e), false);
   });
 
   // ---- gamepad ----

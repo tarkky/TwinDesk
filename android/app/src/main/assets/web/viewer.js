@@ -135,7 +135,7 @@
         if (pc) for (const r of pc.getReceivers()) if (r.track.kind === 'video') pace(r);
         break;
       case 'keyboard':
-        if (msg.on) { kbd.value = ''; kbd.focus(); } else kbd.blur();
+        if (msg.on) { kbd.value = ''; sent = ''; kbd.focus(); } else kbd.blur();
         break;
       default: break;
     }
@@ -342,15 +342,17 @@
   }, { passive: false });
 
   // Keys: a hardware keyboard sends codes; the soft keyboard sends characters (mapped to keys).
+  // The soft keyboard's Backspace or Enter on an empty field comes as a key, with no code sometimes.
+  const keyCode = (e) => e.code || ({ Backspace: 'Backspace', Enter: 'Enter' })[e.key] || '';
   window.addEventListener('keydown', (e) => {
-    if (!e.code || e.keyCode === 229) return; // composing on the soft keyboard: see 'input'
+    if (!keyCode(e) || e.keyCode === 229 || e.isComposing) return; // composing on the soft keyboard: see 'input'
     e.preventDefault();
-    send({ t: 'in.kd', code: e.code });
+    send({ t: 'in.kd', code: keyCode(e) });
   });
   window.addEventListener('keyup', (e) => {
-    if (!e.code || e.keyCode === 229) return;
+    if (!keyCode(e) || e.keyCode === 229 || e.isComposing) return;
     e.preventDefault();
-    send({ t: 'in.ku', code: e.code });
+    send({ t: 'in.ku', code: keyCode(e) });
   });
 
   const SHIFTED = '~!@#$%^&*()_+{}|:"<>?';
@@ -373,14 +375,30 @@
     send({ t: 'in.ku', code });
     if (shift) send({ t: 'in.ku', code: 'ShiftLeft' });
   }
-  kbd.addEventListener('beforeinput', (e) => {
-    e.preventDefault();
-    if (e.inputType === 'deleteContentBackward') return tap('Backspace', false);
-    if (e.inputType === 'insertLineBreak') return tap('Enter', false);
-    for (const ch of e.data || '') {
+  // The soft keyboard composes in the field ("h", "he", "hel", then autocorrect) and that can't be
+  // prevented: what's sent is the difference from what was sent before, and the field is emptied
+  // once nothing is being composed.
+  let sent = '';
+  let composing = false;
+  function sync() {
+    const v = kbd.value;
+    let i = 0;
+    while (i < sent.length && i < v.length && sent[i] === v[i]) i++;
+    for (const ch of sent.slice(i)) if (keyFor(ch)) tap('Backspace', false);
+    for (const ch of v.slice(i)) {
       const k = keyFor(ch);
       if (k) tap(k.code, k.shift);
     }
+    sent = v;
+  }
+  function settle() {
+    setTimeout(() => { if (!composing) { kbd.value = ''; sent = ''; } }, 0);
+  }
+  kbd.addEventListener('compositionstart', () => { composing = true; });
+  kbd.addEventListener('compositionend', () => { composing = false; sync(); settle(); });
+  kbd.addEventListener('input', (e) => {
+    sync();
+    if (!e.isComposing && !composing) settle();
   });
 
   setOverlay('Waiting for the computer…');
