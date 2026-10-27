@@ -7,6 +7,7 @@ const call = (name) => (...args) => ipcRenderer.invoke(name, ...args);
 contextBridge.exposeInMainWorld('macshare', {
   getState: call('getState'),
   onState: (fn) => ipcRenderer.on('state', (_e, s) => fn(s)),
+  onShowUpdate: (fn) => ipcRenderer.on('show-update', () => fn()),
   onGo: (fn) => ipcRenderer.on('go', (_e, tab) => fn(tab)),
   hub: call('hub'), // Calls, Messages and Photos (shared/phonehub.js)
   onHub: (fn) => ipcRenderer.on('hub', (_e, m) => fn(m)), // the phone's answers for them
@@ -31,9 +32,13 @@ contextBridge.exposeInMainWorld('macshare', {
   remoteScreen: call('remoteScreen'),
   setKvm: call('setKvm'),
   setLayout: call('setLayout'),
+  moveKvm: call('moveKvm'),
+  identifyDisplays: call('identifyDisplays'),
   setKeys: call('setKeys'),
   setApp: call('setApp'),
   setUpdates: call('setUpdates'),
+  skipUpdate: call('skipUpdate'),
+  unskipUpdate: call('unskipUpdate'),
   checkUpdates: call('checkUpdates'),
   openUpdate: call('openUpdate'),
   openLink: call('openLink'),

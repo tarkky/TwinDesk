@@ -41,6 +41,7 @@
               pkgs.libx11
               pkgs.libxi
               pkgs.libxtst
+              pkgs.libxext
               pkgs.libxrandr
               pkgs.libxfixes
             ];
@@ -66,12 +67,12 @@
 
               $CC -O2 -Wall -Wextra -std=gnu11 linux-helper/src/*.c \
                 -o linux-helper/bin/macshare-linuxhelper \
-                -lX11 -lXi -lXtst -lXrandr -lXfixes -lm -pthread \
+                -lX11 -lXi -lXtst -lXext -lXrandr -lXfixes -lm -pthread \
                 -DHAVE_BLE $BLE_FLAGS
 
               $CC -O2 -Wall -Wextra -std=gnu11 -DMULTI linux-helper/src/*.c \
                 -o linux-helper/bin/macshare-linuxhelper-multi \
-                -lX11 -lXi -lXtst -lXrandr -lXfixes -lm -pthread \
+                -lX11 -lXi -lXtst -lXext -lXrandr -lXfixes -lm -pthread \
                 -DHAVE_BLE $BLE_FLAGS
 
               $CC -O2 -Wall -Wextra -std=gnu11 linux-helper/wifiap/wifiap.c \

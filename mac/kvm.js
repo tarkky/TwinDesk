@@ -10,8 +10,11 @@
 const { EventEmitter } = require('events');
 const P = require('../shared/protocol.js');
 const blepipe = require('../shared/blepipe.js');
+const { KvmMoves } = require('../shared/kvm-moves.js');
+const { KeyLayout } = require('../shared/keylayout.js');
 const CL = require('../shared/cursorlock.js');
 const store = require('./store');
+const { KvmMap } = require('../shared/kvm-map.js');
 
 // {them} = the other computer's name (Kvm._them).
 const REFUSED = { busy: '{them} is using this computer right now', not_allowed: '{them} doesn’t accept input from here' };
@@ -33,13 +36,41 @@ class Kvm extends EventEmitter {
     this.message = '';
     this.tapError = null;
     this.acceptTimer = null;
-    this.pendingMove = null; // coalesced k.mm while driving
-    this.moveTimer = null; // its flush, through Bluetooth
+    // k.mm summed while driving, sent as one (shared/kvm-moves.js): paced for Bluetooth, and held
+    // (still summed) while the socket is backed up, so the pointer never replays old moves.
+    this.moves = new KvmMoves({
+      send: (m) => this.mode === 'driving' && this._drive({ t: P.T.K_MOVE, dx: m.dx, dy: m.dy }),
+      delay: () => (this._movesBle() ? P.KVM_MOVE_BLE_MS : 0),
+      backlog: () => (this._movesBle() ? blepipe.backlog() : this._movesQueued()),
+      limit: () => (this._movesBle() ? P.KVM_BLE_BACKLOG : P.KVM_IP_BACKLOG),
+      maxWait: () => (this._movesBle() ? Infinity : P.KVM_MOVE_MAX_WAIT_MS),
+    });
+    // … and on the driven side, the moves that came in the same turn go to the helper as one.
+    this.injectMoves = new KvmMoves({
+      send: (m) => this.mode === 'driven' && this.helper.send('inject', { ev: { t: P.T.K_MOVE, dx: m.dx, dy: m.dy } }),
+    });
+    this.keys = new KeyLayout((cmd, args) => this.helper.request(cmd, args), (cmd, args) => this.helper.send(cmd, args)); // shortcuts and alphabets across layouts
     this.local = null; // phone-bridge.js: drives a phone itself (its input goes through adb, not the link)
     this.locked = false; // cursor lock (shared/cursorlock.js): the pointer stays on the computer it is on
     this.lockAt = 0;
     this.lockKey = new CL.LockKey(() => this.getSettings().keys.lockKeys);
     this.drivenMouse = false; // driven with the mouse too (not keyboard only): the way back is watched
+    // The crossing map: both computers' monitors, where they touch (shared/kvm-map.js).
+    this.map = new KvmMap({
+      electron: require('electron'),
+      send: (m) => server.current && server.sendToClient(m),
+      side: () => this.cfg.pcSide,
+      getAlong: () => (typeof this.cfg.along === 'number' ? this.cfg.along : null),
+      setAlong: (v) => {
+        this.cfg.along = v;
+        store.saveSettings(this.getSettings());
+      },
+    });
+    this.map.on('change', () => {
+      this.config();
+      this._rearmReturn();
+      this.emit('change');
+    });
 
     setInterval(() => this._tick(), 250);
     // The host tells the layout on connect; after that either side sends it when its user changes it.
@@ -47,6 +78,8 @@ class Kvm extends EventEmitter {
     // host tells it so both computers agree; after that kvm.link keeps them in step.
     server.on('client', (ctx) => {
       this.lastName = ctx.name;
+      this.map.reset();
+      this.map.sendDisplays();
       const by = this.cfg.linkedBy || {};
       if (ctx.deviceId in by && by[ctx.deviceId] !== this.linked) this.setLinked(by[ctx.deviceId], false, false);
       if (ctx.role !== 'host') {
@@ -67,15 +100,24 @@ class Kvm extends EventEmitter {
     const on = (t, fn) => server.on(`t:${t}`, fn);
     on(P.T.KVM_TAKE, (m) => this._onTake(m));
     on(P.T.KVM_LINK, (m) => this.setLinked(m.on !== false, false));
-    // kvm.layout {pcSide} = the sender's crossing side; ours is the opposite (no echo).
+    // kvm.layout {pcSide, along} = the sender's crossing side and where we are along it; ours is the
+    // opposite side and -along (no echo). An older sender has no along: a new side starts centred.
     on(P.T.KVM_LAYOUT, (m) => {
       const side = P.opposite(m.pcSide);
-      if (!side || side === this.cfg.pcSide) return;
-      this.getSettings().kvm.pcSide = side;
+      if (!side) return;
+      const k = this.cfg;
+      let along = typeof m.along === 'number' && Number.isFinite(m.along) ? -m.along : m.along === null ? null : undefined;
+      if (along === undefined) along = side === k.pcSide ? k.along : null;
+      if (side === k.pcSide && along === k.along) return;
+      k.pcSide = side;
+      k.along = along;
       store.saveSettings(this.getSettings());
       this.config();
+      this._rearmReturn();
       this.emit('change');
     });
+    on(P.T.KVM_DISPLAYS, (m) => this.map.onDisplays(m));
+    on(P.T.KVM_IDENTIFY, () => this.map.identify(false));
     on(P.T.KVM_ACCEPT, (m) => {
       if (this.mode === 'driving' && m.route === this.route) clearTimeout(this.acceptTimer);
     });
@@ -116,7 +158,7 @@ class Kvm extends EventEmitter {
   }
 
   get view() {
-    return { where: this.mode, message: this.message, tapError: this.tapError, paused: this.paused, locked: this.locked };
+    return { where: this.mode, message: this.message, tapError: this.tapError, paused: this.paused, locked: this.locked, map: this.map.view };
   }
 
   // Cursor lock: at home the edge doesn't cross, driven the way back isn't watched, driving the
@@ -128,7 +170,7 @@ class Kvm extends EventEmitter {
     if (tell && this.mode === 'driving') this._drive({ t: P.T.KVM_LOCK, on });
     else if (tell && this.mode === 'driven') this.server.sendToClient({ t: P.T.KVM_LOCK, on });
     if (this.mode === 'driven' && this.drivenMouse) {
-      this.helper.send('armReturn', on ? { on: false } : { on: true, side: this.cfg.pcSide, resistancePx: this.cfg.resistancePx });
+      this.helper.send('armReturn', on ? { on: false } : this._returnCfg());
     }
     this.config();
     this.emit('lock', on, this.mode); // main.js: the popup
@@ -160,6 +202,8 @@ class Kvm extends EventEmitter {
         side: k.pcSide, resistancePx: k.resistancePx, keyboard: !!k.keyboard,
         driveOther: !!(this.linked && k.driveOther && k.mouse && this.server.current && !this.paused && !(this.locked && this.mode === 'home')),
         hotkey: this.getSettings().keys.hotkey || P.HOTKEY_MAC,
+        cooldownMs: P.KVM_CROSS_COOLDOWN_MS,
+        zones: this.map.zones(), // only where the monitors touch (null: anywhere on the side)
         gestures: k.gestures !== false, // Trackpad gestures go over as k.ge
         dragFiles: this.fileSend.dragOn && this.fileSend.peerDrag, // drag.policy, both sides
       })
@@ -229,7 +273,11 @@ class Kvm extends EventEmitter {
       this.cfg.linked = prev.linked; // setLinked does the work (home first, tell the peer)
       return this.setLinked(on);
     }
-    if (!prev || prev.pcSide !== this.cfg.pcSide) this._sendLayout();
+    if (prev && prev.pcSide !== this.cfg.pcSide && prev.along === this.cfg.along) this.cfg.along = null; // a new side starts centred
+    if (!prev || prev.pcSide !== this.cfg.pcSide || prev.along !== this.cfg.along) {
+      this._sendLayout();
+      this._rearmReturn();
+    }
     this._bleCheck(); // config() too
     const k = this.cfg;
     if (this.mode === 'driving' && !k.driveOther) this.goHome('Turned off');
@@ -243,7 +291,27 @@ class Kvm extends EventEmitter {
   }
 
   _sendLayout() {
-    this.server.sendToClient({ t: P.T.KVM_LAYOUT, pcSide: this.cfg.pcSide });
+    this.server.sendToClient({ t: P.T.KVM_LAYOUT, pcSide: this.cfg.pcSide, along: typeof this.cfg.along === 'number' ? this.cfg.along : null });
+  }
+
+  // The Cursor tab dragged the other computer: to `side`, `along` it (points, shared/kvm-geom.js).
+  moveTo(side, along) {
+    if (P.SIDES.includes(side) && side !== this.cfg.pcSide) this.cfg.pcSide = side;
+    if (this.map.move(along) === null) return;
+    this._sendLayout();
+    this.config();
+    this._rearmReturn();
+    this.emit('change');
+  }
+
+  // armReturn while driven: the way back, only where the monitors touch.
+  _returnCfg() {
+    return { on: true, side: this.cfg.pcSide, resistancePx: this.cfg.resistancePx, zones: this.map.zones() };
+  }
+
+  // The layout or the monitors changed while driven: the way back follows.
+  _rearmReturn() {
+    if (this.mode === 'driven' && this.drivenMouse && !this.locked) this.helper.send('armReturn', this._returnCfg());
   }
 
   _setMode(mode, message) {
@@ -255,11 +323,15 @@ class Kvm extends EventEmitter {
       if (prev === 'home') this.config();
     }
     if (prev !== mode) this.lockKey.reset();
+    if (prev !== mode) { // crossing either way: what our keys type (the layout may have changed)
+      this.keys.reset();
+      if (mode !== 'home') this.keys.refresh();
+    }
     if (prev !== mode) this.emit('where', mode, prev); // hud.js shows it
     this.message = message || '';
     if (mode !== 'driving') {
       clearTimeout(this.acceptTimer);
-      this.pendingMove = null;
+      this.moves.drop();
     }
     this.emit('change');
   }
@@ -313,23 +385,34 @@ class Kvm extends EventEmitter {
     this._setMode('home', message);
   }
 
-  // Through Bluetooth every message is a round trip on the radio: moves go at most every
-  // KVM_MOVE_BLE_MS, and wait (still summed) while earlier bytes haven't gone out yet.
-  _scheduleMove() {
-    if (!this.onBle || (this.local && this.local.drives())) return setImmediate(() => this._flushMove());
-    if (this.moveTimer) return;
-    this.moveTimer = setTimeout(() => {
-      this.moveTimer = null;
-      if (!this.pendingMove) return;
-      if (blepipe.backlog() > P.KVM_BLE_BACKLOG) return this._scheduleMove();
-      this._flushMove();
-    }, P.KVM_MOVE_BLE_MS);
+  // Moves through Bluetooth (not to the phone bridge): paced for the radio.
+  _movesBle() {
+    return this.onBle && !(this.local && this.local.drives());
+  }
+
+  // Bytes waiting on the session's socket.
+  _movesQueued() {
+    if (this.local && this.local.drives()) return 0;
+    const c = this.server.current;
+    return c && c.ws ? c.ws.bufferedAmount || 0 : 0;
+  }
+
+  // The link now, for the log's line every 30 s (shared/applog.js): null when not connected.
+  linkSample() {
+    const c = this.server.current;
+    return c ? { rtt: c.rttMs, queued: c.ws ? c.ws.bufferedAmount || 0 : 0 } : null;
   }
 
   _flushMove() {
-    const m = this.pendingMove;
-    this.pendingMove = null;
-    if (m && this.mode === 'driving') this._drive({ t: P.T.K_MOVE, dx: m.dx, dy: m.dy });
+    this.moves.flush();
+  }
+
+  // To the helper: a move summed with the others of this turn; anything else after them. The phone
+  // Remote's moves (smooth: the helper eases them out) go as they are.
+  _injectEv(ev) {
+    if (ev.t === P.T.K_MOVE && !ev.smooth) return this.injectMoves.add(ev.dx, ev.dy);
+    this.injectMoves.flush();
+    this.helper.send('inject', { ev });
   }
 
   // Input while driving goes to the other computer, or to the phone bridge when a phone is the peer.
@@ -348,7 +431,7 @@ class Kvm extends EventEmitter {
           if (!this.server.current) this._setMode('home', 'Nothing connected');
           return;
         }
-        this._take({ mouse: true, where: { side: P.opposite(k.pcSide), offset: ev.offset }, paths: ev.drag && ev.drag.paths });
+        this._take({ mouse: true, where: { side: P.opposite(k.pcSide), offset: this.map.toPeer(ev.offset) }, paths: ev.drag && ev.drag.paths });
         break;
       // Double-tap: switches mouse and keyboard sharing off (everything home)
       // and on again. In keyboard-only mode (Cursor off + "Switch the keyboard with the hotkey") it
@@ -388,17 +471,12 @@ class Kvm extends EventEmitter {
         if (this.local && this.local.drives() && this._lockKeyHere(e)) return; // a phone has no lock key: ours counts there
         if (this.fileClip && this.fileClip.intercept(e)) return; // copy/paste shortcut: done over there
         if (e.t === P.T.K_MOVE) {
-          if (!this.pendingMove) {
-            this.pendingMove = { dx: 0, dy: 0 };
-            this._scheduleMove();
-          }
-          this.pendingMove.dx += e.dx;
-          this.pendingMove.dy += e.dy;
+          this.moves.add(e.dx, e.dy);
           return;
         }
         this._flushMove();
         if (this.dragOut && e.t === P.T.K_UP && e.b === 0) this.dragOut = null; // dropped on the PC (drag.end follows)
-        this._drive(e);
+        this._drive(this.keys.tag(e)); // keys with the letter they type here (shared/keylayout.js)
         break;
       }
       case 'captureEnded':
@@ -428,7 +506,7 @@ class Kvm extends EventEmitter {
     if (m.mouse !== false) {
       if (typeof m.side === 'string') this.helper.send('place', { side: m.side, offset: Number(m.offset) || 0.5 });
       else if (first) this.helper.send('place', { center: true });
-      if (!this.locked) this.helper.send('armReturn', { on: true, side: this.cfg.pcSide, resistancePx: this.cfg.resistancePx });
+      if (!this.locked) this.helper.send('armReturn', this._returnCfg());
     }
     this.drop.dragIn.onDriven(); // after 'place': the native drag starts where the pointer came in
   }
@@ -461,8 +539,10 @@ class Kvm extends EventEmitter {
         }
         ev = { t: m.t, code: this.server.keySwap(this.getSettings()) ? P.mapKeyFromOtherPlatform(m.code) : m.code };
         if (this._lockKeyHere(ev)) return;
+        ev.code = this.keys.code(m.t === P.T.K_KEY_DOWN, ev.code, m.ch, m.tx); // a shortcut's letter: our key for it
+        if (!ev.code) return; // another alphabet's letter: typed as it is
     }
-    this.helper.send('inject', { ev });
+    this._injectEv(ev);
   }
 
   // A trackpad gesture from the other computer, done the Mac way. Pinches and
@@ -534,7 +614,7 @@ class Kvm extends EventEmitter {
   _sendHome(offset, message) {
     if (this.mode !== 'driven') return;
     const msg = { t: P.T.KVM_HOME, route: this.peerRoute };
-    if (typeof offset === 'number') msg.offset = offset;
+    if (typeof offset === 'number') msg.offset = this.map.toPeer(offset);
     this.server.sendToClient(msg);
     this._drivenHome(message);
   }

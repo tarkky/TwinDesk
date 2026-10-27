@@ -1,7 +1,10 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
 // DOM KeyboardEvent.code ↔ Windows scan code (set 1), 0xE0xx = extended key.
 // Values follow Chromium's keycode_converter table (US/ISO/JIS physical positions).
+using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace MacShare
 {
@@ -51,6 +54,37 @@ namespace MacShare
             Add("ArrowRight", 0xE04D); Add("End", 0xE04F); Add("ArrowDown", 0xE050); Add("PageDown", 0xE051);
             Add("Insert", 0xE052); Add("Delete", 0xE053); Add("MetaLeft", 0xE05B); Add("MetaRight", 0xE05C);
             Add("ContextMenu", 0xE05D);
+        }
+
+        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
+        [DllImport("user32.dll")] static extern IntPtr GetKeyboardLayout(uint threadId);
+        [DllImport("user32.dll")] static extern uint MapVirtualKeyEx(uint code, uint mapType, IntPtr hkl);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern int ToUnicodeEx(uint vk, uint scan, byte[] state, [Out] StringBuilder buf, int size, uint flags, IntPtr hkl);
+
+        static readonly string[] Punct = { "Minus", "Equal", "BracketLeft", "BracketRight", "Backslash", "Semicolon",
+            "Quote", "Backquote", "Comma", "Period", "Slash", "IntlBackslash" };
+
+        // keyLayout: what each letter, digit and punctuation key types alone in the layout of the window
+        // in front (each thread has its own), lower case: {"KeyY": "z", …} with a German layout
+        // (shared/keylayout.js). ToUnicodeEx with flag 4 leaves the keyboard's state (a pending dead
+        // key) alone; a dead key (a negative count) is left out.
+        public static Dictionary<string, object> Layout()
+        {
+            Dictionary<string, object> map = new Dictionary<string, object>();
+            IntPtr hkl = GetKeyboardLayout(GetWindowThreadProcessId(Native.GetForegroundWindow(), IntPtr.Zero));
+            byte[] state = new byte[256];
+            StringBuilder buf = new StringBuilder(8);
+            foreach (KeyValuePair<string, int> kv in ToScan)
+            {
+                if (!kv.Key.StartsWith("Key") && !kv.Key.StartsWith("Digit") && Array.IndexOf(Punct, kv.Key) < 0) continue;
+                uint vk = MapVirtualKeyEx((uint)kv.Value, 1 /* MAPVK_VSC_TO_VK */, hkl);
+                if (vk == 0) continue;
+                buf.Length = 0;
+                int n = ToUnicodeEx(vk, (uint)kv.Value, state, buf, buf.Capacity, 4, hkl);
+                if (n == 1 && buf.Length >= 1 && buf[0] >= ' ') map[kv.Key] = buf.ToString(0, 1).ToLowerInvariant();
+            }
+            return map;
         }
 
         // DOM code → scan (0xE0xx extended), or -1.

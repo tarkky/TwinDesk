@@ -40,6 +40,18 @@ let virtualDisplay = VirtualDisplay()
 let injector = Injector()
 let pasteboardWatch = PasteboardWatch()
 
+/// kvmConfig / armReturn `zones` (shared/kvm-geom.js zonesText): "0.1-0.5,0.7-1" (a little wider,
+/// for rounding), "none" (nothing crosses), anything else nil (the whole side).
+func zones(_ v: Any?) -> [ClosedRange<Double>]? {
+  guard let text = v as? String else { return nil }
+  if text == "none" { return [] }
+  let out = text.split(separator: ",").compactMap { part -> ClosedRange<Double>? in
+    let ab = part.split(separator: "-").compactMap { Double($0) }
+    return ab.count == 2 && ab[0] <= ab[1] ? (ab[0] - 0.002)...(ab[1] + 0.002) : nil
+  }
+  return out.isEmpty ? nil : out
+}
+
 func handle(_ line: String) {
   guard let data = line.data(using: .utf8),
         let msg = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -53,6 +65,7 @@ func handle(_ line: String) {
   let num = { (k: String, d: Double) in (msg[k] as? NSNumber)?.doubleValue ?? d }
   switch cmd {
   case "kvmConfig":
+    Capture.shared.edgeZones = zones(msg["zones"])
     guard Capture.shared.startTap() else { return replyError(id, "event tap failed (Accessibility / Input Monitoring)") }
     Flash.shared.prepare()
 #if MULTI
@@ -60,11 +73,13 @@ func handle(_ line: String) {
     let sides = (msg["sides"] as? [String]) ?? [(msg["side"] as? String) ?? "right"]
     Capture.shared.configure(sides: sides, resistance: num("resistancePx", 120),
                              edgeEnabled: (msg["driveOther"] as? Bool) ?? false, keyboard: (msg["keyboard"] as? Bool) ?? true,
-                             dragFiles: (msg["dragFiles"] as? Bool) ?? true, hotkey: (msg["hotkey"] as? String) ?? "AltRight")
+                             dragFiles: (msg["dragFiles"] as? Bool) ?? true, hotkey: (msg["hotkey"] as? String) ?? "AltRight",
+                             cooldown: num("cooldownMs", 250) / 1000)
 #else
     Capture.shared.configure(side: (msg["side"] as? String) ?? "right", resistance: num("resistancePx", 120),
                              edgeEnabled: (msg["driveOther"] as? Bool) ?? false, keyboard: (msg["keyboard"] as? Bool) ?? true,
-                             dragFiles: (msg["dragFiles"] as? Bool) ?? true, hotkey: (msg["hotkey"] as? String) ?? "AltRight")
+                             dragFiles: (msg["dragFiles"] as? Bool) ?? true, hotkey: (msg["hotkey"] as? String) ?? "AltRight",
+                             cooldown: num("cooldownMs", 250) / 1000)
 #endif
     Capture.shared.gestures = (msg["gestures"] as? Bool) ?? true
     reply(id)
@@ -85,9 +100,11 @@ func handle(_ line: String) {
     let side = center ? nil : msg["side"] as? String
     let to = Screens.edgePoint(side: side, offset: center ? nil : (msg["offset"] as? NSNumber)?.doubleValue)
     Capture.shared.warp(to)
+    Capture.shared.arrived(side: side)
     Flash.shared.arrive(at: to, side: side) // the PC's pointer arrives here
     reply(id)
   case "armReturn":
+    Capture.shared.returnZones = zones(msg["zones"])
 #if MULTI
     let sides = (msg["sides"] as? [String]) ?? [(msg["side"] as? String) ?? "right"]
     Capture.shared.armReturn(on: (msg["on"] as? Bool) ?? false, sides: sides, resistance: num("resistancePx", 120))
@@ -100,6 +117,10 @@ func handle(_ line: String) {
     if let ev = msg["ev"] as? [String: Any] { injector.injectRel(ev) }
   case "ping":
     reply(id)
+  case "keyLayout": // what each key types alone in the current layout (shared/keylayout.js); type: it takes "type"
+    reply(id, ["layout": KeyLayout.current(sourceID: msg["source"] as? String), "type": true])
+  case "type": // text as it is, whatever the layout
+    if let text = msg["text"] as? String { injector.type(text) }
   case "permissions":
     reply(id, [
       "accessibility": AXIsProcessTrusted(),

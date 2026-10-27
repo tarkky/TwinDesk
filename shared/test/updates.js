@@ -4,7 +4,7 @@
 'use strict';
 
 const assert = require('assert');
-const { pickAsset } = require('../updates.js');
+const { Updates, pickAsset, formatReleaseNotes } = require('../updates.js');
 
 const files = (...names) => names.map((name) => ({ name, browser_download_url: 'https://example.invalid/' + name, size: 1 }));
 const pick = (assets, platform, arch, prefer) => (pickAsset(assets, platform, arch, prefer) || {}).name || null;
@@ -32,4 +32,96 @@ assert.strictEqual(pick(both, 'win', 'arm64'), 'TwinDesk-Setup-2.3.0-arm64.exe')
 assert.strictEqual(pick(both, 'linux', 'x64'), 'TwinDesk-2.3.0-x86_64.AppImage');
 assert.strictEqual(pick(both, 'linux', 'x64', 'deb'), 'TwinDesk-2.3.0-amd64.deb');
 
-console.log('updates: ok');
+// Release notes formatting (Quotio-style markdown parser)
+const notes = `## What's Changed
+* Fix KVM socket backpressure coalescing by @InukaAsith in #54
+* Add Homebrew Cask and headless installer by @user in #60
+* Performance **improvements** and \`zero-gc\` latency
+
+Check details at https://github.com/InukaAsith/TwinDesk`;
+
+const formatted = formatReleaseNotes(notes);
+assert(formatted.includes('<h4 class="updater-heading">What&#39;s Changed</h4>') || formatted.includes('What&#39;s Changed') || formatted.includes('What\'s Changed'));
+assert(formatted.includes('<ul class="updater-list">'));
+assert(formatted.includes('<span class="updater-mention">@InukaAsith</span>'));
+assert(formatted.includes('<span class="updater-issue">#54</span>'));
+assert(formatted.includes('<strong>improvements</strong>'));
+assert(formatted.includes('<code class="mono">zero-gc</code>'));
+assert(formatted.includes('https://github.com/InukaAsith/TwinDesk') && !formatted.includes('<a '));
+
+// HTML escaping verification
+const dirty = '## <script>alert(1)</script>\n* <img src=x onerror=alert(2)>';
+const safe = formatReleaseNotes(dirty);
+assert(!safe.includes('<script>'));
+assert(!safe.includes('<img'));
+assert(safe.includes('&lt;script&gt;'));
+assert(safe.includes('&lt;img'));
+
+// Empty notes fallback
+assert(formatReleaseNotes('').includes('No release notes provided'));
+
+// Updates class skip & unskip logic
+let savedSettings = { updates: { auto: true, notified: '', skipped: '' } };
+let notificationCalled = 0;
+let modalCalled = 0;
+let changed = 0;
+
+const u = new Updates({
+  current: '2.3.0',
+  platform: 'win',
+  arch: 'x64',
+  getSettings: () => savedSettings,
+  save: () => {},
+  notify: (title, body, onClick) => {
+    notificationCalled++;
+    if (onClick) onClick();
+  },
+  onChange: () => { changed++; },
+  onShowModal: () => { modalCalled++; },
+  fetch: async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      tag_name: 'v2.4.0',
+      name: 'TwinDesk 2.4.0',
+      body: notes,
+      published_at: '2026-10-27T10:00:00Z',
+      html_url: 'https://github.com/InukaAsith/TwinDesk/releases/tag/v2.4.0',
+      assets: [{ name: 'TwinDesk-Setup-2.4.0.exe', browser_download_url: 'https://example.invalid/TwinDesk-Setup-2.4.0.exe', size: 1024 }],
+    }),
+  }),
+});
+
+(async () => {
+  await u.check(true);
+  assert.strictEqual(u.status.available, true);
+  assert.strictEqual(u.status.latest, '2.4.0');
+  assert.strictEqual(u.status.skipped, false);
+  assert.strictEqual(u.status.promptUpdate, true);
+  assert.strictEqual(notificationCalled, 1);
+  assert.strictEqual(modalCalled, 1);
+  assert.strictEqual(u.view.skippedVersion, '');
+  assert.strictEqual(u.status.releaseNotes, notes);
+
+  // Skip version 2.4.0
+  u.skip('2.4.0');
+  assert.strictEqual(savedSettings.updates.skipped, '2.4.0');
+  assert.strictEqual(u.status.skipped, true);
+  assert.strictEqual(u.view.skippedVersion, '2.4.0');
+
+  // Next check with skipped version will not prompt or notify
+  notificationCalled = 0;
+  modalCalled = 0;
+  await u.check(false);
+  assert.strictEqual(notificationCalled, 0);
+  assert.strictEqual(modalCalled, 0);
+  assert.strictEqual(u.status.skipped, true);
+  assert.strictEqual(u.status.promptUpdate, false);
+
+  // Unskip
+  u.unskip();
+  assert.strictEqual(savedSettings.updates.skipped, '');
+  assert.strictEqual(u.status.skipped, false);
+
+  console.log('updates: ok');
+})();

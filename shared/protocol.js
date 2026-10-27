@@ -43,6 +43,9 @@
     KVM_SILENCE_BLE_MS: 6000, // the same through Bluetooth (a slower, burstier link)
     KVM_MOVE_BLE_MS: 16, // through Bluetooth: cursor moves summed and sent at most this often
     KVM_BLE_BACKLOG: 512, // … and held (still summed) while this many bytes wait for the radio
+    KVM_IP_BACKLOG: 64 * 1024, // on the network: moves held (still summed) while this many bytes wait on the socket
+    KVM_MOVE_MAX_WAIT_MS: 16, // … but one goes at least this often (behind a big message the pointer still moves)
+    KVM_CROSS_COOLDOWN_MS: 250, // no new crossing this soon after the last one, either way (the helpers' edges)
     HELPER_KEEPALIVE_MS: 500, // main -> helper keepalive while capturing
     HELPER_DEADMAN_MS: 1500, // helper stops capturing by itself after this much keepalive silence
     RESISTANCE_PX: 120, // default push through an edge before crossing
@@ -104,11 +107,16 @@
       KVM_HOME: 'kvm.home',
       KVM_LINK: 'kvm.link', // either {on}: mouse and keyboard sharing switched on/off (hotkey double-tap); the other side follows
       KVM_LOCK: 'kvm.lock', // either {on}: the cursor is locked on the device it is on (shared/cursorlock.js); sent only while one drives the other
+      KVM_DISPLAYS: 'kvm.displays', // either {displays: [{id, x, y, w, h, scale, primary, name}]}: our monitors (shared/kvm-geom.js), on connect and when they change
+      KVM_IDENTIFY: 'kvm.identify', // either {}: show each monitor's number on it for a moment (the Cursor tab's Identify)
       KVM_NEXT: 'kvm.next', // multi-device: {route, to, side, offset}: a device we drive reached an edge that leads to device `to` (docs/mesh.md)
       K_MOVE: 'k.mm',
       K_DOWN: 'k.md',
       K_UP: 'k.mu',
       K_WHEEL: 'k.wh',
+      // {code} the key's place; ch: the a–z letter it types on the sender's layout (shortcuts by letter);
+      // tx (k.kd): the letter of another alphabet it types there (ж), typed as it is where the key types a
+      // Latin letter (shared/keylayout.js)
       K_KEY_DOWN: 'k.kd',
       K_KEY_UP: 'k.ku',
       // A trackpad gesture by what it means, done natively by the driven computer:
@@ -139,6 +147,9 @@
       FILE_END: 'file.end', // W->M {id, sha256}
       FILE_DONE: 'file.done', // M->W {id, ok, path?, error?}
       FILE_CANCEL: 'file.cancel', // either {id}
+      // Fast files (shared/fastfile.js), only between two apps that both said so (hello {fx: 1},
+      // welcome {fx: token}) on Wi-Fi or a cable: the bytes go over HTTPS on PORT instead of file.chunk.
+      FILE_PULL: 'file.pull', // host->guest {id}: come and get it (GET); guest->host {id, failed: true}: couldn't
       // drag across the edge: a native drag on the receiver, files + folders
       DRAG_START: 'drag.start', // owner->receiver {drag, items: [{name, dir, size}], dirs: [rel], list: [{rel, size}], files, bytes}
       DRAG_CANCEL: 'drag.cancel', // owner->receiver {drag}
@@ -222,13 +233,14 @@
       // The phone as the computer's remote (its Remote page: touchpad, keyboard, gamepad), phone->computer.
       // Relative like k.*, applied only while the computer lets the phone control it (Windows for now):
       REMOTE_HELLO: 'remote.hello', // phone->computer: the Remote page opened (the computer answers remote.state)
-      REMOTE_STATE: 'remote.state', // computer->phone {allowed, why, pad}: whether it takes the remote's input now; pad: as a real gamepad (Remote › Real gamepad)
+      REMOTE_STATE: 'remote.state', // computer->phone {allowed, why, pad, text}: whether it takes the remote's input now; pad: as a real gamepad (Remote › Real gamepad); text: it takes remote.text
       REMOTE_MOVE: 'remote.mm', // {dx, dy, smooth?} pixels; smooth: eased out over about a frame on the computer
       REMOTE_DOWN: 'remote.md', // {b}
       REMOTE_UP: 'remote.mu', // {b}
       REMOTE_WHEEL: 'remote.wh', // {dx, dy} pixels
       REMOTE_KEY_DOWN: 'remote.kd', // {code} (KeyboardEvent.code)
       REMOTE_KEY_UP: 'remote.ku', // {code}
+      REMOTE_TEXT: 'remote.text', // {text}: characters no key here types (Cyrillic, accents…), typed as they are; only while remote.state says text
       REMOTE_RELEASE: 'remote.release', // let go of every key and button the remote holds
       // {b, lx, ly, rx, ry, lt, rt}, only while remote.state says pad: b the buttons (bits 0..13: A B X Y LB RB
       // Back Start L3 R3 Up Down Left Right), the sticks -1..1 (y down), the triggers 0..1; on change, at most every 8 ms

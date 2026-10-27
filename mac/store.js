@@ -57,6 +57,7 @@ const DEFAULT_SETTINGS = {
   streamMaxHeight: 1080, // 0 = capture at the display's pixel size; else scale down (GPU) to this height
   kvm: {
     pcSide: 'right',
+    along: null, // the other computer's place along that side, points (shared/kvm-geom.js); null: centred
     mouse: false, // Cursor tab
     keyboard: false, // Keyboard tab
     driveOther: true,
@@ -87,7 +88,7 @@ const DEFAULT_SETTINGS = {
   // (everything allowed, or skipped), so it never takes over the window again (General shows the rest).
   ui: { tab: 'overview', setupSkipped: '', setupDone: false },
   app: { openAtLogin: false, keepAwake: true, hud: true }, // hud = popup when switching computers
-  updates: { auto: true, notified: '' }, // check GitHub for new releases; notified = last version announced
+  updates: { auto: true, notified: '', skipped: '' }, // check GitHub for new releases; notified = last version announced, skipped = version ignored
   audio: { send: false, receive: false, muteLocal: false, volume: 1, phoneMedia: false }, // Independent, both ways; phoneMedia: a phone's media controls on Overview
   remote: { allow: false }, // Remote tab (shared/phone-remote.js): the phone's Remote page moves the pointer and types here
   camera: { on: false, share: false, device: '', virtual: false, rotate: 0, target: 'obs' }, // Camera tab (shared/camshare.js): this Mac's camera to the other computer, off until turned on; virtual: the running camera's picture also goes to the virtual camera (shared/vcam.js); rotate: its picture turned clockwise; target: the virtual camera it feeds, 'obs' (OBS Virtual Camera, the default) or 'twindesk'

@@ -401,4 +401,4 @@ class NetLink extends EventEmitter {
   }
 }
 
-module.exports = { NetLink };
+module.exports = { NetLink, GROUP_NETS };

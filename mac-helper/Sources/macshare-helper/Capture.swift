@@ -76,6 +76,17 @@ final class Capture {
   private var returnSide: String?
 #endif
   private var returnResistance = 120.0
+  // Where along the side the other computer's monitors touch ours (shared/kvm-geom.js zones, 0–1 of
+  // the bounding box, as `offset`): the edge and the way back only cross inside them. nil: anywhere.
+  var edgeZones: [ClosedRange<Double>]?
+  var returnZones: [ClosedRange<Double>]?
+  // No new crossing within `cooldown` of the last one, either way (kvmConfig `cooldownMs`,
+  // KVM_CROSS_COOLDOWN_MS). After arriving, the edge it came through only counts once the pointer
+  // moved 8 pt inward or `guardWindow` passed, so the end of a flick doesn't bounce straight back.
+  private var cooldown = 0.25
+  private let guardWindow = 0.5
+  private var lastCross = 0.0
+  private var arrival: (side: String, at: Double, inward: Double)?
   private var dragPbCount = -1             // drag pasteboard changeCount when the left button went down
   // hotkey: a right-hand modifier, double-tapped (kvmConfig `hotkey`; default Right Option, kVK 0x3D, device flag 0x40)
   private var hkStage = 0, hkAt = 0.0
@@ -111,7 +122,7 @@ final class Capture {
   }
 
 #if MULTI
-  func configure(sides: [String], resistance: Double, edgeEnabled: Bool, keyboard: Bool, dragFiles: Bool, hotkey: String) {
+  func configure(sides: [String], resistance: Double, edgeEnabled: Bool, keyboard: Bool, dragFiles: Bool, hotkey: String, cooldown: Double) {
     // "AltRight", "AltLeft" or "Alt" (either side); same for Control, Shift, Meta.
     let names = ["Alt", "Control", "Shift", "Meta"].contains(hotkey) ? [hotkey + "Left", hotkey + "Right"] : [hotkey]
     var keys: [UInt16: UInt64] = [:]
@@ -126,10 +137,11 @@ final class Capture {
     self.resistance = resistance
     self.edgeEnabled = edgeEnabled
     self.cfgKeyboard = keyboard
+    self.cooldown = cooldown
     edgeBy.removeAll()
   }
 #else
-  func configure(side: String, resistance: Double, edgeEnabled: Bool, keyboard: Bool, dragFiles: Bool, hotkey: String) {
+  func configure(side: String, resistance: Double, edgeEnabled: Bool, keyboard: Bool, dragFiles: Bool, hotkey: String, cooldown: Double) {
     // "AltRight", "AltLeft" or "Alt" (either side); same for Control, Shift, Meta.
     let names = ["Alt", "Control", "Shift", "Meta"].contains(hotkey) ? [hotkey + "Left", hotkey + "Right"] : [hotkey]
     var keys: [UInt16: UInt64] = [:]
@@ -144,6 +156,7 @@ final class Capture {
     self.resistance = resistance
     self.edgeEnabled = edgeEnabled
     self.cfgKeyboard = keyboard
+    self.cooldown = cooldown
     edge.push = 0
   }
 #endif
@@ -155,6 +168,8 @@ final class Capture {
     capturing = true
     capMouse = mouse
     capKeyboard = keyboard
+    lastCross = now()
+    arrival = nil
     if mouse {
       CGAssociateMouseAndMouseCursorPosition(0) // pointer frozen, deltas still arrive
       pinnedAt = CGEvent(source: nil)?.location
@@ -190,10 +205,29 @@ final class Capture {
     }
     swallowUps.formUnion(remoteDown)
     remoteDown.removeAll()
+    arrived(side: side)
+  }
+
+  /// The pointer came to this computer (back home, or placed by the driver) through `side`, or by
+  /// the hotkey (nil). Starts the cooldown and the arrival guard, and clears every push.
+  func arrived(side: String?) {
+    lastCross = now()
+    arrival = side.map { (side: $0, at: lastCross, inward: 0.0) }
 #if MULTI
     edgeBy.removeAll()
+    retBy.removeAll()
 #else
     edge.push = 0
+    ret.push = 0
+#endif
+  }
+
+  /// The sides where an injected move must stop at the edge rather than jump onto a display past it.
+  var returnStops: [String] {
+#if MULTI
+    return returnSides
+#else
+    return returnSide.map { [$0] } ?? []
 #endif
   }
 
@@ -216,12 +250,13 @@ final class Capture {
     var hit: (side: String, offset: Double)? = nil
     for side in returnSides {
       var st = retBy[side] ?? (push: 0.0, at: 0.0)
-      let off = Capture.push(&st, p, dx, dy, side, returnResistance)
+      let off = push(&st, p, dx, dy, side, returnResistance, returnZones)
       retBy[side] = st
       if hit == nil, let off = off { hit = (side: side, offset: off) }
     }
     guard let found = hit else { return }
     returnSides = []
+    lastCross = now()
     Flash.shared.leave(at: p, side: found.side)
     emit(["event": "return", "side": found.side, "offset": found.offset])
   }
@@ -231,7 +266,7 @@ final class Capture {
     var hit: (side: String, offset: Double)? = nil
     for side in sides {
       var st = edgeBy[side] ?? (push: 0.0, at: 0.0)
-      let off = Capture.push(&st, p, dx, dy, side, resistance)
+      let off = push(&st, p, dx, dy, side, resistance, edgeZones)
       edgeBy[side] = st
       if hit == nil, let off = off { hit = (side: side, offset: off) }
     }
@@ -246,20 +281,35 @@ final class Capture {
 
   /// Return-edge check while driven; called for local moves and for injected relative moves.
   func checkReturn(_ p: CGPoint, dx: Double, dy: Double) {
-    guard let side = returnSide, let off = Capture.push(&ret, p, dx, dy, side, returnResistance) else { return }
+    guard let side = returnSide, let off = push(&ret, p, dx, dy, side, returnResistance, returnZones) else { return }
     returnSide = nil
+    lastCross = now()
     Flash.shared.leave(at: p, side: side)
     emit(["event": "return", "offset": off])
   }
 #endif
 
   /// Accumulate outward motion on an outer edge; returns the offset when it went through.
-  private static func push(_ st: inout (push: Double, at: Double), _ p: CGPoint, _ dx: Double, _ dy: Double,
-                           _ side: String, _ resistance: Double) -> Double? {
+  private func push(_ st: inout (push: Double, at: Double), _ p: CGPoint, _ dx: Double, _ dy: Double,
+                    _ side: String, _ resistance: Double, _ zones: [ClosedRange<Double>]?) -> Double? {
     let out = side == "right" ? dx : side == "left" ? -dx : side == "bottom" ? dy : -dy
     let t = now()
     if t - st.at > 0.3 { st.push = 0 }
-    guard out > 0, Screens.isOuterEdge(p, side: side) else {
+    if t - lastCross < cooldown {
+      st.push = 0
+      return nil
+    }
+    if var a = arrival, a.side == side {
+      if out < 0 { a.inward -= out }
+      if t - a.at < guardWindow && a.inward < 8 {
+        arrival = a
+        st.push = 0
+        return nil
+      }
+      arrival = nil
+    }
+    guard out > 0, Screens.isOuterEdge(p, side: side),
+          zones.map({ z in z.contains { $0.contains(Screens.offset(p, side: side)) } }) ?? true else {
       st.push = 0
       return nil
     }
@@ -306,7 +356,7 @@ final class Capture {
         }
         emit(["event": "hotkey"])
       }
-      guard capturing && capKeyboard, let code = KeyCodes.fromMac[kc] else {
+      guard capturing && capKeyboard, let code = KeyCodes.code(kc, kbType: e.getIntegerValueField(.keyboardEventKeyboardType)) else {
         if down { localDown.insert(kc) } else { localDown.remove(kc); swallowUps.remove(kc) }
         return false
       }
@@ -323,7 +373,7 @@ final class Capture {
     }
     hkStage = 0
     flushHotkey()
-    guard let code = KeyCodes.fromMac[kc] else { return capturing && capKeyboard }
+    guard let code = KeyCodes.code(kc, kbType: e.getIntegerValueField(.keyboardEventKeyboardType)) else { return capturing && capKeyboard }
     if kc == 0x39 { // Caps Lock toggles: send a full press
       if capturing && capKeyboard { ev(["t": "k.kd", "code": code]); ev(["t": "k.ku", "code": code]); return true }
       return false
@@ -397,7 +447,7 @@ final class Capture {
 
   /// The held hotkey turned out to be part of a shortcut: send its press now, before the key.
   private func flushHotkey() {
-    guard let kc = hkPending, capturing && capKeyboard, let code = KeyCodes.fromMac[kc] else { hkPending = nil; return }
+    guard let kc = hkPending, capturing && capKeyboard, let code = KeyCodes.code(kc) else { hkPending = nil; return }
     hkPending = nil
     remoteDown.insert(kc)
     ev(["t": "k.kd", "code": code])
@@ -409,7 +459,7 @@ final class Capture {
     let kc = UInt16(e.getIntegerValueField(.keyboardEventKeycode))
     if capturing && capKeyboard {
       if !down && localDown.remove(kc) != nil { return false }
-      guard let code = KeyCodes.fromMac[kc] else { return true }
+      guard let code = KeyCodes.code(kc, kbType: e.getIntegerValueField(.keyboardEventKeyboardType)) else { return true }
       if down { remoteDown.insert(kc) } else { remoteDown.remove(kc) }
       ev(["t": down ? "k.kd" : "k.ku", "code": code])
       return true
@@ -471,7 +521,7 @@ final class Capture {
     }
 #else
     if type == .leftMouseDragged, !capturing, edgeEnabled, dragFiles,
-       let off = Capture.push(&edge, e.location, dx, dy, side, resistance) {
+       let off = push(&edge, e.location, dx, dy, side, resistance, edgeZones) {
       let paths = draggedFiles()
       log("edge: drag through the edge, \(paths.count) file(s) on the drag pasteboard")
       if !paths.isEmpty {
@@ -496,7 +546,7 @@ final class Capture {
       }
 #else
       if !capturing, edgeEnabled, NSEvent.pressedMouseButtons == 0,
-         let off = Capture.push(&edge, e.location, dx, dy, side, resistance) {
+         let off = push(&edge, e.location, dx, dy, side, resistance, edgeZones) {
         startCapture(mouse: true, keyboard: cfgKeyboard) // capture first, so no motion leaks
         Flash.shared.leave(at: e.location, side: side)
         emit(["event": "edge", "offset": off])

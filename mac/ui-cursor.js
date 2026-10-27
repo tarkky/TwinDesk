@@ -1,5 +1,6 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
-// Cursor tab: where the PC is (layout picker), directions, edge resistance, speed, scrolling.
+// Cursor tab: where the other computer is (the crossing map, shared/kvm-map-ui.js), directions,
+// edge resistance, speed, scrolling.
 'use strict';
 
 UI.tab({
@@ -18,22 +19,8 @@ UI.tab({
     const status = UI.note('info', '');
     const lock = UI.cursorLock();
 
-    // Layout picker: the Mac in the middle, a slot on each side for the PC.
-    const slots = {};
-    let meLabel = null;
-    const grid = el('div', { class: 'layout-grid' });
-    const cell = (side) => {
-      const b = el('button', { class: 'slot', title: `Put it ${side === 'top' ? 'above' : side === 'bottom' ? 'below' : `on the ${side}`}`, attrs: { 'aria-label': `Other computer ${side}` } });
-      b.onclick = () => api.setKvm({ pcSide: side });
-      slots[side] = b;
-      return b;
-    };
-    grid.append(
-      el('span'), cell('top'), el('span'),
-      cell('left'), el('div', { class: 'screen mac-screen' }, [meLabel = el('span', { text: 'This Mac' })]), cell('right'),
-      el('span'), cell('bottom'), el('span'),
-    );
-    const layoutHint = el('div', { class: 'layout-hint' });
+    // The crossing map: both computers' monitors; drag the other one where it is on the desk.
+    const map = KvmMapUI.create({ onMove: (side, along) => api.moveKvm({ side, along }), onIdentify: () => api.identifyDisplays() });
 
     const drive = UI.switch((v) => api.setKvm({ driveOther: v }), { label: 'Use here, control there' });
     const driven = UI.switch((v) => api.setKvm({ beDriven: v }), { label: 'Let it control this computer' });
@@ -62,7 +49,7 @@ UI.tab({
         UI.dir('w2m', [driven2 = peerRow('Use {name}’s mouse and keyboard on {me}', '', [driven])]),
       ),
       lock.el,
-      UI.card('Where the other computer is', [el('div', { class: 'layout' }, [grid, layoutHint])]),
+      UI.card('Where the other computer is', [map.el]),
       UI.card('Feel', [
         UI.row('Edge resistance', 'Push a little further to cross', [resistance]),
         peerRow('Pointer speed on {name}', '', [speed]),
@@ -80,13 +67,8 @@ UI.tab({
       status.className = `note ${kind}`;
       status.set(text);
       lock.update(s);
-      for (const [side, b] of Object.entries(slots)) {
-        b.classList.toggle('on', k.pcSide === side);
-        b.textContent = k.pcSide === side ? p.name : '';
-        meLabel.textContent = p.me;
-      }
-      const where = { left: 'to the left of', right: 'to the right of', top: 'above', bottom: 'below' }[k.pcSide];
-      layoutHint.textContent = `${p.Name} is ${where} ${p.me}. Click a side to move it.`;
+      const m = (s.input && s.input.map) || { mine: [], theirs: [], along: null };
+      map.update({ mine: m.mine, theirs: m.theirs, side: k.pcSide, along: m.along, me: p.me, them: p.Name });
       driven2.setHint('Double-tap the hotkey to take everything back');
       drive.set(k.driveOther);
       driven.set(k.beDriven);

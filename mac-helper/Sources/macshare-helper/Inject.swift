@@ -4,6 +4,7 @@
 // Every injected event is marked with eventSourceUserData = 0x4D53 so our own tap can skip it.
 import Carbon.HIToolbox
 import Cocoa
+import IOKit.pwr_mgt
 
 let injectedMark: Int64 = 0x4D53
 
@@ -22,6 +23,10 @@ final class Injector {
   private var tapMods = Set<String>()          // modifiers (and Fn) pressed since none were held
   private var tapDown = Set<String>()          // those held now
   private var modsOnly = false                 // ...and no other key between
+  // Injected events don't count as user activity, so a sleeping display stays dark. Declare it,
+  // at most once a second, reusing one assertion.
+  private var activityID = IOPMAssertionID(0)
+  private var lastActivity: TimeInterval = 0
 
   init() {
     source = CGEventSource(stateID: .hidSystemState)
@@ -42,6 +47,14 @@ final class Injector {
     guard let e = e else { return }
     e.setIntegerValueField(.eventSourceUserData, value: injectedMark)
     e.post(tap: .cghidEventTap)
+    declareActivity()
+  }
+
+  func declareActivity() {
+    let now = ProcessInfo.processInfo.systemUptime
+    if now - lastActivity < 1 { return }
+    lastActivity = now
+    IOPMAssertionDeclareUserActivity("TwinDesk remote input" as CFString, kIOPMUserActiveLocal, &activityID)
   }
 
   private func cgButton(_ b: Int) -> CGMouseButton {
@@ -147,7 +160,7 @@ final class Injector {
       }
       if code == "Fn" { return } // only its tap means something (above)
     } else if down { modsOnly = false }
-    guard let vk = KeyCodes.toMac[code] else {
+    guard let vk = KeyCodes.vk(code) else {
       log("no Mac key for \(code)")
       return
     }
@@ -180,6 +193,20 @@ final class Injector {
   static func kind(_ code: String) -> String {
     for k in ["Shift", "Control", "Alt", "Meta"] where code.hasPrefix(k) { return k }
     return code
+  }
+
+  /// Text typed as it is, whatever this Mac's layout: a letter of another alphabet from the other
+  /// computer's layout (shared/keylayout.js) or the phone Remote's keyboard. Without modifiers.
+  func type(_ text: String) {
+    for ch in text.prefix(64) {
+      let u = Array(String(ch).utf16)
+      for down in [true, false] {
+        let e = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: down)
+        e?.flags = []
+        e?.keyboardSetUnicodeString(stringLength: u.count, unicodeString: u)
+        post(e)
+      }
+    }
   }
 
   /// Key-up every key and button we hold, clear modifiers.
@@ -218,5 +245,44 @@ enum InputSources {
     let to = list[(i + 1) % list.count]
     TISSelectInputSource(to)
     log("input source: \(id(to))")
+  }
+}
+
+enum KeyLayout {
+  /// Keys that type a character: letters, digits, punctuation.
+  static let typing: Set<String> = Set(KeyCodes.toMac.keys.filter {
+    $0.hasPrefix("Key") || $0.hasPrefix("Digit") || ["Minus", "Equal", "BracketLeft", "BracketRight", "Backslash",
+      "Semicolon", "Quote", "Backquote", "Comma", "Period", "Slash", "IntlBackslash"].contains($0)
+  })
+
+  /// What each of those keys types alone in the current keyboard layout, lower case: ["KeyY": "z", …]
+  /// on a German Mac. Main uses it to send shortcuts by letter (shared/keylayout.js). With an input
+  /// method (Japanese, Chinese…) its ASCII layout; dead keys give their character.
+  /// sourceID: another installed layout instead (com.apple.keylayout.German), for tests.
+  static func current(sourceID: String? = nil) -> [String: String] {
+    var picked: TISInputSource?
+    if let sourceID {
+      let props = [kTISPropertyInputSourceID as String: sourceID] as CFDictionary
+      picked = (TISCreateInputSourceList(props, true)?.takeRetainedValue() as? [TISInputSource])?.first
+    } else {
+      picked = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue()
+    }
+    guard let src = picked,
+          let ptr = TISGetInputSourceProperty(src, kTISPropertyUnicodeKeyLayoutData) else { return [:] }
+    let data = Unmanaged<CFData>.fromOpaque(ptr).takeUnretainedValue() as Data
+    var out: [String: String] = [:]
+    data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+      guard let layout = raw.bindMemory(to: UCKeyboardLayout.self).baseAddress else { return }
+      for code in typing {
+        guard let vk = KeyCodes.vk(code) else { continue }
+        var dead: UInt32 = 0
+        var len = 0
+        var chars = [UniChar](repeating: 0, count: 4)
+        let st = UCKeyTranslate(layout, vk, UInt16(kUCKeyActionDisplay), 0, UInt32(LMGetKbdType()),
+                                OptionBits(kUCKeyTranslateNoDeadKeysBit), &dead, chars.count, &len, &chars)
+        if st == noErr && len > 0 { out[code] = String(utf16CodeUnits: chars, count: len).lowercased() }
+      }
+    }
+    return out
   }
 }

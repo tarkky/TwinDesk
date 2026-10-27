@@ -5,6 +5,8 @@
 // channel in base64 chunks, with a SHA-256 check. Waits while the socket is backed up so mouse and
 // keyboard messages never sit behind a big file. Send files and pastes the other side
 // asked for go the same way as batches (`drop:'send'|'paste'`, `batch`, `rel`), ended by `files.done`.
+// With an app that can, on the network or a cable, the bytes go over HTTPS instead, up to four files
+// at once (shared/fastfile.js, link.fx; not in Multi-device).
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -24,8 +26,9 @@ class FileDrop {
   constructor(opts) {
     Object.assign(this, opts);
     this.queue = [];
-    this.busy = false;
-    this.current = null; // {id, name, size, sent, index, count}
+    this.sending = 0; // jobs being sent (one, or a few with fast files)
+    this.active = new Map(); // id → {id, name, size, sent, index, count, …} being sent
+    this.current = null; // the newest of them, for the view
     this.last = null; // {name, ok, text}
     this.waiters = new Map(); // id → {resolve, types}
     for (const t of [T.FILE_ACCEPT, T.FILE_REFUSE, T.FILE_DONE, T.FILE_CANCEL]) this.link.on(t, (m) => this._answer(m));
@@ -116,14 +119,22 @@ class FileDrop {
   _stopDrag(drag, tellMac) {
     if (tellMac) this.link.send({ t: T.DRAG_CANCEL, drag });
     this.queue = this.queue.filter((j) => j.drag !== drag);
-    if (this.current && this.current.drag === drag) this.cancel();
+    if ([...this.active.values()].some((c) => c.drag === drag)) this.cancel();
   }
 
-  async _next() {
-    if (this.busy) return;
-    const job = this.queue.shift();
-    if (!job) return;
-    this.busy = true;
+  _next() {
+    const fx = this.link.fx;
+    while (this.sending < (fx ? fx.parallel : 1) && this.queue.length) {
+      const job = this.queue.shift();
+      this.sending++;
+      this._run(job).finally(() => {
+        this.sending--;
+        this._next();
+      });
+    }
+  }
+
+  async _run(job) {
     try {
       await this._send(job);
     } catch (e) {
@@ -135,9 +146,6 @@ class FileDrop {
         this._report(b.name, false, e.message);
       } // other failures: files.done says how the batch went
     }
-    this.current = null;
-    this.busy = false;
-    this._next();
   }
 
   async _send(job) {
@@ -145,7 +153,19 @@ class FileDrop {
     if (this.link.status.state !== 'connected') throw new Error('Not connected to {name}');
     if (job.size > P.FILE_MAX_BYTES) throw new Error('Too big');
     const id = crypto.randomBytes(8).toString('hex');
-    this.current = { id, name, size: job.size, sent: 0, index: job.index, count: job.count, release: job.release, drag: job.drag, batch: job.batch };
+    const cur = { id, name, size: job.size, sent: 0, index: job.index, count: job.count, release: job.release, drag: job.drag, batch: job.batch };
+    this.current = cur;
+    this.active.set(id, cur);
+    try {
+      await this._sendFile(job, cur);
+    } finally {
+      this.active.delete(id);
+      if (this.current === cur) this.current = [...this.active.values()].pop() || null;
+    }
+  }
+
+  async _sendFile(job, cur) {
+    const { id, name } = cur;
     this._progress();
     const offer = { t: T.FILE_OFFER, id, name, size: job.size, index: job.index, count: job.count };
     if (job.drag) Object.assign(offer, { drop: 'drag', drag: job.drag, rel: job.rel });
@@ -161,33 +181,66 @@ class FileDrop {
       throw e;
     }
 
-    const hash = crypto.createHash('sha256');
-    let seq = 0;
-    const stream = fs.createReadStream(job.path, { highWaterMark: P.FILE_CHUNK_BYTES });
-    try {
-      for await (const chunk of stream) {
-        if (!this.current || this.current.id !== id) throw new Error('Cancelled');
-        while (this.link.bufferedAmount > HIGH_WATER) await sleep(15);
-        if (this.link.status.state !== 'connected') throw new Error('{Name} disconnected');
-        hash.update(chunk);
-        this.link.send({ t: T.FILE_CHUNK, id, seq: seq++, data: chunk.toString('base64') });
-        this.current.sent += chunk.length;
-        if (job.batch && this.batches.has(job.batch)) {
-          const b = this.batches.get(job.batch);
-          b.sent += chunk.length;
-          if (this.onBatchProgress) this.onBatchProgress(b); // The popup for big batches
-        }
-        this._progress();
-      }
-    } finally {
-      stream.destroy();
-    }
-    this.link.send({ t: T.FILE_END, id, sha256: hash.digest('hex') });
+    const sha256 = (await this._fast(job, cur)) || (await this._chunks(job, cur));
+    this.link.send({ t: T.FILE_END, id, sha256 });
     if (job.drag) return; // the Mac answers file.done when the drop target has it; drag.end says how it went
     const d = await this._wait(id, [T.FILE_DONE, T.FILE_CANCEL], DONE_MS);
     if (d.t !== T.FILE_DONE || !d.ok) throw new Error(d.error || '{Name} couldn’t save it');
     if (job.batch) return; // listed once, on files.done
     this._report(name, true, d.path ? 'Saved on {name}: ' + d.path : 'Saved on {name}');
+  }
+
+  // Fast files: the SHA-256 once it went, or null to send it the old way (an older app, Bluetooth, a
+  // Wi-Fi link netlink made, or it didn't work before any byte went).
+  async _fast(job, cur) {
+    const fx = this.link.fx;
+    if (!fx || !fx.usable()) return null;
+    let shown = 0;
+    try {
+      return await fx.send(cur.id, job.path, job.size, (n) => {
+        const now = Date.now();
+        this._sent(job, cur, n, now - shown >= 100);
+        if (now - shown >= 100) shown = now;
+      });
+    } catch (e) {
+      if (this.active.get(cur.id) !== cur) throw new Error('Cancelled');
+      if (!e.early) {
+        this.link.send({ t: T.FILE_CANCEL, id: cur.id });
+        throw e;
+      }
+      console.log('[files] fast files didn’t work (' + e.message + '): sending the usual way');
+      return null;
+    }
+  }
+
+  // The usual way: base64 file.chunk messages on the session's socket. Returns the SHA-256.
+  async _chunks(job, cur) {
+    const id = cur.id;
+    const hash = crypto.createHash('sha256');
+    let seq = 0;
+    const stream = fs.createReadStream(job.path, { highWaterMark: P.FILE_CHUNK_BYTES });
+    try {
+      for await (const chunk of stream) {
+        if (this.active.get(id) !== cur) throw new Error('Cancelled');
+        while (this.link.bufferedAmount > HIGH_WATER) await sleep(15);
+        if (this.link.status.state !== 'connected') throw new Error('{Name} disconnected');
+        hash.update(chunk);
+        this.link.send({ t: T.FILE_CHUNK, id, seq: seq++, data: chunk.toString('base64') });
+        this._sent(job, cur, chunk.length, true);
+      }
+    } finally {
+      stream.destroy();
+    }
+    return hash.digest('hex');
+  }
+
+  _sent(job, cur, n, show) {
+    cur.sent += n;
+    const b = job.batch && this.batches.get(job.batch);
+    if (b) b.sent += n;
+    if (!show) return;
+    if (b && this.onBatchProgress) this.onBatchProgress(b); // The popup for big batches
+    this._progress();
   }
 
   _wait(id, types, ms) {
@@ -198,7 +251,8 @@ class FileDrop {
   }
 
   _answer(m) {
-    if (m.t === T.FILE_CANCEL && this.current && this.current.id === m.id) this.current.cancelled = true;
+    const c = this.active.get(m.id);
+    if (m.t === T.FILE_CANCEL && c) c.cancelled = true;
     const w = this.waiters.get(m.id);
     if (w && w.types.includes(m.t)) w.resolve(m);
   }
@@ -207,7 +261,7 @@ class FileDrop {
   // Drag is cancelled on the Mac.
   cancelRelease() {
     this.queue = this.queue.filter((j) => !j.release);
-    if (this.current && this.current.release) this.cancel();
+    if ([...this.active.values()].some((c) => c.release)) this.cancel();
     if (this.drag) {
       const d = this.drag;
       this.drag = null;
@@ -215,18 +269,25 @@ class FileDrop {
     }
   }
 
+  // Stop what's being sent (with fast files, every file in flight).
   cancel() {
-    if (!this.current) return;
-    this.link.send({ t: T.FILE_CANCEL, id: this.current.id });
-    const w = this.waiters.get(this.current.id);
-    const b = this.current.batch && this.batches.get(this.current.batch);
-    if (b) {
-      this.batches.delete(this.current.batch);
-      this._report(b.name, false, 'Cancelled');
+    if (!this.active.size) return;
+    let all = false;
+    for (const c of [...this.active.values()]) {
+      this.link.send({ t: T.FILE_CANCEL, id: c.id });
+      const w = this.waiters.get(c.id);
+      const b = c.batch && this.batches.get(c.batch);
+      if (b) {
+        this.batches.delete(c.batch);
+        this._report(b.name, false, 'Cancelled');
+      }
+      if (!c.drag) all = true;
+      this.active.delete(c.id); // the chunk loop stops at its next check
+      if (this.link.fx) this.link.fx.cancel(c.id);
+      if (w) w.reject(new Error('Cancelled'));
     }
-    if (!this.current.drag) this.queue = [];
-    this.current = null; // the chunk loop stops at its next check
-    if (w) w.reject(new Error('Cancelled'));
+    if (all) this.queue = [];
+    this.current = null;
   }
 
   _abortAll(why) {

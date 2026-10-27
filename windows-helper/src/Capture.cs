@@ -42,6 +42,42 @@ namespace MacShare
         double push; DateTime lastPush;
         bool retArmed; string retSide; double retResistance, retPush; DateTime retLast;
 #endif
+        // No new crossing within CooldownMs of the last one, either way (kvmConfig cooldownMs,
+        // KVM_CROSS_COOLDOWN_MS). After arriving, the edge it came through only counts once the pointer
+        // moved 8 px inward or GuardMs passed, so the end of a flick doesn't bounce straight back.
+        public int CooldownMs = 250;
+        // Where along the side the other computer's monitors touch ours (shared/kvm-geom.js zones, 0–1
+        // of the bounding box, as Offset): the edge and the way back only cross inside them. null: anywhere.
+        public List<double[]> EdgeZones, ReturnZones;
+
+        // kvmConfig / armReturn `zones`: "0.1-0.5,0.7-1" (a little wider, for rounding), "none" (nothing
+        // crosses), anything else null (the whole side).
+        public static List<double[]> ParseZones(string text)
+        {
+            if (text == null) return null;
+            List<double[]> list = new List<double[]>();
+            if (text == "none") return list;
+            foreach (string part in text.Split(','))
+            {
+                string[] ab = part.Split('-');
+                double a, b;
+                if (ab.Length == 2 && double.TryParse(ab[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out a)
+                    && double.TryParse(ab[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out b) && a <= b)
+                    list.Add(new double[] { a - 0.002, b + 0.002 });
+            }
+            return list.Count > 0 ? list : null;
+        }
+
+        static bool InZone(List<double[]> zones, int x, int y, string side)
+        {
+            if (zones == null) return true;
+            double o = Screens.Offset(x, y, side);
+            foreach (double[] z in zones) if (o >= z[0] && o <= z[1]) return true;
+            return false;
+        }
+        const int GuardMs = 500;
+        DateTime lastCross = DateTime.MinValue, arrivalAt;
+        string arrivalSide; double arrivalInward;
 
         // hotkey double-tap
         bool hkDown; DateTime lastTapUp = DateTime.MinValue;
@@ -174,6 +210,7 @@ namespace MacShare
                 Native.SetCursorPos(parked.X, parked.Y);
             }
             push = 0;
+            lastCross = DateTime.UtcNow; arrivalSide = null;
         }
 
         // side == null: put the pointer back where capture began.
@@ -194,11 +231,49 @@ namespace MacShare
                 HideCursor.Show();
                 if (Flash != null) Flash.Play(p, side ?? (Side != null && Screens.OnOuterEdge(p.X, p.Y, Side) ? Side : null), false); // arriving
             }
-            push = 0;
+            Arrived(side);
         }
 #endif
 
         public bool Capturing { get { return capturing; } }
+
+        // The pointer came to this PC (back home, or placed by the driver) through `side`, or by the
+        // hotkey (null): starts the cooldown and the arrival guard, and clears every push.
+        public void Arrived(string side)
+        {
+            lastCross = DateTime.UtcNow;
+            arrivalSide = side; arrivalAt = lastCross; arrivalInward = 0;
+#if MULTI
+            pushes.Clear(); retPushes.Clear();
+#else
+            push = 0; retPush = 0;
+#endif
+        }
+
+        // False while a crossing through `side` has to wait (cooldown, arrival guard). `outward`: this
+        // move's outward part for that side (negative = inward).
+        bool MayCross(string side, double outward)
+        {
+            DateTime now = DateTime.UtcNow;
+            if ((now - lastCross).TotalMilliseconds < CooldownMs) return false;
+            if (arrivalSide != null && arrivalSide == side)
+            {
+                if (outward < 0) arrivalInward -= outward;
+                if ((now - arrivalAt).TotalMilliseconds < GuardMs && arrivalInward < 8) return false;
+                arrivalSide = null;
+            }
+            return true;
+        }
+
+        // The sides where an injected move stops at the edge rather than jump onto a monitor past it.
+        public List<string> ReturnStops()
+        {
+#if MULTI
+            return retArmed ? retSides : new List<string>();
+#else
+            return retArmed ? new List<string> { retSide } : new List<string>();
+#endif
+        }
 
 #if !MULTI
         public void ArmReturn(bool on, string side, double resistance)
@@ -314,11 +389,11 @@ namespace MacShare
             int msg = wParam.ToInt32();
             bool down = msg == Native.WM_KEYDOWN || msg == Native.WM_SYSKEYDOWN;
             string code = Keys.Code(k.vkCode, k.scanCode, (k.flags & Native.LLKHF_EXTENDED) != 0);
-            // AltGr (Right Alt on many layouts) sends a fake Left Ctrl first, scan 0x21D: with Right Alt
-            // as the hotkey it is part of the hotkey, so it neither breaks the double-tap nor goes over.
-            // It is never a real Ctrl press, so it never counts for a Ctrl hotkey either.
+            // AltGr (Right Alt on many layouts) sends a fake Left Ctrl first, scan 0x21D. It never goes
+            // over: Right Alt does, and the other side's layout makes that AltGr (Option on a Mac); sent,
+            // it was a Ctrl there too (Cmd on a Mac: AltGr+E was Cmd+Option+E, not €). With Right Alt as
+            // the hotkey it doesn't break the double-tap, and it never counts for a Ctrl hotkey.
             bool fakeCtrl = k.vkCode == 0xA2 && k.scanCode == 0x21D;
-            bool altGrCtrl = fakeCtrl && HotkeyVks.Contains(0xA5);
             bool hotkey = !fakeCtrl && DetectHotkey(k.vkCode, down);
 
             if (!down && swallowVks.Remove(k.vkCode)) return (IntPtr)1;
@@ -330,7 +405,7 @@ namespace MacShare
             bool isHk = HotkeyVks.Contains(k.vkCode);
             if (capturing && capKeys)
             {
-                if (altGrCtrl) { if (hotkey) FireHotkey(); return (IntPtr)1; }
+                if (fakeCtrl) return (IntPtr)1;
                 if (isHk)
                 {
                     IntPtr r = (IntPtr)1;
@@ -424,7 +499,8 @@ namespace MacShare
             if (retArmed) { FeedReturn(p.x, p.y, dx, dy); return; }
             if (!DriveOther || Side == null || AnyButtonDown()) { push = 0; return; } // Rule 6: no crossing mid-drag
             double outward = Screens.Outward(Side, dx, dy);
-            if (outward <= 0 || !Screens.OnOuterEdge(p.x, p.y, Side)) { push = 0; return; }
+            if (!MayCross(Side, outward)) { push = 0; return; }
+            if (outward <= 0 || !Screens.OnOuterEdge(p.x, p.y, Side) || !InZone(EdgeZones, p.x, p.y, Side)) { push = 0; return; }
             DateTime now = DateTime.UtcNow;
             if ((now - lastPush).TotalMilliseconds > 300) push = 0;
             lastPush = now;
@@ -443,13 +519,15 @@ namespace MacShare
         {
             if (!retArmed) return;
             double outward = Screens.Outward(retSide, dx, dy);
-            if (outward <= 0 || !Screens.OnOuterEdge(x, y, retSide)) { retPush = 0; return; }
+            if (!MayCross(retSide, outward)) { retPush = 0; return; }
+            if (outward <= 0 || !Screens.OnOuterEdge(x, y, retSide) || !InZone(ReturnZones, x, y, retSide)) { retPush = 0; return; }
             DateTime now = DateTime.UtcNow;
             if ((now - retLast).TotalMilliseconds > 300) retPush = 0;
             retLast = now;
             retPush += outward;
             if (retPush < retResistance) return;
             retArmed = false;
+            lastCross = now;
             if (Flash != null) Flash.Play(new Point(x, y), retSide, true); // leaving this PC for the Mac
             Dictionary<string, object> d = Ev("return");
             d["offset"] = Math.Round(Screens.Offset(x, y, retSide), 4);

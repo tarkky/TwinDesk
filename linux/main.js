@@ -74,6 +74,7 @@ app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
 // Renamed MacShare → TwinDesk: settings, pairing and keys stay in the folder they've always been
 // in (Electron would follow the new product name). A dev copy's --user-data-dir still wins.
 if (!app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', path.join(app.getPath('appData'), 'MacShare'));
+require('../shared/applog.js').start(app); // console.* and crashes into the log folder, both apps
 // Multi-device switched on (multi.js, docs/multi-device.md): mesh/main.js runs instead of everything below.
 if (require('./multi').on()) return void require('./mesh/main.js');
 if (!app.requestSingleInstanceLock()) {
@@ -216,6 +217,7 @@ function start() {
   hud = new Hud(() => settings);
   const dragRecv = new DragRecv({ link, helper, settings, isDriven: () => kvm && kvm.mode === 'driven', popup: (kind, text) => hud.show(kind, text), onChange: pushState });
   kvm = new Kvm({ link, helper, clip, fileDrop, fileRecv, dragRecv, settings, save: saveSettings, onChange: onKvmChange });
+  require('../shared/applog.js').linkStats(() => kvm.linkSample()); // the link's line in the log every 30 s
   const hudShow = hud.show.bind(hud);
   hud.show = (kind, text, sub) => hudShow(kind, fillNames(text), fillNames(sub || '')); // device names in popups
   // Cursor sharing switched on/off (hotkey double-tap, tray, the Cursor tab or the other side): the big card.
@@ -301,6 +303,7 @@ function start() {
   // New releases on GitHub: a notification once per version, the tray item and About › Updates.
   updates = new Updates({
     current: app.getVersion(), platform: 'linux', prefer: process.env.APPIMAGE || !app.isPackaged ? 'appimage' : 'deb', getSettings: () => settings, save: saveSettings, onChange: pushState,
+    onShowModal: showUpdateWindow,
     notify: (title, body, onClick) => {
       if (!Notification.isSupported()) return;
       updateNote = new Notification({ title, body });
@@ -1108,6 +1111,13 @@ function showMain() {
   mainWin.focus();
 }
 
+function showUpdateWindow() {
+  showMain();
+  if (mainWin && !mainWin.isDestroyed()) {
+    mainWin.webContents.send('show-update');
+  }
+}
+
 function createTray() {
   try {
     const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray.png'));
@@ -1179,8 +1189,9 @@ function updateTray(s) {
     ...(again ? [{ label: (s.link.busy ? 'Take Over ' : 'Connect to ') + host, click: () => link.connect(true) }] : []),
     check('Show a Popup When Switching', settings.app.hud, (i) => set('app', { hud: i.checked })),
     { type: 'separator' },
-    ...(s.updates && s.updates.available ? [{ label: 'Download TwinDesk ' + s.updates.latest + '…', click: () => updates.open() }] : []),
+    ...(s.updates && s.updates.available ? [{ label: 'Download TwinDesk ' + s.updates.latest + '…', click: showUpdateWindow }] : []),
     { label: 'Open TwinDesk…', click: showMain },
+    { label: 'Open Log Folder', click: () => require('../shared/applog.js').open() },
     { label: 'Quit TwinDesk', click: () => app.quit() },
   ]));
 }

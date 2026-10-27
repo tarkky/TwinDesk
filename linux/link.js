@@ -7,6 +7,7 @@
 // the session again if the network goes. A move that doesn't last is tried again later and later (resumeBackoff).
 const WebSocket = require('ws');
 const P = require('../shared/protocol.js');
+const { PairLimit, versionMessage } = require('../shared/pairlimit.js');
 
 const T = P.T;
 // A host without `os` is an older Mac.
@@ -53,6 +54,7 @@ class Link {
     this.takeover = false; // the next hello takes the session from whoever has it (Take over, an invite)
     this.busyBy = ''; // the host is in use by someone else ("In use by …"): tried again now and then
     this.timers = {};
+    this.pairLimit = new PairLimit((why) => this._pairFailed(why)); // shared/pairlimit.js
     this.handlers = new Map();
     this.stateFns = [];
     this.unknown = new Set();
@@ -204,7 +206,7 @@ class Link {
       maxPayload: P.MAX_PAYLOAD,
       handshakeTimeout: transport === 'ble' ? P.BLE_TIMEOUT_MS : 5000,
     });
-    Object.assign(ws, { transport, fp: '', lastRx: Date.now() });
+    Object.assign(ws, { transport, fp: '', lastRx: Date.now(), address, port });
     ws.on('upgrade', (res) => {
       ws.fp = P.normFingerprint(res.socket.getPeerCertificate().fingerprint256);
     });
@@ -316,7 +318,7 @@ class Link {
 
   _hello() {
     const p = this.pairing;
-    this._raw({ t: T.HELLO, v: P.PROTOCOL_VERSION, id: this.device.id, name: this.device.name, os: P.OS.LINUX, token: p.token, ...(this.takeover ? { takeover: true } : {}) });
+    this._raw({ t: T.HELLO, v: P.PROTOCOL_VERSION, id: this.device.id, name: this.device.name, os: P.OS.LINUX, token: p.token, fx: 1, ...(this.takeover ? { takeover: true } : {}) });
     this.timers.hello = setTimeout(() => {
       this.lastError = 'No welcome from {name}';
       if (this.ws) this.ws.terminate();
@@ -394,6 +396,7 @@ class Link {
     this.authed = true;
     this.attempt = 0;
     this.resumeKey = typeof msg.resume === 'string' ? msg.resume : ''; // older hosts: none, no moving
+    this.fxToken = typeof msg.fx === 'string' && /^[0-9a-f]{32}$/.test(msg.fx) ? msg.fx : ''; // fast files (shared/fastfile.js); older hosts: none
     this.resumeAt = this.resumeBackoff ? Date.now() + this.resumeBackoff : 0; // a move that didn't last waits, even after a reconnect
     const os = osOf(msg.os || this.pairing.os);
     if ((typeof msg.macName === 'string' && msg.macName && msg.macName !== this.pairing.macName) || os !== this.pairing.os) {
@@ -425,7 +428,10 @@ class Link {
 
   _onError(msg) {
     const code = msg.code;
-    if (this.mode === 'pair') return this._pairFailed(PAIR_ERRORS[code] || 'Pairing failed (' + code + ').');
+    if (this.mode === 'pair') {
+      const name = (this.pairState && this.pairState.macName) || '{Name}';
+      return this._pairFailed((code === P.E.VERSION_MISMATCH && versionMessage(msg, name)) || PAIR_ERRORS[code] || 'Pairing failed (' + code + ').');
+    }
     if (code === P.E.BAD_TOKEN) {
       this.forget();
       this._setStatus('not_paired', 'Your Mac forgot {me}. Pair again.');
@@ -549,6 +555,8 @@ class Link {
   }
 
   _changed() {
+    const ps = this.pairState;
+    this.pairLimit.update(ps, ps && ps.macName, ps && ps.address);
     for (const fn of this.stateFns) fn();
   }
 }

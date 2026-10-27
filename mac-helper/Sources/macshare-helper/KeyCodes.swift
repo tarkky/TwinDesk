@@ -1,5 +1,6 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
 // DOM KeyboardEvent.code <-> macOS virtual key codes (kVK_* from Carbon's Events.h, ANSI layout).
+import Carbon.HIToolbox
 import CoreGraphics
 
 enum KeyCodes {
@@ -37,6 +38,26 @@ enum KeyCodes {
     m[0x72] = "Insert"; m[0x69] = "F13"; m[0x6B] = "F14"; m[0x71] = "F15"
     return m
   }()
+
+  /// Apple ISO keyboards (German, French, British…) give the key left of 1 (^ on a German Mac, @ on a
+  /// French one) 0x0A and the key left of Z (<) 0x32: the other way round from the ANSI names above,
+  /// so there the two swap (as Chromium does). kbType: the keyboard an event came from; without one,
+  /// the one last used on this Mac.
+  static func isISO(_ kbType: Int64 = 0) -> Bool {
+    let t = kbType > 0 && kbType < 256 ? Int16(kbType) : Int16(LMGetKbdType())
+    return KBGetLayoutType(t) == UInt32(kKeyboardISO)
+  }
+
+  private static func isoSwap(_ vk: UInt16, _ iso: Bool) -> UInt16 {
+    guard iso else { return vk }
+    return vk == 0x0A ? 0x32 : vk == 0x32 ? 0x0A : vk
+  }
+
+  /// The code for a key this Mac's keyboard sent.
+  static func code(_ vk: UInt16, kbType: Int64 = 0) -> String? { fromMac[isoSwap(vk, isISO(kbType))] }
+
+  /// This Mac's key for a code.
+  static func vk(_ code: String) -> UInt16? { toMac[code].map { isoSwap($0, isISO()) } }
 
   /// Modifier key -> (generic flag, device-dependent flag bit from IOLLEvent.h).
   static let modifiers: [String: (flag: CGEventFlags, device: UInt64)] = [

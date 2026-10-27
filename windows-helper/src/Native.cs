@@ -16,7 +16,7 @@ namespace MacShare
             MOUSEEVENTF_MIDDLEUP = 0x0040, MOUSEEVENTF_XDOWN = 0x0080, MOUSEEVENTF_XUP = 0x0100,
             MOUSEEVENTF_WHEEL = 0x0800, MOUSEEVENTF_HWHEEL = 0x1000, MOUSEEVENTF_VIRTUALDESK = 0x4000,
             MOUSEEVENTF_ABSOLUTE = 0x8000;
-        public const uint KEYEVENTF_EXTENDEDKEY = 0x0001, KEYEVENTF_KEYUP = 0x0002, KEYEVENTF_SCANCODE = 0x0008;
+        public const uint KEYEVENTF_EXTENDEDKEY = 0x0001, KEYEVENTF_KEYUP = 0x0002, KEYEVENTF_UNICODE = 0x0004, KEYEVENTF_SCANCODE = 0x0008;
         public const uint XBUTTON1 = 1, XBUTTON2 = 2;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -33,6 +33,10 @@ namespace MacShare
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+        // ---- waking the display (Injector.Wake) ----
+        public const uint ES_SYSTEM_REQUIRED = 0x1, ES_DISPLAY_REQUIRED = 0x2;
+        [DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint flags);
 
         // ---- keyboard layout (Inject.NextLayout) ----
         public const uint WM_INPUTLANGCHANGEREQUEST = 0x0050;

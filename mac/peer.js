@@ -9,6 +9,7 @@
 
 const { EventEmitter } = require('events');
 const P = require('../shared/protocol.js');
+const { FastFiles } = require('../shared/fastfile.js');
 
 class Peer extends EventEmitter {
   constructor(server, link) {
@@ -18,32 +19,54 @@ class Peer extends EventEmitter {
     this.unknown = new Set();
     this.swapIn = null;
     this.swapOut = null;
+    // Fast files with an app that can (shared/fastfile.js): file bytes over HTTPS on our port.
+    this.fx = new FastFiles({ session: () => this._fxSession(), deliver: (m) => this.current && this._deliver(m, this.current), send: (m) => this.sendNow(m) });
+    server.fxOn = true;
+    server.https.on('request', (req, res) => {
+      if (this.fx.request(req, res)) return;
+      res.writeHead(404);
+      res.end();
+    });
 
     server.on('client', (ctx) => {
       if (!ctx.os) ctx.os = P.OS.WIN;
       ctx.role = 'guest';
+      this.fx.reset();
       this.emit('client', ctx);
     });
     server.on('closed', (ctx) => {
       if (ctx.authed) this.emit('closed', ctx);
+      if (ctx.authed && !server.current) this.fx.reset();
       if (!server.current) link.poke();
     });
     server.on('rtt', (ctx) => this.emit('rtt', ctx));
     server.on('transport', (ctx) => this.emit('transport', ctx));
-    server.on('message', (msg, ctx) => this._deliver(msg, ctx));
+    server.on('message', (msg, ctx) => (ctx !== server.current || !this.fx.incoming(msg)) && this._deliver(msg, ctx));
 
     link.on('welcome', (ctx) => {
       this.swapIn = P.newRoleSwapState(ctx.name);
       this.swapOut = P.newRoleSwapState(ctx.name);
+      this.fx.reset();
       this.emit('client', ctx);
     });
-    link.on('closed', (ctx) => this.emit('closed', ctx));
+    link.on('closed', (ctx) => {
+      this.fx.reset();
+      this.emit('closed', ctx);
+    });
     link.on('rtt', (ctx) => this.emit('rtt', ctx));
     link.on('message', (msg) => {
       const ctx = link.ctx;
       if (!ctx) return;
-      for (const m of P.swapRole(msg, this.swapIn)) this._deliver(m, ctx);
+      for (const m of P.swapRole(msg, this.swapIn)) if (!this.fx.incoming(m)) this._deliver(m, ctx);
     });
+  }
+
+  // For fast files: {host, token, transport, address, port?, fp?}, or null (an older app).
+  _fxSession() {
+    const c = this.current;
+    if (!c || !c.fx) return null;
+    if (c === this.link.ctx) return { host: false, token: c.fx, transport: 'ip', address: this.link.address, port: this.link.host.port, fp: this.link.host.fp };
+    return { host: true, token: c.fx, transport: c.transport, address: c.address };
   }
 
   // The authenticated session: {deviceId, name, os, role ('guest' = they connected to us,

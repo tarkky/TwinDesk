@@ -19,6 +19,7 @@
   let allowed = null; // the computer's remote.state
   let why = ''; // …and why it doesn't take it now
   let real = false; // the computer takes the gamepad as a real one (remote.pad)
+  let canText = false; // the computer types characters no key there types (remote.state text: remote.text)
   const asPad = () => opts.bt === true || real; // the gamepad as a real one, here or through Bluetooth
 
   // ---- keys and buttons held down: counted (two controls may press the same key), all let go on close ----
@@ -97,9 +98,11 @@
       if ((m.bt === true) !== (opts.bt === true)) releaseAll(); // what's held goes the old way
       opts = { ...opts, ...m };
       if (!opts.connected && !opts.bt) { allowed = null; releaseAll(); }
+      if (opts.bt || !opts.connected) canText = false; // a Bluetooth keyboard has only keys
     } else if (m.t === 'remote.state') {
       allowed = m.allowed === true;
       why = typeof m.why === 'string' ? m.why : '';
+      canText = m.text === true && !opts.bt;
       if (!allowed) releaseAll();
       if ((m.pad === true) !== real) { releaseAll(); real = m.pad === true; } // what's held goes the old way
     } else return;
@@ -271,7 +274,8 @@
   }
 
   // The soft keyboard: characters, as the keys that type them (US layout); a modifier held from
-  // the strip goes with the next one (Ctrl + c).
+  // the strip goes with the next one (Ctrl + c). Characters no key types (Cyrillic, accents, emoji)
+  // go as they are (remote.text), where the computer takes them; elsewhere they don't go.
   const kbd = $('kbd');
   let kbdOn = false;
   $('b-kbd').addEventListener('pointerdown', (e) => e.preventDefault());
@@ -307,15 +311,28 @@
   // once nothing is being composed.
   let sent = '';
   let composing = false;
+  const asText = (ch) => canText && !keyFor(ch) && !/\p{Cc}/u.test(ch);
   function sync() {
     const v = kbd.value;
     let i = 0;
     while (i < sent.length && i < v.length && sent[i] === v[i]) i++;
-    for (const ch of sent.slice(i)) if (keyFor(ch)) type('Backspace', false);
+    const low = (c) => /[\udc00-\udfff]/.test(c || '');
+    while (i > 0 && (low(v[i]) || low(sent[i]))) i--; // not inside a surrogate pair (emoji)
+    for (const ch of sent.slice(i)) if (keyFor(ch) || asText(ch)) type('Backspace', false);
+    let text = '';
+    const flush = () => {
+      if (text) send({ t: 'remote.text', text });
+      text = '';
+    };
     for (const ch of v.slice(i)) {
       const k = keyFor(ch);
-      if (k) type(k.code, k.shift);
+      if (k) {
+        flush();
+        type(k.code, k.shift);
+      } else if (asText(ch)) text += ch;
     }
+    flush();
+    if ([...v.slice(i)].some(asText)) dropMods(); // a strip modifier goes with the next one only
     sent = v;
   }
   function settle() {

@@ -49,6 +49,7 @@ namespace MacShare
             capture = new Capture(Emit);
             injector = new Injector();
             injector.Moved = capture.FeedReturn;
+            injector.Stops = capture.ReturnStops;
             smoother = new Smoother(delegate (double x, double y) { invoker.BeginInvoke((MethodInvoker)delegate { injector.Move(x, y); }); });
             HideCursor.Restore(); // in case a crash left the cursors blank
             capture.Start();
@@ -214,6 +215,8 @@ namespace MacShare
                         capture.Side = Json.Str(c, "side", null);
 #endif
                         capture.ResistancePx = Json.Num(c, "resistancePx", 120);
+                        capture.CooldownMs = (int)Json.Num(c, "cooldownMs", 250);
+                        capture.EdgeZones = Capture.ParseZones(Json.Str(c, "zones", null));
                         capture.HotkeyVks = HotkeyVks(Json.Str(c, "hotkey", "AltRight"));
                         capture.DriveOther = Json.Bool(c, "driveOther", false);
                         capture.EdgeKeyboard = Json.Bool(c, "keyboard", true);
@@ -230,9 +233,11 @@ namespace MacShare
                         bool center = Json.Bool(c, "center", false);
                         Point p = center ? Screens.Center() : Screens.EdgePoint(Json.Str(c, "side", "left"), Json.Num(c, "offset", 0.5));
                         Native.SetCursorPos(p.X, p.Y);
+                        capture.Arrived(center ? null : Json.Str(c, "side", "left"));
                         capture.Flash.Play(p, center ? null : Json.Str(c, "side", "left"), false); // the Mac arrives here
                         break;
                     case "armReturn":
+                        capture.ReturnZones = Capture.ParseZones(Json.Str(c, "zones", null));
 #if MULTI
                         // sides: every side with a device behind it; without it, the one side.
                         List<string> retSides = Json.Strs(c, "sides");
@@ -250,6 +255,7 @@ namespace MacShare
                     case "inject":
                         Dictionary<string, object> ev = Json.Obj(c, "ev");
                         if (ev == null) break;
+                        Injector.Wake();
                         if (Json.Str(ev, "t", "") == "k.mm" && Json.Bool(ev, "smooth", false)) { smoother.Add(Json.Num(ev, "dx", 0), Json.Num(ev, "dy", 0)); break; }
                         smoother.Flush(injector.Move); // a click or key lands where the pointer ends up
                         injector.Apply(ev);
@@ -382,6 +388,15 @@ namespace MacShare
                         List<string> selNames = Strings(c, "names");
                         Async(c, delegate (Dictionary<string, object> r) { Shell.SelectIn(selDir, selNames); }, true);
                         return;
+                    case "keyLayout": // what each key types alone in the layout in front (shared/keylayout.js); type: it takes "type"
+                        c["layout"] = Keys.Layout();
+                        c["type"] = true;
+                        break;
+                    case "type": // text as it is, whatever the layout
+                        Injector.Wake();
+                        smoother.Flush(injector.Move);
+                        Injector.Type(Json.Str(c, "text", ""));
+                        break;
                     case "info":
                         Native.POINT cur;
                         Native.GetCursorPos(out cur);
@@ -402,6 +417,7 @@ namespace MacShare
             if (cmd == "displays") reply["displays"] = c["displays"];
             if ((cmd == "displayMode" || cmd == "displayExtend") && error == null) reply["changed"] = c["changed"];
             if (cmd == "folderAt") { reply["path"] = c["path"]; reply["desktop"] = c["desktop"]; }
+            if (cmd == "keyLayout") { reply["layout"] = c["layout"]; reply["type"] = c["type"]; }
             Emit(reply);
         }
     }

@@ -12,7 +12,7 @@ const ACTIONS = [
   'connectAddress', 'pairWith', 'selectPeer', 'forgetPeer', 'confirmGuestCode', 'cancelGuestPair', 'forgetHost',
   'refreshDiscovery', 'copyText', 'allowPermission', 'skipSetup', 'connectPhone', 'disconnectPhone', 'setPhone',
   'phonePair', 'phoneScreen', 'phoneOpenApp', 'phoneCloseView', 'phoneRetry', 'phoneInstallFull', 'phoneMount',
-  'phoneUnmount', 'setMount', 'phoneAppMenu', 'setUpdates', 'checkUpdates', 'openUpdate',
+  'phoneUnmount', 'setMount', 'phoneAppMenu', 'setUpdates', 'skipUpdate', 'unskipUpdate', 'checkUpdates', 'openUpdate',
   'openLink', 'setLayoutCell', 'removeFromLayout', 'disconnect', 'connectAgain', 'setNet', 'netJoinHotspot',
   'netCancel', 'netWifi', 'hub',
 ];
@@ -21,6 +21,7 @@ const api = {
   getState: () => ipcRenderer.invoke('getState'),
   phoneAssets: () => ipcRenderer.invoke('phoneAssets'),
   onState: (fn) => ipcRenderer.on('state', (_e, s) => fn(s)),
+  onShowUpdate: (fn) => ipcRenderer.on('show-update', () => fn()),
   onHub: (fn) => ipcRenderer.on('hub', (_e, m) => fn(m)), // the phone's answers for Calls, Messages and Photos
   onGo: (fn) => ipcRenderer.on('go', (_e, tab) => fn(tab)), // show a page (the call window's Calls)
   pathsOf: (files) => [...files].map((f) => webUtils.getPathForFile(f)).filter(Boolean), // dropped files -> paths

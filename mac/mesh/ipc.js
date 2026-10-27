@@ -40,7 +40,7 @@ const SCHEMA = {
   keys: { swapCtrlCmd: bool, hotkey: oneOf(P.HOTKEYS, 'AltRight'), lockKeys: (v) => CL.validKeys(v, CL.DEFAULT_KEYS.mac) },
   app: { openAtLogin: bool, keepAwake: bool, hud: bool },
   mesh: { autoJoin: bool },
-  updates: { auto: bool },
+  updates: { auto: bool, skipped: (v) => (typeof v === 'string' ? v.slice(0, 40) : '') },
   audio: { send: bool, receive: bool, muteLocal: bool, volume: clamp(0, 1, 1), phoneMedia: bool },
   terminal: { allowPc: bool, connectPc: bool },
   files: { acceptDrops: bool, reveal: bool, dragEdge: bool, shortcuts: bool, copyKeys: accel('Control+Alt+C'), pasteKeys: accel('Control+Alt+V') },
@@ -492,14 +492,21 @@ function setupIpc(ctx) {
       setGroup('updates', partial);
       ctx.updates.start();
     },
+    skipUpdate(version) {
+      if (ctx.updates && ctx.updates.skip) ctx.updates.skip(version);
+    },
+    unskipUpdate() {
+      if (ctx.updates && ctx.updates.unskip) ctx.updates.unskip();
+    },
     checkUpdates() {
       ctx.updates.check(true);
     },
     openUpdate() {
       ctx.updates.open();
     },
-    openLink(key) { // About page: only its own links
-      if (Object.hasOwn(LINKS, key)) shell.openExternal(LINKS[key]);
+    openLink(key) { // About page: only its own links, and the log folder
+      if (key === 'logs') require('../../shared/applog.js').open();
+      else if (Object.hasOwn(LINKS, key)) shell.openExternal(LINKS[key]);
     },
     setKeys(partial) {
       setGroup('keys', partial);

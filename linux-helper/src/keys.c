@@ -3,6 +3,8 @@
 // evdev + 8 with the evdev/libinput drivers. Same keys as windows-helper/src/Keys.cs.
 #include "helper.h"
 #include <string.h>
+#include <X11/XKBlib.h>
+#include <X11/extensions/XTest.h>
 
 typedef struct { const char *code; int ev; } Key;
 
@@ -53,4 +55,103 @@ int key_evdev(const char *code) {
 const char *key_code(int ev) {
   for (int i = 0; i < NKEYS; i++) if (KEYS[i].ev == ev) return KEYS[i].code;
   return NULL;
+}
+
+// Keys that type a character: letters, digits, punctuation.
+static int typing(const char *code) {
+  static const char *PUNCT[] = { "Minus", "Equal", "BracketLeft", "BracketRight", "Backslash", "Semicolon",
+    "Quote", "Backquote", "Comma", "Period", "Slash", "IntlBackslash", NULL };
+  if (!strncmp(code, "Key", 3) || !strncmp(code, "Digit", 5)) return 1;
+  for (int i = 0; PUNCT[i]; i++) if (!strcmp(code, PUNCT[i])) return 1;
+  return 0;
+}
+
+static void utf8(unsigned cp, char *out) {
+  if (cp < 0x80) { out[0] = (char)cp; out[1] = 0; }
+  else if (cp < 0x800) { out[0] = (char)(0xc0 | cp >> 6); out[1] = (char)(0x80 | (cp & 0x3f)); out[2] = 0; }
+  else if (cp < 0x10000) { out[0] = (char)(0xe0 | cp >> 12); out[1] = (char)(0x80 | (cp >> 6 & 0x3f)); out[2] = (char)(0x80 | (cp & 0x3f)); out[3] = 0; }
+  else { out[0] = (char)(0xf0 | cp >> 18); out[1] = (char)(0x80 | (cp >> 12 & 0x3f)); out[2] = (char)(0x80 | (cp >> 6 & 0x3f)); out[3] = (char)(0x80 | (cp & 0x3f)); out[4] = 0; }
+}
+
+// keyLayout: what each of those keys types alone in the current X layout (its active group), lower
+// case: {"KeyY":"z",…} with a German layout (shared/keylayout.js). Latin-1 and Unicode keysyms; on
+// Wayland (no X display here) nothing.
+void keys_layout(double id, Display *dpy) {
+  JOut map;
+  jo_begin(&map);
+  XkbStateRec st;
+  int group = 0;
+  if (dpy && XkbGetState(dpy, XkbUseCoreKbd, &st) == Success) group = st.group;
+  for (int i = 0; dpy && i < NKEYS; i++) {
+    if (!typing(KEYS[i].code)) continue;
+    KeySym ks = XkbKeycodeToKeysym(dpy, (KeyCode)(KEYS[i].ev + 8), group, 0);
+    unsigned cp = 0;
+    if ((ks >= 0x20 && ks <= 0x7e) || (ks >= 0xa0 && ks <= 0xff)) cp = (unsigned)ks;
+    else if ((ks & 0xff000000) == 0x01000000) cp = (unsigned)(ks & 0xffffff);
+    if (!cp) continue;
+    if ((cp >= 'A' && cp <= 'Z') || (cp >= 0xc0 && cp <= 0xde && cp != 0xd7)) cp += 32;
+    char u[8];
+    utf8(cp, u);
+    jo_str(&map, KEYS[i].code, u);
+  }
+  JOut o;
+  jo_begin(&o);
+  jo_num(&o, "id", id);
+  jo_bool(&o, "ok", 1);
+  jo_raw(&o, "layout", jo_end(&map));
+  jo_bool(&o, "type", dpy != NULL); // it takes "type" (keys_type)
+  emit(jo_end(&o));
+}
+
+// One UTF-8 character at *p: its code point, *p past it (0 at a bad byte).
+static unsigned next_cp(const unsigned char **p) {
+  const unsigned char *s = *p;
+  unsigned cp;
+  int n;
+  if (s[0] < 0x80) { cp = s[0]; n = 1; }
+  else if ((s[0] & 0xe0) == 0xc0) { cp = s[0] & 0x1f; n = 2; }
+  else if ((s[0] & 0xf0) == 0xe0) { cp = s[0] & 0x0f; n = 3; }
+  else if ((s[0] & 0xf8) == 0xf0) { cp = s[0] & 0x07; n = 4; }
+  else { *p = s + 1; return 0; }
+  for (int i = 1; i < n; i++) {
+    if ((s[i] & 0xc0) != 0x80) { *p = s + i; return 0; }
+    cp = cp << 6 | (s[i] & 0x3f);
+  }
+  *p = s + n;
+  return cp;
+}
+
+// type: text as it is, whatever the X layout: a letter of another alphabet from the other computer's
+// layout (shared/keylayout.js) or the phone Remote's keyboard. Each character goes on a spare key code
+// (one with no keysym), mapped to it for the press as xdotool does; a few spare ones in turn, so a key
+// event an app hasn't read yet is never read with the next character's mapping. X11 only.
+void keys_type(Display *dpy, const char *text) {
+  static int spare[8], nspare = -1, next = 0;
+  if (!dpy || !text) return;
+  if (nspare < 0) {
+    nspare = 0;
+    int lo, hi, per;
+    XDisplayKeycodes(dpy, &lo, &hi);
+    KeySym *m = XGetKeyboardMapping(dpy, (KeyCode)lo, hi - lo + 1, &per);
+    for (int kc = hi; m && kc >= lo && nspare < 8; kc--) { // from the top: far from the real keys
+      int empty = 1;
+      for (int j = 0; j < per; j++) if (m[(kc - lo) * per + j] != NoSymbol) empty = 0;
+      if (empty) spare[nspare++] = kc;
+    }
+    if (m) XFree(m);
+  }
+  if (!nspare) return;
+  const unsigned char *p = (const unsigned char *)text;
+  for (int n = 0; *p && n < 64; n++) {
+    unsigned cp = next_cp(&p);
+    if (cp < 0x20 || cp == 0x7f) continue;
+    KeySym ks = (cp <= 0x7e || (cp >= 0xa0 && cp <= 0xff)) ? (KeySym)cp : (KeySym)(0x01000000 | cp);
+    KeySym both[2] = { ks, ks }; // Shift may be held: the same character
+    int kc = spare[next++ % nspare];
+    XChangeKeyboardMapping(dpy, kc, 2, both, 1);
+    XSync(dpy, False);
+    XTestFakeKeyEvent(dpy, (unsigned)kc, True, CurrentTime);
+    XTestFakeKeyEvent(dpy, (unsigned)kc, False, CurrentTime);
+    XSync(dpy, False);
+  }
 }

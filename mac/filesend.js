@@ -5,6 +5,9 @@
 // chunks with backpressure on the socket (so input and pings never wait behind a big file), then
 // `file.end` with the SHA-256. The PC answers `drag.end` (dropped / cancelled / failed).
 //
+// With an app that can, on the network or a cable, the bytes go over HTTPS instead, up to four files
+// at once (shared/fastfile.js, this.server.fx; not in Multi-device).
+//
 // `drag.policy {accept}` both ways: our Files switch "Drag files across the screen edge" and the PC's.
 //
 // Events: 'change' — this.view changed; 'dragEnd' (drag id) — the PC finished or dropped a drag;
@@ -82,7 +85,7 @@ class FileSend extends EventEmitter {
     this.recent = []; // newest first: { name, size, at, ok, where|error }
     this.drags = new Map(); // drag id -> { name, bytes }
     this.batches = new Map(); // Batch id -> { kind: 'send'|'paste', name, files, bytes }
-    this.pumping = false;
+    this.pumping = 0; // files being sent
     server.on(`t:${P.T.FILE_ACCEPT}`, (m) => {
       const f = this.outgoing.get(m.id);
       if (f && f.state === 'offered') f.state = 'accepted';
@@ -168,6 +171,7 @@ class FileSend extends EventEmitter {
     if (tell && this.drags.has(drag)) this.server.sendToClient({ t: P.T.DRAG_CANCEL, drag });
     for (const f of [...this.outgoing.values()]) {
       if (f.drag !== drag) continue;
+      if (this.server.fx) this.server.fx.cancel(f.id);
       this.server.sendToClient({ t: P.T.FILE_CANCEL, id: f.id });
       this._finish(f.id, false, 'cancelled');
     }
@@ -188,25 +192,53 @@ class FileSend extends EventEmitter {
     this.emit('change');
   }
 
-  // One file at a time, in offer order (a drag's files arrive in the order the PC listed them).
-  async _next() {
-    if (this.pumping) return;
-    this.pumping = true;
-    try {
-      for (;;) {
-        const f = [...this.outgoing.values()].find((x) => x.state === 'accepted');
-        if (!f) break;
-        await this._pump(f.id);
-      }
-    } finally {
-      this.pumping = false;
+  // In offer order (a drag's files arrive in the order the PC listed them): one at a time, or a
+  // few at once with fast files.
+  _next() {
+    const fx = this.server.fx;
+    while (this.pumping < (fx ? fx.parallel : 1)) {
+      const f = [...this.outgoing.values()].find((x) => x.state === 'accepted');
+      if (!f) return;
+      this.pumping++;
+      this._pump(f.id).catch(() => {}).finally(() => {
+        this.pumping--;
+        this._next();
+      });
     }
+  }
+
+  // Fast files: true when it went (or failed for good), false to send it the old way.
+  async _fast(f) {
+    const fx = this.server.fx;
+    if (!fx || !fx.usable()) return false;
+    const id = f.id;
+    let shown = 0;
+    try {
+      const sha256 = await fx.send(id, f.path, f.size, (n) => {
+        f.sent += n;
+        if (f.sent - shown >= 4 * 1024 * 1024) {
+          shown = f.sent;
+          this.emit('change');
+        }
+      });
+      if (this.outgoing.has(id)) this.server.sendToClient({ t: P.T.FILE_END, id, sha256 });
+    } catch (e) {
+      if (!this.outgoing.has(id)) return true; // cancelled
+      if (e.early) {
+        console.log(`[files] fast files didn’t work (${e.message}): sending the usual way`);
+        return false;
+      }
+      this.server.sendToClient({ t: P.T.FILE_CANCEL, id });
+      this._finish(id, false, e.message);
+    }
+    return true;
   }
 
   async _pump(id) {
     const f = this.outgoing.get(id);
     if (!f || f.state !== 'accepted') return;
     f.state = 'sending';
+    if (await this._fast(f)) return;
     const ws = this.server.current && this.server.current.ws;
     const hash = crypto.createHash('sha256');
     let seq = 0;

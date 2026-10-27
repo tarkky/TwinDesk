@@ -127,9 +127,9 @@ UI.tab({
     const ADB = { needsPair: ['bad', 'Pair once'], waitingWifi: ['bad', 'Off'], connecting: ['muted', 'Looking…'], missing: ['bad', 'Missing'], error: ['bad', 'Problem'] };
     const adbPill = el('span', { class: 'pill bad' });
     const adbRow = UI.row('Wireless debugging', '', [adbPill, UI.button('Try Again', () => api.phoneRetry(), 'small')]);
-    const adbCode = el('input', { type: 'text', placeholder: '123456', maxLength: 6, inputMode: 'numeric', autocomplete: 'off', spellcheck: false, attrs: { 'aria-label': 'Pairing code' } });
+    const adbCode = el('input', { type: 'text', placeholder: '123456', maxLength: 7, inputMode: 'numeric', autocomplete: 'off', spellcheck: false, attrs: { 'aria-label': 'Pairing code' } });
     const adbWhere = el('input', { type: 'text', placeholder: 'Address:port (optional)', autocomplete: 'off', spellcheck: false, attrs: { 'aria-label': 'Pairing address' } });
-    const adbPair = UI.button('Pair', () => api.phonePair({ code: adbCode.value, where: adbWhere.value }), 'small primary');
+    const adbPair = UI.button('Pair', () => api.phonePair({ code: adbCode.value.replace(/\D/g, ''), where: adbWhere.value }), 'small primary'); // "123 456", "123-456" too
     adbCode.onkeydown = adbWhere.onkeydown = (e) => { if (e.key === 'Enter') adbPair.click(); };
     const adbPairRow = UI.row('Pairing code', 'Or type it on the phone, in TwinDesk’s notification', [adbCode, adbWhere, adbPair]);
     const adbCard = UI.card('Phone screen, mouse and keyboard', [adbRow, adbPairRow]);
@@ -148,6 +148,55 @@ UI.tab({
     let foundKey = '';
     let pairedKey = '';
     const render = () => last && update(last);
+
+    // Each found row shows its own progress, set on the click itself and then followed from the link
+    // (s.pairing, the session): Connecting… → Check the code → Waiting for Allow → Paired ✓, or the
+    // reason and Retry. pending: dev id -> {kind: 'pair' | 'take', since}; done: dev id -> when it connected.
+    const LIMIT_MS = 8000; // shared/pairlimit.js: connecting; Take over has no link state to time it
+    const pending = {};
+    const done = {};
+    const redraw = () => { foundKey = ''; render(); };
+    const go = (dev, kind, fn) => {
+      pending[dev.id] = { kind, since: Date.now() };
+      delete done[dev.id];
+      redraw(); // this row changes now, before the request goes out
+      fn();
+      setTimeout(redraw, LIMIT_MS + 50);
+    };
+    const named = (text, dev) => String(text || '').replace(/\{name\}|\{Name\}/g, dev.name);
+    // {busy, text} | {code} | {wait} | {fail, text} | {ok, text} | null
+    function rowState(s, dev, online) {
+      const p = s.pairing && s.pairing.role !== 'host' && (s.pairing.id ? s.pairing.id === dev.id : s.pairing.address === dev.address) ? s.pairing : null;
+      const mine = pending[dev.id];
+      if (online) {
+        if (mine) {
+          delete pending[dev.id];
+          done[dev.id] = { at: Date.now(), kind: mine.kind };
+          setTimeout(redraw, 1550);
+        }
+        const d = done[dev.id];
+        return d && Date.now() - d.at < 1500 ? { ok: true, text: d.kind === 'pair' ? 'Paired ✓' : 'Connected' } : null;
+      }
+      if (p) {
+        if (mine) mine.seen = true;
+        if (p.phase === 'failed') {
+          const fw = s.firewall && s.firewall.ok === false ? ' The firewall blocks TwinDesk here: Fix firewall above.' : '';
+          return { fail: true, text: named(p.error, dev) + fw };
+        }
+        if (p.phase === 'code') return { code: p.code };
+        if (p.phase === 'waiting') return { wait: true, text: 'Waiting for ' + dev.name + ' to allow…' };
+        return { busy: true, text: 'Connecting…' };
+      }
+      if (!mine) return null;
+      if (mine.seen) { // its pairing ended without connecting (Cancel)
+        delete pending[dev.id];
+        return null;
+      }
+      if (Date.now() - mine.since > LIMIT_MS) {
+        return { fail: true, text: 'Can’t reach ' + dev.name + ' at ' + dev.address + '. Is TwinDesk open there, on the same Wi-Fi?' };
+      }
+      return { busy: true, text: mine.kind === 'take' ? 'Taking over…' : 'Connecting…' };
+    }
     const update = (s) => {
       last = s;
       bleSw.set(!s.net || s.net.ble !== false);
@@ -235,24 +284,36 @@ UI.tab({
       // Paired both ways: the computer we connect to (s.paired) and the ones that connect to us (s.guests).
       const known = new Set([...(s.paired ? [s.paired.macId] : []), ...s.guests.map((g) => g.id)]);
       const live = s.peer && connected ? s.peer.id : '';
-      const fk = JSON.stringify([s.found, [...known], live, busy, blocked]);
+      const fk = JSON.stringify([s.found, [...known], live, busy, blocked, s.pairing, Object.keys(pending)]);
       if (fk !== foundKey) {
         foundKey = fk;
         let focus = null;
         const rows = s.found.map((dev) => {
           const isKnown = known.has(dev.id);
           const online = dev.id === live;
+          const st = dev.os === 'android' ? null : rowState(s, dev, online); // a phone has its own card
+          const pairIt = () => go(dev, 'pair', () => api.pair(dev.id));
           // A Mac hosts; with a PC or another Linux computer the one who clicks is the guest (L4).
           // A phone is asked to pair.
-          const btn = online || isKnown ? null : UI.button(dev.os === 'mac' || dev.os === 'android' ? 'Pair' : 'Connect', () => api.pair(dev.id), 'small' + (dev.invited ? ' primary' : ''));
-          if (btn) btn.disabled = busy || connected;
+          const btn = online || isKnown || (st && !st.fail) ? null
+            : UI.button(st ? 'Retry' : dev.os === 'mac' || dev.os === 'android' ? 'Pair' : 'Connect', pairIt, 'small' + (dev.invited || st ? ' primary' : ''));
+          if (btn) btn.disabled = (busy && !st) || connected;
           // Paired: Take over (the computer we're a guest of: a takeover hello; one that connects to us:
           // invited, and its hello takes the session from whoever has it).
-          const take = !online && isKnown ? UI.button('Take over', () => (s.paired && dev.id === s.paired.macId ? api.connectAgain() : api.connectGuest(dev.id)), 'small') : null;
+          const take = !online && isKnown && !(st && !st.fail) ? UI.button(st ? 'Retry' : 'Take over',
+            () => go(dev, 'take', () => (s.paired && dev.id === s.paired.macId ? api.connectAgain() : api.connectGuest(dev.id))), 'small') : null;
           if (take) take.disabled = busy;
+          const match = st && st.code ? UI.button('Codes match', () => api.confirmCode(), 'small primary') : null;
           if (btn && dev.invited && !busy) focus = btn;
-          const r = UI.row(dev.name, dev.address + (dev.invited ? ' · wants to connect' : ''), [
-            online ? el('span', { class: 'pill good', text: 'Connected' }) : isKnown ? el('span', { class: 'pill muted', text: 'Paired' }) : null, btn, take]);
+          const hint = !st || st.ok ? dev.address + (dev.invited ? ' · wants to connect' : '')
+            : st.code ? 'Check the code: ' + st.code.slice(0, 3) + ' ' + st.code.slice(3) + ' (the same on ' + dev.name + '?)'
+              : st.text;
+          const r = UI.row(dev.name, hint, [
+            st && (st.busy || st.wait) ? el('span', { class: 'spin', attrs: { 'aria-hidden': 'true' } }) : null,
+            st && st.ok ? el('span', { class: 'pill good', text: st.text }) : online ? el('span', { class: 'pill good', text: 'Connected' }) : isKnown && !st ? el('span', { class: 'pill muted', text: 'Paired' }) : null,
+            match, btn, take]);
+          if (st && st.fail) r.hint.classList.add('bad');
+          if (st && st.code) r.hint.classList.add('code-hint');
           r.querySelector('.text').prepend(UI.osIcon(dev.os));
           r.classList.add('with-ico');
           return r;

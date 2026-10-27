@@ -588,7 +588,12 @@ a phone's USB cable (adb), or through **Bluetooth LE** (a GATT pipe of TwinDesk'
 again once nothing needs it. Calls, Messages, Photos and Phone Files are `shared/phonehub.js` on
 the computers, answered by TwinDesk on the phone.
 
-Ports: TCP **47800** (control link) and UDP **47801** (discovery) on the local network.
+Files between two computers on the network or a cable stream over HTTPS on the same port, beside the
+control link and up to four at a time (`shared/fastfile.js`), so mouse and keyboard never wait
+behind a big file. Through Bluetooth, Wi-Fi Direct, a hotspot, or with an older TwinDesk on the
+other side, they go as before: in pieces on the control link.
+
+Ports: TCP **47800** (control link and files) and UDP **47801** (discovery) on the local network.
 
 </details>
 
@@ -658,7 +663,7 @@ Display Driver for Extend.
 ### Linux (X11 or Wayland)
 
 ```sh
-sudo apt install build-essential libx11-dev libxi-dev libxtst-dev libxrandr-dev libxfixes-dev
+sudo apt install build-essential libx11-dev libxi-dev libxtst-dev libxext-dev libxrandr-dev libxfixes-dev
 cd linux
 npm install
 npm run build:helper

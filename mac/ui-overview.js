@@ -108,9 +108,9 @@ UI.tab({
     const ADB = { needsPair: ['bad', 'Pair once'], waitingWifi: ['bad', 'Off'], connecting: ['muted', 'Looking…'], missing: ['bad', 'Missing'], error: ['bad', 'Problem'] };
     const adbPill = el('span', { class: 'pill bad' });
     const adbRow = UI.row('Wireless debugging', '', [adbPill, UI.button('Try Again', () => api.phoneRetry(), 'small')]);
-    const adbCode = el('input', { type: 'text', placeholder: '123456', maxLength: 6, inputMode: 'numeric', autocomplete: 'off', spellcheck: false, attrs: { 'aria-label': 'Pairing code' } });
+    const adbCode = el('input', { type: 'text', placeholder: '123456', maxLength: 7, inputMode: 'numeric', autocomplete: 'off', spellcheck: false, attrs: { 'aria-label': 'Pairing code' } });
     const adbWhere = el('input', { type: 'text', placeholder: 'Address:port (optional)', autocomplete: 'off', spellcheck: false, attrs: { 'aria-label': 'Pairing address' } });
-    const adbPair = UI.button('Pair', () => api.phonePair({ code: adbCode.value, where: adbWhere.value }), 'small primary');
+    const adbPair = UI.button('Pair', () => api.phonePair({ code: adbCode.value.replace(/\D/g, ''), where: adbWhere.value }), 'small primary'); // "123 456", "123-456" too
     adbCode.onkeydown = adbWhere.onkeydown = (e) => { if (e.key === 'Enter') adbPair.click(); };
     const adbPairRow = UI.row('Pairing code', 'Or type it on the phone, in TwinDesk’s notification', [adbCode, adbWhere, adbPair]);
     const adbCard = UI.card('Phone screen, mouse and keyboard', [adbRow, adbPairRow]);
@@ -128,7 +128,64 @@ UI.tab({
 
     let foundKey = '';
     let pairedKey = '';
-    return (s) => {
+    let last = null;
+
+    // Each nearby row shows its own progress, set on the click itself and then followed from the
+    // pairing (this Mac's host pairing s.pairing, or its guest pairing with another Mac) and the
+    // session: Connecting… → Check the code → Waiting for Allow → Paired ✓, or the reason and Retry.
+    // A PC that is asked to pair (an invite) has a minute to start; a connect or Take over 8 s.
+    // pending: dev id -> {kind: 'pair' | 'invite' | 'take', since}; done: dev id -> {at, kind}.
+    const LIMIT_MS = { pair: 8000, take: 8000, invite: 60000 };
+    const pending = {};
+    const done = {};
+    const redraw = () => { foundKey = ''; if (last) update(last); };
+    const go = (dev, kind) => {
+      pending[dev.id] = { kind, since: Date.now() };
+      delete done[dev.id];
+      redraw(); // this row changes now, before the request goes out
+      api.pairWith(dev.id);
+      setTimeout(redraw, LIMIT_MS[kind] + 50);
+    };
+    // {busy, text} | {code, allow} | {wait, text} | {fail, text} | {ok, text} | null
+    function rowState(s, dev, online) {
+      const g = s.guest && s.guest.pairing && s.guest.pairing.address === dev.address ? s.guest.pairing : null;
+      const h = s.pairing && (s.pairing.id === dev.id || (!s.pairing.id && s.pairing.name === dev.name)) ? s.pairing : null;
+      const mine = pending[dev.id];
+      if (online) {
+        if (mine) {
+          delete pending[dev.id];
+          done[dev.id] = { at: Date.now(), kind: mine.kind };
+          setTimeout(redraw, 1550);
+        }
+        const d = done[dev.id];
+        return d && Date.now() - d.at < 1500 ? { ok: true, text: d.kind === 'take' ? 'Connected' : 'Paired ✓' } : null;
+      }
+      if (h) { // it pairs with this Mac
+        if (mine) mine.seen = true;
+        if (!h.code) return { busy: true, text: 'Connecting…' };
+        if (!h.allowed) return { code: h.code, allow: true };
+        return { wait: true, text: `Waiting for “Codes match” on ${dev.name}…` };
+      }
+      if (g) { // this Mac pairs with it
+        if (mine) mine.seen = true;
+        if (g.phase === 'failed') return { fail: true, text: g.error };
+        if (g.phase === 'code') return { code: g.code };
+        if (g.phase === 'waiting') return { wait: true, text: `Waiting for ${dev.name} to allow…` };
+        return { busy: true, text: 'Connecting…' };
+      }
+      if (!mine) return null;
+      if (mine.seen) { // its pairing ended without connecting (Cancel, Deny)
+        delete pending[dev.id];
+        return null;
+      }
+      if (Date.now() - mine.since > LIMIT_MS[mine.kind]) {
+        return { fail: true, text: mine.kind === 'invite' ? `${dev.name} didn’t answer. Is TwinDesk open there?` : `Can’t reach ${dev.name} at ${dev.address}. Is TwinDesk open there, on the same Wi-Fi?` };
+      }
+      return mine.kind === 'invite' ? { wait: true, text: `Asked ${dev.name} to pair. Confirm there…` } : { busy: true, text: mine.kind === 'take' ? 'Taking over…' : 'Connecting…' };
+    }
+
+    const update = (s) => {
+      last = s;
       const p = UI.names(s);
       bleSw.set(!s.net || s.net.ble !== false);
       blePcSw.set(!!s.net && s.net.blePc === true);
@@ -158,16 +215,25 @@ UI.tab({
       discRow.setHint(!d.localNetwork ? 'Allow Local Network for TwinDesk, or connect by address.' : d.error);
       discFix.hidden = d.localNetwork;
       const pairedIds = new Set([...s.paired.map((x) => x.id), ...g.hosts.map((x) => x.id)]);
-      const fk = JSON.stringify([s.found, [...pairedIds], c && c.id, blocked]);
+      const fk = JSON.stringify([s.found, [...pairedIds], c && c.id, blocked, s.pairing, g.pairing, Object.keys(pending)]);
       if (fk !== foundKey) {
         foundKey = fk;
         const rows = s.found.map((dev) => {
           const online = c && c.id === dev.id;
           const known = pairedIds.has(dev.id);
-          const label = online ? null : known ? 'Take over' : dev.os === 'mac' ? 'Pair' : 'Connect';
-          const btn = label && UI.button(label, () => api.pairWith(dev.id), `small${dev.invited ? ' primary' : ''}`);
-          const r = UI.row(dev.name, `${dev.address}${dev.invited ? ' · wants to connect' : ''}`,
-            [online ? el('span', { class: 'pill good', text: 'Connected' }) : known ? el('span', { class: 'pill muted', text: 'Paired' }) : null, btn]);
+          const st = dev.os === 'android' ? null : rowState(s, dev, online); // a phone has its own popup
+          const kind = known ? 'take' : dev.os === 'mac' ? 'pair' : 'invite';
+          const label = online || (st && !st.fail) ? null : st ? 'Retry' : known ? 'Take over' : dev.os === 'mac' ? 'Pair' : 'Connect';
+          const btn = label && UI.button(label, () => go(dev, kind), `small${dev.invited || st ? ' primary' : ''}`);
+          const match = st && st.code ? UI.button(st.allow ? 'Allow' : 'Codes match', () => (st.allow ? api.pairRespond(true) : api.confirmGuestCode()), 'small primary') : null;
+          const hint = !st || st.ok ? `${dev.address}${dev.invited ? ' · wants to connect' : ''}`
+            : st.code ? `Check the code: ${st.code.slice(0, 3)} ${st.code.slice(3)} (the same on ${dev.name}?)` : st.text;
+          const r = UI.row(dev.name, hint, [
+            st && (st.busy || st.wait) ? el('span', { class: 'spin', attrs: { 'aria-hidden': 'true' } }) : null,
+            st && st.ok ? el('span', { class: 'pill good', text: st.text }) : online ? el('span', { class: 'pill good', text: 'Connected' }) : known && !st ? el('span', { class: 'pill muted', text: 'Paired' }) : null,
+            match, btn]);
+          if (st && st.fail) r.hint.classList.add('bad');
+          if (st && st.code) r.hint.classList.add('code-hint');
           r.querySelector('.text').prepend(UI.osIcon(dev.os));
           r.classList.add('with-ico');
           return r;
@@ -249,5 +315,6 @@ UI.tab({
         })
         : [UI.row('Nothing paired yet', 'Pair with a computer in Nearby.')]));
     };
+    return update;
   },
 });

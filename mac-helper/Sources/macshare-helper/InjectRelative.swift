@@ -12,7 +12,7 @@ extension Injector {
     case "k.mm":
       let dx = num("dx"), dy = num("dy")
       let cur = here()
-      let to = Screens.clamp(CGPoint(x: cur.x + dx, y: cur.y + dy), from: cur)
+      let to = Screens.walk(from: cur, to: CGPoint(x: cur.x + dx, y: cur.y + dy), stops: Capture.shared.returnStops)
       var type = CGEventType.mouseMoved
       var b = 0
       if let held = heldButtons.min() {

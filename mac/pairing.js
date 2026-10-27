@@ -33,7 +33,7 @@ class Pairing extends EventEmitter {
   // What the control window shows about an in-progress request.
   pendingView() {
     const p = this.pending;
-    return p && { name: p.name, os: p.os, code: p.code, confirmed: p.confirmed, allowed: p.allowed, wired: p.wired };
+    return p && { id: p.id, name: p.name, os: p.os, code: p.code, confirmed: p.confirmed, allowed: p.allowed, wired: p.wired };
   }
 
   touch(id) {
@@ -169,6 +169,7 @@ class Pairing extends EventEmitter {
     if (Object.values(P.OS).includes(msg.os)) e.os = msg.os;
     e.lastSeen = Date.now();
     this._save();
+    ctx.fxWanted = msg.fx === 1;
     this.server.authenticate(ctx, { deviceId: e.id, name: e.name, os: e.os || P.OS.WIN }, {
       t: P.T.WELCOME, v: P.PROTOCOL_VERSION, macId: this.id.macId, macName: this.id.macName, os: P.OS.MAC,
     });

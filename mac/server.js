@@ -210,8 +210,10 @@ class Server extends EventEmitter {
     ctx.os = os;
     ctx.ice = this.iceFor ? this.iceFor(ctx) : null; // a phone through adb reverse: the relay's RTCConfiguration
     ctx.resumeKey = P.randomHex(16);
+    // Fast files (shared/fastfile.js): when its hello asked and this app serves them, a token for them.
+    ctx.fx = ctx.fxWanted && this.fxOn ? P.randomHex(16) : '';
     this.current = ctx;
-    this.send(ctx, { ...welcome, resume: ctx.resumeKey });
+    this.send(ctx, { ...welcome, resume: ctx.resumeKey, ...(ctx.fx ? { fx: ctx.fx } : {}) });
     this.emit('client', ctx);
   }
 

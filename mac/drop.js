@@ -228,14 +228,17 @@ class Drop extends EventEmitter {
   _chunk(m) {
     const t = this.active.get(m.id);
     if (!t) return;
-    if (m.seq !== t.seq || typeof m.data !== 'string') return this._abort(m.id, 'chunks out of order', true);
-    const buf = Buffer.from(m.data, 'base64');
+    if (m.seq !== t.seq || (typeof m.data !== 'string' && !Buffer.isBuffer(m.data))) return this._abort(m.id, 'chunks out of order', true);
+    const buf = (typeof m.data === 'string' ? Buffer.from(m.data, 'base64') : m.data); // a Buffer from fast files (shared/fastfile.js)
     if (t.got + buf.length > t.size) return this._abort(m.id, 'more data than offered', true);
     fs.writeSync(t.fd, buf);
     t.hash.update(buf);
     t.got += buf.length;
     t.seq++;
-    if (t.seq % 64 === 0) this.emit('change'); // progress, ~every 4 MB
+    if (t.got - (t.shown || 0) >= 4 * 1024 * 1024) { // progress, every 4 MB
+      t.shown = t.got;
+      this.emit('change');
+    }
   }
 
   _end(m) {

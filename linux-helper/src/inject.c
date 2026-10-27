@@ -6,7 +6,9 @@
 #include "helper.h"
 #include <math.h>
 #include <string.h>
+#include <time.h>
 #include <X11/extensions/XTest.h>
+#include <X11/extensions/dpms.h>
 
 static unsigned char heldKeys[256], heldButtons[16];
 static double fx, fy;        // sub-pixel remainder of moves
@@ -25,8 +27,8 @@ static void move(double dx, double dy) {
   unsigned mask;
   if (!XQueryPointer(dpy_in, root_in, &rr, &cr, &cx, &cy, &wx, &wy, &mask)) return;
   double tx = cx + fx + dx, ty = cy + fy + dy;
-  int ix = (int)lround(tx), iy = (int)lround(ty), px, py;
-  screens_clamp(ix, iy, cx, cy, &px, &py);
+  int ix = (int)lround(tx), iy = (int)lround(ty), px, py, stops[4];
+  screens_walk(ix, iy, cx, cy, stops, capture_return_stops(stops), &px, &py);
   if (px != ix || py != iy) { fx = 0; fy = 0; } // stopped by an edge: drop the remainder
   else { fx = tx - ix; fy = ty - iy; }
   if (px != cx || py != cy) inject_move_to(px, py);
@@ -73,8 +75,27 @@ void inject_release_all(void) {
   XFlush(dpy_in);
 }
 
+// XTest input doesn't always end the screen saver or DPMS blanking: reset them on remote input,
+// at most once a second.
+static void wake(void) {
+  static double last;
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  double now = ts.tv_sec + ts.tv_nsec / 1e9;
+  if (last && now - last < 1) return;
+  last = now;
+  XResetScreenSaver(dpy_in);
+  int ev, err;
+  CARD16 level;
+  BOOL on;
+  if (DPMSQueryExtension(dpy_in, &ev, &err) && DPMSInfo(dpy_in, &level, &on) && on && level != DPMSModeOn)
+    DPMSForceLevel(dpy_in, DPMSModeOn);
+  XFlush(dpy_in);
+}
+
 // A k.* event from the owner (main already applied speed, key mapping and reverse scroll).
 void inject_apply(const JObj *ev) {
+  wake();
   const char *t = jstr(ev, "t", "");
   if (!strcmp(t, "k.mm")) move(jnum(ev, "dx", 0), jnum(ev, "dy", 0));
   else if (!strcmp(t, "k.md")) button((int)jnum(ev, "b", -1), 1);

@@ -58,6 +58,13 @@ static unsigned char sentKeys[256], sentButtons[8];
 static double push, lastPush;
 static int retArmed, retSide = SIDE_NONE;
 static double retResistance, retPush, retLast;
+// Cooldown and arrival guard, as in capture.c.
+#define GUARD_MS 500
+static double cooldownMs = 250, lastCross;
+static int arrivalSide = SIDE_NONE;
+static double arrivalAt, arrivalInward;
+static double edgeZ[8][2], retZ[8][2]; // zones, as in capture.c
+static int nEdgeZ = -1, nRetZ = -1;
 static int hkDown;
 static double lastTapUp = -1;
 static int hkPending = -1;
@@ -217,9 +224,29 @@ void wl_move_to(int x, int y) {
 
 static void feed_return(double dx, double dy);
 
+// The pointer came here (back home, or placed by the driver) through `s`, or by the hotkey
+// (SIDE_NONE): starts the cooldown and the arrival guard, and clears every push.
+void wl_arrived(int s) {
+  lastCross = now_ms();
+  arrivalSide = s; arrivalAt = lastCross; arrivalInward = 0;
+  push = retPush = 0;
+}
+
+// 0 while a crossing through `s` has to wait (cooldown, arrival guard).
+static int may_cross(int s, double outward) {
+  double now = now_ms();
+  if (now - lastCross < cooldownMs) return 0;
+  if (arrivalSide != SIDE_NONE && arrivalSide == s) {
+    if (outward < 0) arrivalInward -= outward;
+    if (now - arrivalAt < GUARD_MS && arrivalInward < 8) return 0;
+    arrivalSide = SIDE_NONE;
+  }
+  return 1;
+}
+
 static void inj_move(double dx, double dy) {
   int ix = (int)lround(px + dx), iy = (int)lround(py + dy), cx, cy;
-  screens_clamp(ix, iy, (int)px, (int)py, &cx, &cy);
+  screens_walk(ix, iy, (int)px, (int)py, &retSide, retArmed ? 1 : 0, &cx, &cy);
   px = (cx == ix) ? px + dx : cx;
   py = (cy == iy) ? py + dy : cy;
   abs_to(px, py);
@@ -290,6 +317,8 @@ static int really_begin(int mouse, int keys) {
   memset(sentButtons, 0, sizeof sentButtons);
   lastCmd = now_ms();
   push = 0;
+  lastCross = now_ms();
+  arrivalSide = SIDE_NONE;
   return 1;
 }
 
@@ -316,8 +345,10 @@ void wl_capture_stop(int toSide, double offset, int hasSide) {
     screens_edge_point(toSide, offset, &x, &y);
     wl_move_to(x, y);
   }
-  push = 0;
+  wl_arrived(capMouse && hasSide ? toSide : SIDE_NONE);
 }
+
+void wl_return_zones(const char *text) { nRetZ = zones_parse(text, retZ, 8); }
 
 void wl_arm_return(int on, int s, double resistance) {
   retArmed = on && s != SIDE_NONE;
@@ -329,13 +360,15 @@ void wl_arm_return(int on, int s, double resistance) {
 static void feed_return(double dx, double dy) {
   if (!retArmed) return;
   double outward = screens_outward(retSide, dx, dy);
-  if (outward <= 0 || !screens_on_outer_edge((int)px, (int)py, retSide)) { retPush = 0; return; }
+  if (!may_cross(retSide, outward)) { retPush = 0; return; }
+  if (outward <= 0 || !screens_on_outer_edge((int)px, (int)py, retSide) || !zones_contain(retZ, nRetZ, (int)px, (int)py, retSide)) { retPush = 0; return; }
   double now = now_ms();
   if (now - retLast > 300) retPush = 0;
   retLast = now;
   retPush += outward;
   if (retPush < retResistance) return;
   retArmed = 0;
+  lastCross = now;
   JOut o;
   jo_begin(&o);
   jo_str(&o, "event", "return");
@@ -346,6 +379,8 @@ static void feed_return(double dx, double dy) {
 void wl_config(const JObj *c) {
   side = side_of(jstr(c, "side", NULL));
   resistancePx = jnum(c, "resistancePx", 120);
+  cooldownMs = jnum(c, "cooldownMs", 250);
+  nEdgeZ = zones_parse(jstr(c, "zones", NULL), edgeZ, 8);
   const char *hk = jstr(c, "hotkey", "AltRight");
   char l[24], r[24];
   snprintf(l, sizeof l, "%sLeft", hk);
@@ -492,7 +527,8 @@ static void on_motion(double rdx, double rdy) {
   if (retArmed) { feed_return(rdx, rdy); return; }
   if (!driveOther || side == SIDE_NONE || any(localButtons, 8)) { push = 0; return; } // rule 6
   double outward = screens_outward(side, rdx, rdy);
-  if (outward <= 0 || !screens_on_outer_edge((int)px, (int)py, side)) { push = 0; return; }
+  if (!may_cross(side, outward)) { push = 0; return; }
+  if (outward <= 0 || !screens_on_outer_edge((int)px, (int)py, side) || !zones_contain(edgeZ, nEdgeZ, (int)px, (int)py, side)) { push = 0; return; }
   if (now - lastPush > 300) push = 0;
   lastPush = now;
   push += outward;

@@ -58,9 +58,9 @@ class FileRecv {
 
   _chunk(m) {
     const f = this.files.get(m.id) || this.bfiles.get(m.id);
-    if (!f || f.done || m.seq !== f.seq || typeof m.data !== 'string') return;
+    if (!f || f.done || m.seq !== f.seq || (typeof m.data !== 'string' && !Buffer.isBuffer(m.data))) return;
     if (!f.out) openOut(f);
-    const buf = Buffer.from(m.data, 'base64');
+    const buf = (typeof m.data === 'string' ? Buffer.from(m.data, 'base64') : m.data); // a Buffer from fast files (shared/fastfile.js)
     f.seq++;
     f.got += buf.length;
     f.hash.update(buf);

@@ -69,6 +69,7 @@ namespace MacShare
                 Native.SetCursorPos(parked.X, parked.Y);
             }
             pushes.Clear();
+            lastCross = DateTime.UtcNow; arrivalSide = null;
         }
 
         // side == null: put the pointer back where capture began.
@@ -89,7 +90,7 @@ namespace MacShare
                 HideCursor.Show();
                 if (Flash != null) Flash.Play(p, side ?? EdgeAt(p.X, p.Y), false); // arriving
             }
-            pushes.Clear();
+            Arrived(side);
         }
 
         // Watches these sides for the pointer leaving this PC (valid names only, no repeats). Off, or none
@@ -118,7 +119,8 @@ namespace MacShare
             foreach (string side in Sides)
             {
                 double outward = Screens.Outward(side, dx, dy);
-                if (outward <= 0 || !Screens.OnOuterEdge(p.x, p.y, side)) { pushes.Remove(side); continue; }
+                if (!MayCross(side, outward)) { pushes.Remove(side); continue; }
+                if (outward <= 0 || !Screens.OnOuterEdge(p.x, p.y, side) || !InZone(EdgeZones, p.x, p.y, side)) { pushes.Remove(side); continue; }
                 DateTime now = DateTime.UtcNow;
                 EdgePush e;
                 if (!pushes.TryGetValue(side, out e)) { e = new EdgePush(); pushes[side] = e; }
@@ -147,7 +149,8 @@ namespace MacShare
             foreach (string side in retSides)
             {
                 double outward = Screens.Outward(side, dx, dy);
-                if (outward <= 0 || !Screens.OnOuterEdge(x, y, side)) { retPushes.Remove(side); continue; }
+                if (!MayCross(side, outward)) { retPushes.Remove(side); continue; }
+                if (outward <= 0 || !Screens.OnOuterEdge(x, y, side) || !InZone(ReturnZones, x, y, side)) { retPushes.Remove(side); continue; }
                 EdgePush e;
                 if (!retPushes.TryGetValue(side, out e)) { e = new EdgePush(); retPushes[side] = e; }
                 if ((now - e.Last).TotalMilliseconds > 300) e.Amount = 0;
@@ -156,6 +159,7 @@ namespace MacShare
                 if (e.Amount < retResistance) continue;
                 retArmed = false;
                 retPushes.Clear();
+                lastCross = now;
                 if (Flash != null) Flash.Play(new Point(x, y), side, true); // leaving this PC for another device
                 Dictionary<string, object> d = Ev("return");
                 d["offset"] = Math.Round(Screens.Offset(x, y, side), 4);

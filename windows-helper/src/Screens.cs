@@ -119,6 +119,37 @@ namespace MacShare
             return new Point(p.Left + p.Width / 2, p.Top + p.Height / 2);
         }
 
+        // Where a relative move from (fromX, fromY) to (x, y) ends: like Clamp, but it follows the path
+        // monitor by monitor and stops on the edge of a `stops` side where it is an outer edge, so a
+        // large jump can't land on a monitor past the return edge (the rest counts toward the resistance).
+        public static Point Walk(int x, int y, int fromX, int fromY, System.Collections.Generic.IList<string> stops)
+        {
+            if (stops == null || stops.Count == 0) return Clamp(x, y, fromX, fromY);
+            double px = fromX, py = fromY;
+            for (int i = 0; i < 8; i++)
+            {
+                Rectangle d, target;
+                if (!MonitorAt((int)px, (int)py, out d)) break;
+                if (MonitorAt(x, y, out target) && target == d) return new Point(x, y);
+                double vx = x - px, vy = y - py, t = 1;
+                string side = null;
+                if (vx > 0 && x >= d.Right) { double k = (d.Right - px) / vx; if (k < t) { t = k; side = "right"; } }
+                if (vx < 0 && x < d.Left) { double k = (d.Left - px) / vx; if (k < t) { t = k; side = "left"; } }
+                if (vy > 0 && y >= d.Bottom) { double k = (d.Bottom - py) / vy; if (k < t) { t = k; side = "bottom"; } }
+                if (vy < 0 && y < d.Top) { double k = (d.Top - py) / vy; if (k < t) { t = k; side = "top"; } }
+                if (side == null) break;
+                int ex = Math.Min(Math.Max((int)Math.Round(px + vx * t), d.Left), d.Right - 1);
+                int ey = Math.Min(Math.Max((int)Math.Round(py + vy * t), d.Top), d.Bottom - 1);
+                if (stops.Contains(side) && OnOuterEdge(ex, ey, side)) return new Point(ex, ey);
+                // Step just over the edge, onto the next monitor (or off the desktop: clamp below).
+                int nx = side == "right" ? d.Right : side == "left" ? d.Left - 1 : ex;
+                int ny = side == "bottom" ? d.Bottom : side == "top" ? d.Top - 1 : ey;
+                if (!Contains(nx, ny)) break;
+                px = nx; py = ny;
+            }
+            return Clamp(x, y, fromX, fromY);
+        }
+
         // Keep a target on the desktop: if it falls outside every monitor, clamp it to the monitor
         // the pointer is on now (avoids the dead zones between monitors of different sizes).
         public static Point Clamp(int x, int y, int fromX, int fromY)

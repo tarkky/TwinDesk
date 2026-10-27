@@ -61,6 +61,7 @@ function normalize(s) {
       beDriven: bool(kvm.beDriven, true),
       resistancePx: Math.round(num(kvm.resistancePx, P.RESISTANCE_PX, 0, 400)),
       pcSide: P.SIDES.includes(kvm.pcSide) ? kvm.pcSide : null, // where this PC is, seen from the other computer (kvm.layout)
+      along: typeof kvm.along === 'number' && Number.isFinite(kvm.along) ? Math.round(kvm.along) : null, // the other computer along our side, points (shared/kvm-geom.js); null: centred
       speed: Math.round(num(kvm.speed, 1.0, 0.25, 3) * 100) / 100,
       reverseScroll: bool(kvm.reverseScroll, false),
       linked: bool(kvm.linked, true), // cursor sharing on (the hotkey's double-tap switches it, kvm.link)
@@ -74,8 +75,8 @@ function normalize(s) {
     // hotkey: double-tap = mouse and keyboard home. lockKeys: cursor lock on/off (shared/cursorlock.js)
     keys: { swapCtrlCmd: bool(keys.swapCtrlCmd, true), hotkey: P.HOTKEYS.includes(keys.hotkey) ? keys.hotkey : P.HOTKEY_WIN, lockKeys: CL.validKeys(keys.lockKeys, CL.DEFAULT_KEYS.win) },
     app: { hud: bool(appS.hud, true) }, // popup when switching computers
-    // New releases on GitHub (shared/updates.js); notified = the last version announced
-    updates: { auto: bool(up.auto, true), notified: typeof up.notified === 'string' ? up.notified.slice(0, 40) : '' },
+    // New releases on GitHub (shared/updates.js); notified = the last version announced, skipped = version ignored
+    updates: { auto: bool(up.auto, true), notified: typeof up.notified === 'string' ? up.notified.slice(0, 40) : '', skipped: typeof up.skipped === 'string' ? up.skipped.slice(0, 40) : '' },
     clipboard: {
       enabled: bool(c.enabled, was),
       send: bool(c.send, true),

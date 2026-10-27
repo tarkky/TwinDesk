@@ -1,6 +1,7 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
 // Cursor tab: share the pointer across the screen edge. Two direction cards, the
-// layout (pick where the other computer is; either side can change it) and the live state below. Behaviour: kvm.js and windows-helper.
+// crossing map (shared/kvm-map-ui.js: drag the other computer where it is; either side can change it)
+// and the live state below. Behaviour: kvm.js and windows-helper.
 'use strict';
 
 UI.tab({
@@ -19,7 +20,6 @@ UI.tab({
     const set = (partial) => api.setKvm(partial);
     // kvm.layout says where the PC is seen from the Mac; the Mac is on the opposite side of the PC.
     const MAC_SIDE = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' };
-    const CELL = { top: 1, left: 3, right: 5, bottom: 7 };
 
     const speed = UI.slider({ min: 0.25, max: 3, step: 0.05, format: (v) => v.toFixed(2) + '×' }, (v) => set({ speed: v }));
     const reverse = UI.switch((v) => set({ reverseScroll: v }), { label: 'Reverse scrolling' });
@@ -42,16 +42,8 @@ UI.tab({
       ] },
     );
 
-    const cells = [];
-    const grid = el('div', { class: 'layout-grid' });
-    const SIDE_OF = { 1: 'top', 3: 'left', 5: 'right', 7: 'bottom' };
-    for (let i = 0; i < 9; i++) {
-      const c = el('div', { class: i === 4 ? 'screen pc-screen' : '', text: i === 4 ? '{me}' : '' });
-      if (SIDE_OF[i]) c.onclick = () => api.setLayout(SIDE_OF[i]); // kvm.layout from either side
-      cells.push(c);
-      grid.append(c);
-    }
-    const layoutHint = el('div', { class: 'layout-hint' });
+    // The crossing map: both computers' monitors; drag the other one where it is on the desk.
+    const map = KvmMapUI.create({ onMove: (side, along) => api.moveKvm({ side, along }), onIdentify: () => api.identifyDisplays() });
     const status = UI.inputStatus();
     const lock = UI.cursorLock();
 
@@ -62,7 +54,7 @@ UI.tab({
       UI.card('Not on the same network', [bleRow]),
       UI.card('Right now', [status], { cls: 'keep-on' }),
       el('div', { class: 'card-title', text: 'Where the other computer is' }),
-      el('div', { class: 'card layout' }, [grid, layoutHint]),
+      el('div', { class: 'card layout' }, [map.el]),
     );
 
     return (s) => {
@@ -77,18 +69,10 @@ UI.tab({
       gestures.set(k.gestures !== false);
       ble.set(k.ble !== false);
       resistance.set(k.resistancePx);
+      // kvm.layout says where this computer is seen from the other one; the other one is opposite.
       const p = UI.peer(s);
-      const side = k.pcSide ? MAC_SIDE[k.pcSide] : null;
-      cells.forEach((c, i) => {
-        if (i === 4) return;
-        const here = side && CELL[side] === i;
-        c.className = Object.values(CELL).includes(i) ? 'cell' + (here ? ' mac-here' : '') : '';
-        c.textContent = here ? p.them : '';
-        c.title = here ? '' : 'Put ' + p.them + ' here';
-      });
-      const who = p.os === 'mac' ? 'Your Mac' : p.them;
-      layoutHint.textContent = (side ? who + ' is ' + { left: 'to the left of', right: 'to the right of', top: 'above', bottom: 'below' }[side] + ' {me}. ' : '')
-        + 'Click a side to move it.';
+      const m = (s.kvmState && s.kvmState.map) || { mine: [], theirs: [], along: null };
+      map.update({ mine: m.mine, theirs: m.theirs, side: k.pcSide ? MAC_SIDE[k.pcSide] : null, along: m.along, me: p.me, them: p.Name });
     };
   },
 });

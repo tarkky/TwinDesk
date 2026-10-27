@@ -47,6 +47,7 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('force-fieldtrials', 'WebRTC-ForceSendPlayoutDelay/min_ms:0,max_ms:0/WebRTC-FlexFEC-03/Enabled/WebRTC-FlexFEC-03-Advertised/Enabled/');
 // Renamed to TwinDesk: settings, pairing and the identity stay in the old folder.
 app.setPath('userData', process.env.MACSHARE_PROFILE || path.join(app.getPath('appData'), 'MacShare')); // PROFILE: a second dev copy
+require('../shared/applog.js').start(app); // console.* and crashes into the log folder, both apps
 // Multi-device switched on (multi.js, docs/multi-device.md): mesh/main.js runs instead of everything below.
 if (require('./multi').on()) return void require('./mesh/main.js');
 if (!app.requestSingleInstanceLock()) {
@@ -398,6 +399,13 @@ function showWindow() {
   app.focus({ steal: true });
 }
 
+function showUpdateWindow() {
+  showWindow();
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('show-update');
+  }
+}
+
 // Menu bar: the app mark as a template icon; the switches people reach for most, one click away.
 // Set again only when what it shows changes: a menu replaced while it's open closes (or its click
 // goes nowhere), and the state is pushed every second (the ping time isn't in it for that reason).
@@ -452,8 +460,9 @@ function updateTray() {
       ...(again ? [{ label: `${g.status.busy ? 'Take Over' : 'Connect to'} ${g.hosts[0].name}`, click: () => actions.connectAgain() }] : []),
       check('Show a Popup When Switching', settings.app.hud !== false, (i) => actions.setApp({ hud: i.checked })),
       { type: 'separator' },
-      ...(updates && updates.status.available ? [{ label: `Download TwinDesk ${updates.status.latest}…`, click: () => updates.open() }] : []),
+      ...(updates && updates.status.available ? [{ label: `TwinDesk ${updates.status.latest} available…`, click: showUpdateWindow }] : []),
       { label: 'Open TwinDesk…', click: showWindow },
+      { label: 'Open Log Folder', click: () => require('../shared/applog.js').open() },
       { label: 'Quit TwinDesk', click: () => app.quit() },
     ]),
   );
@@ -648,6 +657,7 @@ app.whenReady().then(() => {
   updates = new Updates({
     current: app.getVersion(), platform: 'mac', getSettings: () => settings,
     save: () => store.saveSettings(settings), onChange: pushState,
+    onShowModal: showUpdateWindow,
     notify: (title, body, onClick) => {
       if (!Notification.isSupported()) return;
       const n = new Notification({ title, body });

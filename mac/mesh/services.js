@@ -48,6 +48,7 @@ function startServices({ server, getSettings, pushState, onHelperReady, hub: mes
   const drop = new Drop({ server, helper, displays, getSettings: s });
   const fileSend = new FileSend(server, s);
   kvm = new Kvm({ hub: meshHub, layoutSync, helper, getSettings: s, clipboard, input, drop, fileSend });
+  require('../../shared/applog.js').linkStats(() => kvm.linkSample()); // the link's line in the log every 30 s
   const terminal = new Terminal(server, s);
   const smb = new Smb({ server, helper, getSettings: s, saveSettings: () => store.saveSettings(s()) });
 

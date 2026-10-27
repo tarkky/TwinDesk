@@ -53,11 +53,13 @@ class PhoneRemote {
     this.refusedAt = 0;
     this.lastInput = 0;
     this.opened = false; // the phone's Remote page is open (it said hello)
+    this.canType = false; // the helper types text as it is (its keyLayout says type: true): remote.text
     const on = (t, fn) => server.on(`t:${t}`, (m) => isPhone(server.current) && fn(m || {}));
     on(T.REMOTE_HELLO, () => {
       this.opened = true;
       if (this.padOn) this._padStart();
       this._state();
+      this._askType();
       this.onChange();
     });
     // smooth: the helper eases the move out over about a frame instead of jumping (Smoother.cs).
@@ -67,6 +69,12 @@ class PhoneRemote {
     on(T.REMOTE_WHEEL, (m) => this._ev({ t: T.K_WHEEL, dx: num(m.dx, 4000), dy: num(m.dy, 4000), mode: 'pixel' }));
     on(T.REMOTE_KEY_DOWN, (m) => typeof m.code === 'string' && CODE.test(m.code) && this._ev({ t: T.K_KEY_DOWN, code: m.code }));
     on(T.REMOTE_KEY_UP, (m) => typeof m.code === 'string' && CODE.test(m.code) && this._ev({ t: T.K_KEY_UP, code: m.code }));
+    // Characters no key types here (Cyrillic, accents…): typed as they are. Control characters don't go.
+    on(T.REMOTE_TEXT, (m) => {
+      if (!this.canType || typeof m.text !== 'string') return;
+      const text = [...m.text.replace(/\p{Cc}/gu, '')].slice(0, 64).join('');
+      if (text && this._take()) this.helper.send('type', { text });
+    });
     on(T.REMOTE_PAD, (m) => this.padProc && this._take() && this.padProc.stdin.write(padBytes(m)));
     on(T.REMOTE_RELEASE, () => {
       this.release();
@@ -180,7 +188,21 @@ class PhoneRemote {
   _state() {
     if (!isPhone(this.server.current)) return;
     const why = this.why;
-    this.server.sendToClient({ t: T.REMOTE_STATE, allowed: !why, why, pad: !why && !!this.padProc });
+    this.server.sendToClient({ t: T.REMOTE_STATE, allowed: !why, why, pad: !why && !!this.padProc, text: this.canType });
+  }
+
+  // Whether the helper types text (an older one doesn't; nor does Linux on Wayland): the phone sends
+  // remote.text only then.
+  _askType() {
+    Promise.resolve()
+      .then(() => this.helper.request('keyLayout', {}))
+      .then((r) => {
+        const can = !!(r && r.type === true);
+        if (can === this.canType) return;
+        this.canType = can;
+        this._state();
+      })
+      .catch(() => {});
   }
 
   // Input from the phone is taken now (or the phone hears why not); it's "in use".

@@ -40,6 +40,8 @@ void emit(const char *line); // one line to stdout (the only writer)
 // ---- keys.c: DOM code <-> evdev (X keycode = evdev + 8) ----
 int key_evdev(const char *code);   // -1 if unknown
 const char *key_code(int evdev);   // NULL if unknown
+void keys_layout(double id, Display *dpy); // keyLayout's reply: what each key types alone (NULL dpy: nothing)
+void keys_type(Display *dpy, const char *text); // text as it is, on spare key codes (NULL dpy: nothing)
 
 // ---- screens.c: XRandR monitors (physical px) ----
 enum { SIDE_NONE = -1, SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM };
@@ -53,6 +55,9 @@ double screens_offset(int x, int y, int side);
 void screens_edge_point(int side, double offset, int *x, int *y);
 void screens_center(int *x, int *y);
 void screens_clamp(int x, int y, int fromX, int fromY, int *ox, int *oy);
+int zones_parse(const char *text, double z[][2], int max);
+int zones_contain(double z[][2], int n, int x, int y, int side);
+void screens_walk(int x, int y, int fromX, int fromY, const int *stops, int nstops, int *ox, int *oy);
 void screens_box(int *x, int *y, int *w, int *h);
 void screens_set(const char *list);
 int screens_monitor(int x, int y, int *mx, int *my, int *mw, int *mh);
@@ -69,6 +74,9 @@ void capture_arm_return(int on, int side, double resistance);
 void capture_arm_return_list(int on, const char *list, int fallback, double resistance); // several edges
 #endif
 void capture_feed_return(int x, int y, double dx, double dy);
+void capture_arrived(int side);
+void capture_return_zones(const char *text);
+int capture_return_stops(int *out); // out: room for 4
 void capture_xevent(XEvent *e);
 int capture_active(void);
 void capture_shutdown(void);
@@ -112,6 +120,8 @@ void wl_tick(void);
 void wl_config(const JObj *c);
 int wl_capture_begin(int mouse, int keys);
 void wl_capture_stop(int side, double offset, int hasSide);
+void wl_arrived(int side);
+void wl_return_zones(const char *text);
 void wl_arm_return(int on, int side, double resistance);
 void wl_inject(const JObj *ev);
 void wl_move_to(int x, int y);

@@ -1,6 +1,6 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
-// About tab (same cards on all three apps): the app icon and version, update checks, this
-// computer, the app's build, the maker and the licence. Facts come from shared/about.js.
+// About tab (same cards on all three apps): the app icon and version, update checks, the
+// maker, this computer, the app's build and the licence. Facts come from shared/about.js.
 'use strict';
 
 UI.tab({
@@ -41,8 +41,10 @@ UI.tab({
     // Updates: new releases of TwinDesk on GitHub.
     const updStatus = el('span', { class: 'value' });
     const updCheck = UI.button('Check now', () => api.checkUpdates(), 'small');
+    const updNotes = UI.button('What’s New', () => window.UpdaterModal && window.UpdaterModal.show(), 'small');
+    const updUnskip = UI.button('Don’t skip', () => api.unskipUpdate && api.unskipUpdate(), 'small');
     const updGet = UI.button('Download', () => api.openUpdate(), 'small primary');
-    const updRow = UI.row('TwinDesk', '', [updStatus, updGet, updCheck]);
+    const updRow = UI.row('TwinDesk', '', [updStatus, updNotes, updUnskip, updGet, updCheck]);
     const updAuto = UI.switch((v) => api.setUpdates({ auto: v }), { label: 'Check for updates automatically' });
 
     const pc = facts('This computer', ['Computer name', 'System', 'Kernel', 'Processor', 'Memory', 'Architecture']);
@@ -55,13 +57,14 @@ UI.tab({
         updRow,
         UI.row('Check automatically', 'Looks for new releases on GitHub every few hours', [updAuto]),
       ], { cls: 'keep-on' }),
-      pc,
-      build,
       UI.card('Made by', [
         UI.row('Inuka Asith', 'inukaasith.vercel.app', [link('Portfolio', 'portfolio')]),
         UI.row('Source code', 'github.com/InukaAsith/TwinDesk', [link('GitHub', 'github')]),
         UI.row('All releases', 'Downloads for macOS, Windows and Linux', [link('Releases', 'releases')]),
+        UI.row('Log files', 'What TwinDesk did and any crash, to attach to a bug report', [link('Open log folder', 'logs')]),
       ], { cls: 'keep-on' }),
+      pc,
+      build,
       UI.card('Licence', [
         UI.row('GNU General Public License v3', 'Free and open source. Copyright © 2026 inukaasith', [link('Read', 'licence')]),
         thanksRow,
@@ -88,7 +91,12 @@ UI.tab({
         updAuto.set(u.auto);
         updCheck.disabled = u.checking;
         updGet.hidden = !u.available;
-        updStatus.textContent = u.checking ? 'Checking…' : u.available ? u.latest + ' is available' : u.checkedAt ? 'Up to date' : '';
+        updNotes.hidden = !u.available;
+        updUnskip.hidden = !u.available || !u.skipped;
+        updStatus.textContent = u.checking ? 'Checking…'
+          : u.available
+            ? (u.skipped ? u.latest + ' is available (skipped)' : u.latest + ' is available')
+            : u.checkedAt ? 'Up to date' : '';
         updRow.setHint(u.error ? 'Couldn’t check: ' + u.error
           : u.available ? 'You have ' + u.current + '. ' + (u.download ? 'Download ' + u.download.name : 'Opens the release page')
             : u.noReleases ? 'Version ' + u.current + '. No releases published yet'

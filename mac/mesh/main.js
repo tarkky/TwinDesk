@@ -410,6 +410,13 @@ function showWindow() {
   app.focus({ steal: true });
 }
 
+function showUpdateWindow() {
+  showWindow();
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('show-update');
+  }
+}
+
 // Menu bar: the app mark as a template icon; the switches people reach for most, one click away.
 function updateTray() {
   if (!tray) return;
@@ -447,8 +454,9 @@ function updateTray() {
       },
       check('Show a Popup When Switching', settings.app.hud !== false, (i) => actions.setApp({ hud: i.checked })),
       { type: 'separator' },
-      ...(updates && updates.status.available ? [{ label: `Download TwinDesk ${updates.status.latest}…`, click: () => updates.open() }] : []),
+      ...(updates && updates.status.available ? [{ label: `TwinDesk ${updates.status.latest} available…`, click: showUpdateWindow }] : []),
       { label: 'Open TwinDesk…', click: showWindow },
+      { label: 'Open Log Folder', click: () => require('../../shared/applog.js').open() },
       { label: 'Quit TwinDesk', click: () => app.quit() },
     ]),
   );
@@ -603,6 +611,7 @@ app.whenReady().then(() => {
   updates = new Updates({
     current: app.getVersion(), platform: 'mac', getSettings: () => settings,
     save: () => store.saveSettings(settings), onChange: pushState,
+    onShowModal: showUpdateWindow,
     notify: (title, body, onClick) => {
       if (!Notification.isSupported()) return;
       const n = new Notification({ title, body });
