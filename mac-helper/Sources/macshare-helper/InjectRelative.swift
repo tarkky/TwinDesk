@@ -32,6 +32,7 @@ extension Injector {
       Capture.shared.checkReturn(to, dx: dx, dy: dy)
     case "k.md", "k.mu":
       if t == "k.mu", num("b") == 0, DragIn.shared.buttonUp() { return } // drop before the drag began
+      if t == "k.md", num("b") == 0 { Capture.shared.injectedLeftDown() }
       button(Int(num("b")), down: t == "k.md", at: here())
     case "k.wh":
       scroll(dx: num("dx"), dy: num("dy"), lines: (ev["mode"] as? String) == "line")

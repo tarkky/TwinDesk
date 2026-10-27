@@ -4,7 +4,7 @@
 // resizing the window resizes the app). One scrcpy session per window (scrcpy.js); the window
 // decodes the H.264 itself (phoneview-renderer.js) and sends touches, keys and scrolls back.
 // Port of mac/phoneview.js: Windows title bar (its own buttons drawn over ours), no Ctrl/Cmd swap.
-// The window's controls sit in a side panel (the default), the title bar or a bar under the picture
+// The window's controls sit in the title bar (the default), a side panel or a bar under the picture
 // (settings.phone.controls), and the window is sized for the picture plus those bars.
 // A phone app's windows have a taskbar identity of their own (its icon, Pin to taskbar starts it),
 // and pin() puts it in Start › TwinDesk Apps: both start "TwinDesk.exe --phone-app=<package>".
@@ -319,12 +319,12 @@ class PhoneViews extends EventEmitter {
     return v;
   }
 
-  // Where the window's controls sit (Phone page › Settings › Window controls): 'side' (a panel
-  // down the right, the default), 'top' (the title bar) or 'bottom' (Back, Home and Recents in a
+  // Where the window's controls sit (Phone page › Settings › Window controls): 'top' (the title
+  // bar, the default), 'side' (a panel down the right) or 'bottom' (Back, Home and Recents in a
   // bar under the picture, the rest in the title bar).
   _controls() {
     const ph = this.getSettings().phone;
-    return ph && ['side', 'top', 'bottom'].includes(ph.controls) ? ph.controls : 'side';
+    return ph && ['side', 'top', 'bottom'].includes(ph.controls) ? ph.controls : 'top';
   }
 
   // The size of a window's bars around the picture.

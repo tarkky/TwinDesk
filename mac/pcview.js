@@ -84,6 +84,7 @@ class PcView extends EventEmitter {
       }
       if (m.fullScreen && this.win) this.win.setFullScreen(!this.win.isFullScreen());
       if (m.share !== undefined || m.mode) this.control({ share: m.share, mode: m.mode });
+      if (m.share === false) this.close(); // Stop on the bar: nothing left to watch
     });
     ipcMain.on('pcview:ready', (e) => {
       if (!this._fromWin(e)) return;

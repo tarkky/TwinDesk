@@ -19,7 +19,7 @@ namespace MacShare
         public string Side { get { return Sides.Count > 0 ? Sides[0] : null; } }
 
         // edge push (home) per watched side, and the return edge (driven)
-        class EdgePush { public double Amount; public DateTime Last; }
+        class EdgePush { public double Amount; public DateTime Last, Since; }
         readonly Dictionary<string, EdgePush> pushes = new Dictionary<string, EdgePush>();
         // The return watch (this PC is driven): every side that has a device behind it, the push per side.
         readonly List<string> retSides = new List<string>();
@@ -65,6 +65,7 @@ namespace MacShare
                 HideCursor.Hide();
                 // Park in the middle so outward motion isn't clamped by the screen edge.
                 parked = Screens.Center();
+                parkedAt = DateTime.UtcNow;
                 parkPad.Cover(parked);
                 Native.SetCursorPos(parked.X, parked.Y);
             }
@@ -126,8 +127,9 @@ namespace MacShare
                 if (!pushes.TryGetValue(side, out e)) { e = new EdgePush(); pushes[side] = e; }
                 if ((now - e.Last).TotalMilliseconds > 300) e.Amount = 0;
                 e.Last = now;
+                if (e.Amount == 0) e.Since = now;
                 e.Amount += outward;
-                if (e.Amount < ResistancePx) continue;
+                if (e.Amount < ResistancePx || !Dwelt(ResistancePx, e.Since, now)) continue;
                 double offset = Screens.Offset(p.x, p.y, side);
                 Begin(true, EdgeKeyboard, side); // start capturing at once so no motion leaks, then tell main
                 saved = new Point(p.x, p.y);
@@ -144,7 +146,7 @@ namespace MacShare
         // the resistance wins and the watch is off until main arms it again.
         public void FeedReturn(int x, int y, double dx, double dy)
         {
-            if (!retArmed) return;
+            if (!retArmed || HoldReturn) return;
             DateTime now = DateTime.UtcNow;
             foreach (string side in retSides)
             {
@@ -155,8 +157,9 @@ namespace MacShare
                 if (!retPushes.TryGetValue(side, out e)) { e = new EdgePush(); retPushes[side] = e; }
                 if ((now - e.Last).TotalMilliseconds > 300) e.Amount = 0;
                 e.Last = now;
+                if (e.Amount == 0) e.Since = now;
                 e.Amount += outward;
-                if (e.Amount < retResistance) continue;
+                if (e.Amount < retResistance || !Dwelt(retResistance, e.Since, now)) continue;
                 retArmed = false;
                 retPushes.Clear();
                 lastCross = now;

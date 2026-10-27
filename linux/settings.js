@@ -53,7 +53,7 @@ function normalize(s) {
   const hub = s.hub || {};
   const nt = s.net || {};
   return {
-    rev: 8, // settings revision (upgrades in normalize, like the Mac's store.js)
+    rev: 9, // settings revision (upgrades in normalize, like the Mac's store.js)
     kvm: {
       mouse: bool(kvm.mouse, was),
       keyboard: bool(kvm.keyboard, was),
@@ -106,7 +106,8 @@ function normalize(s) {
     // picture turned clockwise (0, 90, 180, 270)
     // on: the Camera tab's switch (camshare.js and vcam.js loaded only while it's on)
     camera: {
-      on: bool((s.camera || {}).on, was),
+      // Off until turned on, even for settings from before it had a switch; rev 9: off once unless shared
+      on: (s.rev || 0) < 9 && !bool((s.camera || {}).share, false) ? false : bool((s.camera || {}).on, false),
       share: bool((s.camera || {}).share, false),
       virtual: bool((s.camera || {}).virtual, false),
       rotate: [0, 90, 180, 270].includes((s.camera || {}).rotate) ? s.camera.rotate : 0,

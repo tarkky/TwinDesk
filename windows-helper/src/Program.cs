@@ -25,6 +25,7 @@ namespace MacShare
         static Control invoker;
         static Capture capture;
         static Injector injector;
+        static Stylus stylus; // a phone's stylus (Stylus.cs)
         static Smoother smoother; // the phone Remote's moves, eased out (k.mm with smooth)
         static ClipWatch clipWatch; // "clipboard" events: something was copied (ClipWatch.cs)
         static DropEdge dropEdge;
@@ -48,6 +49,7 @@ namespace MacShare
             AppDomain.CurrentDomain.UnhandledException += delegate { HideCursor.Restore(); };
             capture = new Capture(Emit);
             injector = new Injector();
+            stylus = new Stylus(injector);
             injector.Moved = capture.FeedReturn;
             injector.Stops = capture.ReturnStops;
             smoother = new Smoother(delegate (double x, double y) { invoker.BeginInvoke((MethodInvoker)delegate { injector.Move(x, y); }); });
@@ -216,6 +218,7 @@ namespace MacShare
 #endif
                         capture.ResistancePx = Json.Num(c, "resistancePx", 120);
                         capture.CooldownMs = (int)Json.Num(c, "cooldownMs", 250);
+                        capture.DwellMs = (int)Json.Num(c, "dwellMs", 150);
                         capture.EdgeZones = Capture.ParseZones(Json.Str(c, "zones", null));
                         capture.HotkeyVks = HotkeyVks(Json.Str(c, "hotkey", "AltRight"));
                         capture.DriveOther = Json.Bool(c, "driveOther", false);
@@ -260,7 +263,7 @@ namespace MacShare
                         smoother.Flush(injector.Move); // a click or key lands where the pointer ends up
                         injector.Apply(ev);
                         break;
-                    case "releaseAll": smoother.Clear(); injector.ReleaseAll(); break;
+                    case "releaseAll": smoother.Clear(); stylus.Leave(); injector.ReleaseAll(); break;
                     case "toastProgress": // a live toast with a progress bar (Toast.cs)
                         Toast.Progress(Json.Str(c, "aumid", ""), Json.Str(c, "tag", "files"), Json.Str(c, "title", ""), Json.Str(c, "status", ""), Json.Num(c, "value", -1), Json.Str(c, "label", ""));
                         break;
@@ -268,6 +271,10 @@ namespace MacShare
                         Toast.Done(Json.Str(c, "aumid", ""), Json.Str(c, "tag", "files"), Json.Str(c, "title", ""), Json.Str(c, "text", ""));
                         break;
                     case "moveTo": Injector.MoveTo((int)Json.Num(c, "x", 0), (int)Json.Num(c, "y", 0)); break; // The Mac's pointer on this PC's screen
+                    case "pen": // a phone's stylus on this PC's screen (Stylus.cs)
+                        Dictionary<string, object> st = Json.Obj(c, "pen");
+                        if (st != null) stylus.At((int)Json.Num(c, "x", 0), (int)Json.Num(c, "y", 0), st);
+                        break;
                     case "displays": c["displays"] = Display.List(); break;
                     case "displayExtend": c["changed"] = Display.ExtendIfDuplicated(Json.Str(c, "monitor", "")); break;
                     // PC apps on the Mac
@@ -306,7 +313,17 @@ namespace MacShare
                         if (nl != null) foreach (object o in nl) dnames.Add(Convert.ToString(o));
                         string into = Json.Str(c, "into", ""); // Paste = drop onto this folder
                         if (into != "") drag.DropDir = into;
+                        if (Json.Bool(c, "home", false)) capture.Unswallow(0); // came home with our button held: its release drops it
                         drag.Start(dnames);
+                        break;
+                    case "dragLocal": // our own files, dragged back home with the button still held: Explorer's kind of drag of them
+                        {
+                            List<string> lp = new List<string>();
+                            System.Collections.IList pl = c.ContainsKey("paths") ? c["paths"] as System.Collections.IList : null;
+                            if (pl != null) foreach (object o in pl) lp.Add(Convert.ToString(o));
+                            capture.Unswallow(0);
+                            LocalDrag.Start(lp, Json.Str(c, "drag", "local"), Emit);
+                        }
                         break;
                     case "dragFile":
                         if (drag != null && drag.Id == Json.Str(c, "drag", ""))
@@ -388,9 +405,15 @@ namespace MacShare
                         List<string> selNames = Strings(c, "names");
                         Async(c, delegate (Dictionary<string, object> r) { Shell.SelectIn(selDir, selNames); }, true);
                         return;
-                    case "keyLayout": // what each key types alone in the layout in front (shared/keylayout.js); type: it takes "type"
+                    case "keyLayout": // what each key types alone and with Shift in the layout in front (shared/keylayout.js); type: it takes "type"
                         c["layout"] = Keys.Layout();
+                        c["shift"] = Keys.Layout(true);
                         c["type"] = true;
+                        c["im"] = InputMethods.Current(); // typing with an input method: its language
+                        break;
+                    case "selectInput": // an input method of the other computer's language ({lang}), or back to ours ({restore}); in line: keys after it go to it
+                        if (Json.Has(c, "restore")) InputMethods.Restore();
+                        else c["found"] = InputMethods.Select(Json.Str(c, "lang", ""));
                         break;
                     case "type": // text as it is, whatever the layout
                         Injector.Wake();
@@ -417,7 +440,12 @@ namespace MacShare
             if (cmd == "displays") reply["displays"] = c["displays"];
             if ((cmd == "displayMode" || cmd == "displayExtend") && error == null) reply["changed"] = c["changed"];
             if (cmd == "folderAt") { reply["path"] = c["path"]; reply["desktop"] = c["desktop"]; }
-            if (cmd == "keyLayout") { reply["layout"] = c["layout"]; reply["type"] = c["type"]; }
+            if (cmd == "keyLayout")
+            {
+                reply["layout"] = c["layout"]; reply["shift"] = c["shift"]; reply["type"] = c["type"]; reply["selectInput"] = true;
+                if (c["im"] != null) reply["im"] = c["im"];
+            }
+            if (cmd == "selectInput" && c.ContainsKey("found")) reply["found"] = c["found"];
             Emit(reply);
         }
     }

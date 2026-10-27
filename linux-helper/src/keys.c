@@ -73,32 +73,43 @@ static void utf8(unsigned cp, char *out) {
   else { out[0] = (char)(0xf0 | cp >> 18); out[1] = (char)(0x80 | (cp >> 12 & 0x3f)); out[2] = (char)(0x80 | (cp >> 6 & 0x3f)); out[3] = (char)(0x80 | (cp & 0x3f)); out[4] = 0; }
 }
 
-// keyLayout: what each of those keys types alone in the current X layout (its active group), lower
-// case: {"KeyY":"z",…} with a German layout (shared/keylayout.js). Latin-1 and Unicode keysyms; on
-// Wayland (no X display here) nothing.
-void keys_layout(double id, Display *dpy) {
-  JOut map;
+// What each of those keys types in the current X layout (its active group) at a level: 0 alone,
+// lower case ({"KeyY":"z",…} with a German layout), 1 with Shift, as it is (Sinhala's ඛ on the ක key).
+// Latin-1 and Unicode keysyms.
+static const char *layout_level(Display *dpy, int group, int level) {
+  static JOut map; // jo_end's result lives in it until the next call
   jo_begin(&map);
-  XkbStateRec st;
-  int group = 0;
-  if (dpy && XkbGetState(dpy, XkbUseCoreKbd, &st) == Success) group = st.group;
-  for (int i = 0; dpy && i < NKEYS; i++) {
+  for (int i = 0; i < NKEYS; i++) {
     if (!typing(KEYS[i].code)) continue;
-    KeySym ks = XkbKeycodeToKeysym(dpy, (KeyCode)(KEYS[i].ev + 8), group, 0);
+    KeySym ks = XkbKeycodeToKeysym(dpy, (KeyCode)(KEYS[i].ev + 8), group, level);
     unsigned cp = 0;
     if ((ks >= 0x20 && ks <= 0x7e) || (ks >= 0xa0 && ks <= 0xff)) cp = (unsigned)ks;
     else if ((ks & 0xff000000) == 0x01000000) cp = (unsigned)(ks & 0xffffff);
     if (!cp) continue;
-    if ((cp >= 'A' && cp <= 'Z') || (cp >= 0xc0 && cp <= 0xde && cp != 0xd7)) cp += 32;
+    if (!level && ((cp >= 'A' && cp <= 'Z') || (cp >= 0xc0 && cp <= 0xde && cp != 0xd7))) cp += 32;
     char u[8];
     utf8(cp, u);
     jo_str(&map, KEYS[i].code, u);
   }
+  return jo_end(&map);
+}
+
+// keyLayout: what each key types alone and with Shift (shared/keylayout.js); on Wayland (no X
+// display here) nothing.
+void keys_layout(double id, Display *dpy) {
   JOut o;
   jo_begin(&o);
   jo_num(&o, "id", id);
   jo_bool(&o, "ok", 1);
-  jo_raw(&o, "layout", jo_end(&map));
+  XkbStateRec st;
+  int group = 0;
+  if (dpy && XkbGetState(dpy, XkbUseCoreKbd, &st) == Success) group = st.group;
+  if (dpy) {
+    jo_raw(&o, "layout", layout_level(dpy, group, 0));
+    jo_raw(&o, "shift", layout_level(dpy, group, 1));
+  } else {
+    jo_raw(&o, "layout", "{}");
+  }
   jo_bool(&o, "type", dpy != NULL); // it takes "type" (keys_type)
   emit(jo_end(&o));
 }

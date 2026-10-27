@@ -192,6 +192,64 @@ namespace MacShare
         }
     }
 
+    // A drag of this PC's own files (dragLocal): one of ours that went to the Mac came back home with
+    // the button still held. Started like DragSession's (a click into a tiny window under the
+    // pointer), with the paths as Explorer's own drag has them; our real button-up drops it.
+    static class LocalDrag
+    {
+        public static void Start(List<string> paths, string id, Action<Dictionary<string, object>> emit)
+        {
+            List<string> have = paths.FindAll(delegate (string p) { return File.Exists(p) || Directory.Exists(p); });
+            if (have.Count == 0) { Done(emit, id, "failed"); return; }
+            Thread t = new Thread(delegate () { Run(have, id, emit); });
+            t.SetApartmentState(ApartmentState.STA);
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        static void Done(Action<Dictionary<string, object>> emit, string id, string result)
+        {
+            Dictionary<string, object> d = new Dictionary<string, object>();
+            d["event"] = "dragState";
+            d["drag"] = id;
+            d["result"] = result;
+            emit(d);
+        }
+
+        static void Run(List<string> paths, string id, Action<Dictionary<string, object>> emit)
+        {
+            Native2.OleInitialize(IntPtr.Zero);
+            Form f = new Form();
+            f.FormBorderStyle = FormBorderStyle.None;
+            f.ShowInTaskbar = false;
+            f.TopMost = true;
+            f.StartPosition = FormStartPosition.Manual;
+            f.Opacity = 0.02; // layered with alpha > 0: still gets the click
+            Point cur = Cursor.Position;
+            f.Bounds = new Rectangle(cur.X - 16, cur.Y - 16, 32, 32);
+            bool began = false;
+            f.MouseDown += delegate (object o, MouseEventArgs e)
+            {
+                if (began || e.Button != MouseButtons.Left) return;
+                began = true;
+                f.Bounds = new Rectangle(-32000, -32000, 1, 1); // out of the way of the drop targets
+                DataObject data = new DataObject(DataFormats.FileDrop, paths.ToArray());
+                DragDropEffects eff = f.DoDragDrop(data, DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link);
+                Done(emit, id, eff == DragDropEffects.None ? "cancelled" : "dropped");
+                f.Close();
+            };
+            f.Shown += delegate
+            {
+                Native2.Button(true);
+                System.Windows.Forms.Timer t = new System.Windows.Forms.Timer();
+                t.Interval = 1500;
+                t.Tick += delegate { t.Stop(); if (!began) { began = true; Native2.Button(false); Done(emit, id, "failed"); f.Close(); } };
+                t.Start();
+            };
+            Application.Run(f);
+        }
+    }
+
     [ComImport, Guid("00000121-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IDropSource
     {

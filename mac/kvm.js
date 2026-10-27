@@ -25,6 +25,9 @@ class Kvm extends EventEmitter {
     super();
     Object.assign(this, { server, helper, getSettings, clipboard, input, drop, fileSend });
     this.dragOut = null; // id of our file drag while it is on the PC and not yet dropped
+    this.dragOutPaths = null; // …and its files, for when it comes back home still held (kvm.home drag.back)
+    this.heldMove = null; // moves while a drag from the PC is starting here (dragin.js arming)
+    drop.dragIn.onStarted = () => this._flushHeldMove();
     fileSend.on('policy', () => this.config());
     fileSend.on('dragEnd', (drag) => {
       if (this.dragOut === drag) this.dragOut = null;
@@ -127,8 +130,19 @@ class Kvm extends EventEmitter {
     on(P.T.KVM_HOME, (m) => {
       if (this.mode !== 'driving' || m.route !== this.route) return;
       const k = this.cfg;
+      // Our file drag came back with the button still held: it goes on here as Finder's own drag.
+      const back = m.drag && m.drag.back && m.drag.back === this.dragOut ? this.dragOutPaths : null;
+      if (back) {
+        this.fileSend.forgetDrag(this.dragOut);
+        this.dragOut = null;
+      }
+      if (m.drag && m.drag.count) this.drop.dragIn.expectHome(); // the PC's files follow as a drag here
       this.helper.send('capture', typeof m.offset === 'number' ? { on: false, side: k.pcSide, offset: m.offset } : { on: false });
       this._setMode('home', '');
+      if (back) {
+        console.log(`[drag] back home: ${back.length} item(s)`);
+        this.helper.send('dragLocal', { drag: 'back', paths: back });
+      }
     });
     on(P.T.KVM_RELEASE, (m) => {
       if (this.mode === 'driven' && m.route >= this.peerRoute) this._drivenHome('');
@@ -203,6 +217,7 @@ class Kvm extends EventEmitter {
         driveOther: !!(this.linked && k.driveOther && k.mouse && this.server.current && !this.paused && !(this.locked && this.mode === 'home')),
         hotkey: this.getSettings().keys.hotkey || P.HOTKEY_MAC,
         cooldownMs: P.KVM_CROSS_COOLDOWN_MS,
+        dwellMs: P.KVM_EDGE_DWELL_MS,
         zones: this.map.zones(), // only where the monitors touch (null: anywhere on the side)
         gestures: k.gestures !== false, // Trackpad gestures go over as k.ge
         dragFiles: this.fileSend.dragOn && this.fileSend.peerDrag, // drag.policy, both sides
@@ -363,6 +378,7 @@ class Kvm extends EventEmitter {
     this._drive(take);
     if (plan) {
       this.dragOut = this.fileSend.startDrag(plan); // drag.start right after kvm.take
+      this.dragOutPaths = fields.paths;
       console.log(`[drag] out ${this.dragOut}: ${plan.items.length} item(s), ${plan.files} file(s), ${plan.bytes} bytes`);
     } else if (fields.paths && fields.paths.length) console.log('[drag] out: nothing sendable in', fields.paths);
     this.clipboard.sendIfChanged('switch');
@@ -437,6 +453,7 @@ class Kvm extends EventEmitter {
       // and on again. In keyboard-only mode (Cursor off + "Switch the keyboard with the hotkey") it
       // moves the keyboard over and back instead.
       case 'hotkey':
+        if (!this.server.current) break; // nothing connected: the hotkey does nothing (no sharing to switch)
         if (k.hotkeySwitch && !k.mouse && k.keyboard && this.linked) {
           if (this.mode === 'home') {
             if (!this._canDrive()) return;
@@ -483,7 +500,7 @@ class Kvm extends EventEmitter {
         if (this.mode === 'driving') this.goHome(ev.reason === 'deadman' ? 'Input came back by itself (safety timeout)' : '');
         break;
       case 'return':
-        if (this.mode === 'driven' && !this.locked) this._sendHome(ev.offset, '');
+        if (this.mode === 'driven' && !this.locked) this._sendHome(ev.offset, '', ev.drag || {});
         break;
     }
   }
@@ -519,6 +536,10 @@ class Kvm extends EventEmitter {
     switch (m.t) {
       case P.T.K_MOVE:
         ev = { t: m.t, dx: num(m.dx) * k.speed, dy: num(m.dy) * k.speed };
+        if (this.drop.dragIn.arming) { // the drag starts where the pointer came in; these follow once it has
+          this.heldMove = { dx: ev.dx + (this.heldMove ? this.heldMove.dx : 0), dy: ev.dy + (this.heldMove ? this.heldMove.dy : 0) };
+          return;
+        }
         break;
       case P.T.K_DOWN:
       case P.T.K_UP:
@@ -539,7 +560,7 @@ class Kvm extends EventEmitter {
         }
         ev = { t: m.t, code: this.server.keySwap(this.getSettings()) ? P.mapKeyFromOtherPlatform(m.code) : m.code };
         if (this._lockKeyHere(ev)) return;
-        ev.code = this.keys.code(m.t === P.T.K_KEY_DOWN, ev.code, m.ch, m.tx); // a shortcut's letter: our key for it
+        ev.code = this.keys.code(m.t === P.T.K_KEY_DOWN, ev.code, m.ch, m.tx, m.im); // a shortcut's letter: our key for it
         if (!ev.code) return; // another alphabet's letter: typed as it is
     }
     this._injectEv(ev);
@@ -610,18 +631,38 @@ class Kvm extends EventEmitter {
     }
   }
 
-  // Rows 8c: send the input home to the PC (return edge or hotkey).
-  _sendHome(offset, message) {
+  // Rows 8c: send the input home to the PC (return edge or hotkey). `drag` (the helper's return):
+  // the PC's button still held in a file drag, which carries on there — its own drag from it comes
+  // back (`back`), or a Finder drag here ended at the edge and its files follow (`paths`).
+  _sendHome(offset, message, drag) {
     if (this.mode !== 'driven') return;
     const msg = { t: P.T.KVM_HOME, route: this.peerRoute };
     if (typeof offset === 'number') msg.offset = this.map.toPeer(offset);
+    let plan = null;
+    if (drag && this.drop.dragIn.dragging) msg.drag = { back: this.drop.dragIn.cur.id }; // not dropped yet: the PC's button still holds it
+    else if (drag && Array.isArray(drag.paths) && this.fileSend.dragOn && this.fileSend.peerDrag) {
+      plan = this.fileSend.planDrag(drag.paths.filter((p) => typeof p === 'string'));
+      if (plan) msg.drag = { count: plan.items.length };
+    }
     this.server.sendToClient(msg);
+    if (plan) { // after kvm.home: drag.start, then the files
+      const id = this.fileSend.startDrag(plan);
+      console.log(`[drag] back ${id}: ${plan.items.length} item(s), ${plan.files} file(s), ${plan.bytes} bytes`);
+    }
     this._drivenHome(message);
+  }
+
+  // The drag from the PC started here (or never will): the moves held meanwhile go on.
+  _flushHeldMove() {
+    const h = this.heldMove;
+    this.heldMove = null;
+    if (h && this.mode === 'driven') this._injectEv({ t: P.T.K_MOVE, dx: h.dx, dy: h.dy });
   }
 
   // Rows 8b / 9b: stop being driven.
   _drivenHome(message) {
     if (this.mode !== 'driven') return;
+    this.heldMove = null;
     this.drop.cancelDrag();
     this.drop.dragIn.cancel(); // before releaseAll: the held button must not drop the files
     this.helper.send('releaseAll');

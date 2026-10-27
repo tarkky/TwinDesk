@@ -20,11 +20,21 @@ class RemoteInput {
 
   // move(x, y): put the pointer at x,y normalized over what the Mac sees (helper command).
   // before(): called before a button/key goes down (e.g. raise the app window).
-  handle(m, move, before) {
+  // pen(x, y, state): a phone's stylus at x,y normalized, its P.penOf state (the helper's `pen`);
+  // without it, the stylus is a mouse.
+  handle(m, move, before, pen) {
     if (!this.allowed) return;
     const ev = (e) => this.helper.send('inject', { ev: e });
     if (POINTER.has(m.t)) {
       const x = Number(m.x), y = Number(m.y);
+      const st = pen && P.penOf(m.pen);
+      if (st) {
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        if (m.t === T.IN_DOWN && before) before();
+        pen(Math.min(1, Math.max(0, x)), Math.min(1, Math.max(0, y)), st);
+        if (m.t === T.IN_DOWN) this.held = true;
+        return;
+      }
       if (Number.isFinite(x) && Number.isFinite(y)) {
         if (m.t === T.IN_DOWN && before) before();
         move(Math.min(1, Math.max(0, x)), Math.min(1, Math.max(0, y)));

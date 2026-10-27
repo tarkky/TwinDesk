@@ -48,6 +48,7 @@ class DragRecv {
     this.root = path.join(app.getPath('userData'), 'drag');
     this.cur = null; // {drag, tmp, files: Map(rel → file), byId, dirs, items, count, name, state, dest, tops, placed}
     this.last = null; // {text, ok, at}
+    this.homeUntil = 0; // kvm.home said the other computer's files follow as a drag here at home (expectHome)
     const link = this.link;
     link.on(T.DRAG_START, (m) => this._start(m));
     link.on(T.DRAG_CANCEL, (m) => this.cur && m.drag === this.cur.drag && this.cancel('cancelled'));
@@ -63,7 +64,9 @@ class DragRecv {
     const end = (result) => this.link.send({ t: T.DRAG_END, drag: m.drag, result });
     if (typeof m.drag !== 'string' || !m.drag) return;
     if (this.cur) this.cancel('cancelled');
-    if (!this.settings.files.edgeDrag || !this.settings.files.acceptFromMac || !this.isDriven()) return end('cancelled');
+    const home = Date.now() < this.homeUntil; // its drag came over with the pointer, back home
+    this.homeUntil = 0;
+    if (!this.settings.files.edgeDrag || !this.settings.files.acceptFromMac || !(this.isDriven() || home)) return end('cancelled');
     const list = Array.isArray(m.list) ? m.list : [];
     const dirList = Array.isArray(m.dirs) ? m.dirs : [];
     if ((!list.length && !dirList.length) || list.length > MAX_FILES) return end('failed');
@@ -84,6 +87,12 @@ class DragRecv {
     this.cur = { drag: m.drag, tmp, files, byId: new Map(), dirs, count: tops.length, name, state: 'dragging', dest: '', tops: new Map(), placed: [], shown: false };
     if (this.popup) this.popup('driven', 'Drop ' + name + ' on a folder or the desktop');
     this.onChange();
+  }
+
+  // kvm.js: the pointer came home with the other computer's button held in a drag of its files: the
+  // drag.start that follows is taken here, and our own button-up (the helper's `released`) drops it.
+  expectHome() {
+    this.homeUntil = Date.now() + 3000;
   }
 
   _offer(m) {

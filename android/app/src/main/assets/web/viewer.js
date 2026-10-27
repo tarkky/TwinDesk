@@ -7,6 +7,8 @@
 //           direct ('direct'): tap = click · hold = right click · drag = drag · two fingers = scroll
 //           (the Mac's pointer follows the finger, so it is a touch screen for the Mac)
 //   mouse   and a hardware keyboard work as on a computer
+//   stylus  a pen on the computer: where it points, with its pressure, tilt, eraser and side button
+//           (opts.pen; off: a mouse)
 //   soft keyboard: what is typed goes as keys (the app's Keyboard button shows it)
 // The app talks to it through window.TD (send, ready, …) and window.tdRecv(message).
 'use strict';
@@ -30,6 +32,7 @@
   let touchMode = 'pad'; // 'pad' | 'direct' (opts.touch)
   let speed = 1; // the touchpad's pointer speed (opts.speed)
   let tapClick = true; // a quick tap left-clicks (opts.tap)
+  let penOn = true; // a stylus is a pen (opts.pen); off: a mouse
 
   function setOverlay(t) {
     overlay.textContent = t || '';
@@ -130,6 +133,8 @@
         touchMode = msg.touch === 'direct' ? 'direct' : 'pad';
         if (Number(msg.speed) > 0) speed = Number(msg.speed);
         tapClick = msg.tap === true;
+        if (msg.pen === false && penOn) penLeave(); // switched off while it is near
+        penOn = msg.pen !== false;
         document.body.classList.toggle('pad', touchMode === 'pad');
         applyAudio();
         if (pc) for (const r of pc.getReceivers()) if (r.track.kind === 'video') pace(r);
@@ -167,6 +172,7 @@
   const SLOP = 10;
 
   function fingerDown(e) {
+    if (penNear || performance.now() - penAway < 500) return; // the hand holding the pen
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (touchMode === 'pad') return padDown(e);
     if (touches.size === 1) {
@@ -283,10 +289,85 @@
     one = null;
   }
 
+  // A stylus: where it points, as a pen on the computer. in.mm/md/mu carry `pen`: {p pressure 0–1,
+  // tx/ty tilt (degrees, −90…90), tw twist (degrees, 0–359), c the tip (or the eraser) touches,
+  // er the eraser end, bar the side button held, out it left the screen's range}. The helpers inject
+  // a tablet pen; a computer that doesn't know `pen` takes it as a mouse. md/mu: b 0 the tip or the
+  // eraser, b 1 the side button (a right click as a mouse). While it is near, fingers do nothing (the
+  // hand resting on the screen).
+  const PEN_BUTTON = { 0: B.LEFT, 5: B.LEFT, 2: B.RIGHT };
+  let penNear = false;
+  let penAway = 0; // when it left (fingers count again a moment later)
+  let penLast = null; // {x, y, pen} what was sent last
+  const penHeld = new Set();
+  function penState(e) {
+    const c = (e.buttons & 33) !== 0; // the tip (1) or the eraser (32)
+    return {
+      p: c ? Math.round(Math.min(1, Math.max(0, e.pressure || 0)) * 10000) / 10000 : 0,
+      tx: Math.round(e.tiltX || 0), ty: Math.round(e.tiltY || 0), tw: Math.round(e.twist || 0) % 360,
+      c, er: (e.buttons & 32) !== 0 || e.button === 5, bar: (e.buttons & 2) !== 0,
+    };
+  }
+  function penNearNow() {
+    if (!penNear) { // the hand comes with it: let go of what fingers were doing
+      penNear = true;
+      if (one) {
+        clearTimeout(one.timer);
+        if (one.dragging) send({ t: 'in.mu', x: one.p.x, y: one.p.y, b: B.LEFT });
+      }
+      one = null;
+      two = null;
+      touches.clear();
+    }
+  }
+  function penSend(t, e, b) {
+    const p = norm(e.clientX, e.clientY, penHeld.size > 0 || t !== 'in.mm');
+    if (!p) return penOut(); // hovering outside the picture
+    penLast = { x: p.x, y: p.y, pen: penState(e) };
+    send(b === undefined ? { t, x: p.x, y: p.y, pen: penLast.pen } : { t, x: p.x, y: p.y, b, pen: penLast.pen });
+  }
+  function penOut() {
+    if (penLast && !penLast.pen.out) {
+      for (const b of penHeld) send({ t: 'in.mu', x: penLast.x, y: penLast.y, b, pen: { ...penLast.pen, c: false, p: 0 } });
+      penHeld.clear();
+      penLast.pen = { ...penLast.pen, c: false, p: 0, bar: false, out: true };
+      send({ t: 'in.mm', x: penLast.x, y: penLast.y, pen: penLast.pen });
+    }
+    penLast = null;
+  }
+  function penDown(e) {
+    e.preventDefault();
+    penNearNow();
+    const b = PEN_BUTTON[e.button];
+    if (b === undefined) return;
+    penHeld.add(b);
+    penSend('in.md', e, b);
+  }
+  function penMove(e) {
+    penNearNow();
+    // Every sample since the last frame (a pen reports 120–240 a second): strokes stay smooth.
+    const all = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    for (const s of all.length ? all : [e]) penSend('in.mm', s);
+  }
+  function penUp(e) {
+    const b = PEN_BUTTON[e.button];
+    if (b === undefined || !penHeld.has(b)) return;
+    penHeld.delete(b);
+    penSend('in.mu', e, b);
+  }
+  function penLeave() {
+    penOut();
+    penNear = false;
+    penAway = performance.now();
+  }
+  // Out of its range: the pen leaves the page (pointerleave doesn't bubble up to window).
+  document.documentElement.addEventListener('pointerleave', (e) => { if (e.pointerType === 'pen') penLeave(); });
+
   // A mouse (or trackpad) on the phone: as on a computer.
   const BUTTONS = { 0: B.LEFT, 1: B.MIDDLE, 2: B.RIGHT, 3: 3, 4: 4 };
   const held = new Set();
   window.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'pen' && penOn) return penDown(e);
     if (e.pointerType === 'touch') return fingerDown(e);
     e.preventDefault();
     const p = norm(e.clientX, e.clientY, false);
@@ -296,11 +377,13 @@
     send({ t: 'in.md', x: p.x, y: p.y, b });
   });
   window.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'pen' && penOn) return penMove(e);
     if (e.pointerType === 'touch') return fingerMove(e);
     const p = norm(e.clientX, e.clientY, held.size > 0);
     if (p) send({ t: 'in.mm', x: p.x, y: p.y });
   });
   window.addEventListener('pointerup', (e) => {
+    if (e.pointerType === 'pen' && penOn) return penUp(e);
     if (e.pointerType === 'touch') return fingerUp(e);
     const b = BUTTONS[e.button];
     if (!held.has(b)) return;
@@ -308,7 +391,10 @@
     const p = norm(e.clientX, e.clientY, true);
     if (p) send({ t: 'in.mu', x: p.x, y: p.y, b });
   });
-  window.addEventListener('pointercancel', (e) => { if (e.pointerType === 'touch') fingerUp(e); });
+  window.addEventListener('pointercancel', (e) => {
+    if (e.pointerType === 'pen') { if (penOn) penLeave(); }
+    else if (e.pointerType === 'touch') fingerUp(e);
+  });
   window.addEventListener('contextmenu', (e) => e.preventDefault());
   window.addEventListener('wheel', (e) => {
     e.preventDefault();

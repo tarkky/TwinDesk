@@ -38,14 +38,14 @@ function write(name, data) {
 // The features that defaulted to on before they all started off: a settings file saved then has
 // them on where it doesn't say.
 const WAS_ON = {
-  kvm: ['mouse', 'keyboard'], clipboard: ['enabled'], audio: ['phoneMedia'], remote: ['allow'], camera: ['on'],
+  kvm: ['mouse', 'keyboard'], clipboard: ['enabled'], audio: ['phoneMedia'], remote: ['allow'],
   files: ['acceptDrops', 'dragEdge', 'shortcuts'], notifs: ['receive'], apps: ['offer'], papps: ['on'], receive: ['on'], smb: ['connectPc'],
 };
 
 const DEFAULT_SETTINGS = {
   macId: null,
   macName: null,
-  rev: 7, // settings revision: older files are upgraded once in loadSettings
+  rev: 8, // settings revision: older files are upgraded once in loadSettings
   // `on` is reset to false at every start. remote: the other computer may start/stop
   // sharing and switch Extend/Mirror (screen.ctl). pace: playback of shared screens, both
   // directions, the same on both computers (pair.sync): 'fast' (shown the moment it arrives) |
@@ -127,6 +127,11 @@ function loadSettings() {
   if ((s.rev || 0) < 7) { // Clipboard instant by default
     out.clipboard.mode = 'instant';
     out.rev = 7;
+  }
+  // Camera is never turned on by an upgrade: once, off unless this Mac's camera is shared.
+  if ((s.rev || 0) < 8) {
+    if (!out.camera.share) out.camera.on = false;
+    out.rev = 8;
   }
   return out;
 }

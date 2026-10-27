@@ -83,15 +83,16 @@ class FileClip {
     this.onChange();
   }
 
-  // (Re)register the two shortcuts from settings.files.copyKeys / pasteKeys. Ctrl+Alt is AltGr on
-  // many layouts: if Windows won't give us a key, the Files tab says so (pick another).
+  // (Re)register the two shortcuts from settings.files.copyKeys / pasteKeys, only while connected
+  // (syncConnected): the rest of the time they're other apps' keys. Ctrl+Alt is AltGr on many
+  // layouts: if Windows won't give us a key, the Files tab says so (pick another).
   apply() {
     for (const acc of this.registered || []) globalShortcut.unregister(acc);
     this.registered = [];
     this.error = '';
-    if (this.cfg.shortcuts) {
+    if (this.cfg.shortcuts && this.live) {
       const bad = [];
-      for (const [acc, fn] of [[this.cfg.copyKeys, () => this.copy()], [this.cfg.pasteKeys, () => this.paste()]]) {
+      for (const [acc, fn] of [[this.cfg.copyKeys, () => this.shortcut('copy')], [this.cfg.pasteKeys, () => this.shortcut('paste')]]) {
         let ok = false;
         try { ok = globalShortcut.register(acc, fn); } catch (_) { /* invalid */ }
         if (ok) this.registered.push(acc);
@@ -100,6 +101,22 @@ class FileClip {
       if (bad.length) this.error = 'Couldn’t use ' + bad.join(' and ') + '. Another app may have it.';
     }
     this.onChange();
+  }
+
+  // main.js, with every state push: whether anything is connected.
+  syncConnected(on) {
+    if (!!on === !!this.live) return;
+    this.live = !!on;
+    this.apply();
+  }
+
+  // Our shortcut, pressed at home. With the pointer on the other computer and the keyboard not
+  // shared (so intercept() never saw it), it happens over there.
+  shortcut(action) {
+    const k = this.kvm;
+    if (k && k.mode === 'driving' && !(k.local && k.local.drives())) return void this.link.send({ t: T.FCLIP_KEY, action });
+    if (action === 'copy') this.copy();
+    else this.paste();
   }
 
   // While this PC drives the other computer its key events pass through here (kvm.js) before they

@@ -46,6 +46,7 @@
     KVM_IP_BACKLOG: 64 * 1024, // on the network: moves held (still summed) while this many bytes wait on the socket
     KVM_MOVE_MAX_WAIT_MS: 16, // … but one goes at least this often (behind a big message the pointer still moves)
     KVM_CROSS_COOLDOWN_MS: 250, // no new crossing this soon after the last one, either way (the helpers' edges)
+    KVM_EDGE_DWELL_MS: 150, // an edge push crosses only once it lasted this long (with Edge resistance): the end of a quick flick doesn't
     HELPER_KEEPALIVE_MS: 500, // main -> helper keepalive while capturing
     HELPER_DEADMAN_MS: 1500, // helper stops capturing by itself after this much keepalive silence
     RESISTANCE_PX: 120, // default push through an edge before crossing
@@ -91,7 +92,8 @@
       RTC_OFFER: 'rtc.offer',
       RTC_ANSWER: 'rtc.answer',
       RTC_ICE: 'rtc.ice',
-      // input inside the Monitor 2 window (absolute, normalized), Windows -> Mac
+      // input inside the Monitor 2 window (absolute, normalized), Windows -> Mac. From a phone's
+      // stylus, in.mm/md/mu carry `pen` (P.penOf): the helpers inject a tablet pen; without it, a mouse
       IN_MOVE: 'in.mm',
       IN_DOWN: 'in.md',
       IN_UP: 'in.mu',
@@ -104,6 +106,9 @@
       KVM_ACCEPT: 'kvm.accept',
       KVM_REFUSE: 'kvm.refuse',
       KVM_RELEASE: 'kvm.release',
+      // driven->owner {route, offset?, drag?}: the input goes home. With the left button still held in
+      // a file drag, `drag` carries it on there: {back: id} the owner's own drag.start `id` came back
+      // (its files are on the owner), {count} the driven side's own files follow as a drag.start + files
       KVM_HOME: 'kvm.home',
       KVM_LINK: 'kvm.link', // either {on}: mouse and keyboard sharing switched on/off (hotkey double-tap); the other side follows
       KVM_LOCK: 'kvm.lock', // either {on}: the cursor is locked on the device it is on (shared/cursorlock.js); sent only while one drives the other
@@ -115,8 +120,9 @@
       K_UP: 'k.mu',
       K_WHEEL: 'k.wh',
       // {code} the key's place; ch: the a–z letter it types on the sender's layout (shortcuts by letter);
-      // tx (k.kd): the letter of another alphabet it types there (ж), typed as it is where the key types a
-      // Latin letter (shared/keylayout.js)
+      // tx (k.kd): what it types there on another alphabet's layout (ж, ක, ඛ with Shift), typed as it is
+      // where the key types something else; im (k.kd): the language of the input method typed with there
+      // (ja, zh-Hans, ko), whose own one the other side switches to (shared/keylayout.js)
       K_KEY_DOWN: 'k.kd',
       K_KEY_UP: 'k.ku',
       // A trackpad gesture by what it means, done natively by the driven computer:
@@ -411,6 +417,21 @@
         MetaRight: 'ControlRight',
       };
       return swap[code] || code;
+    },
+
+    // A stylus's state on in.mm/md/mu (android viewer.js), checked: {p pressure 0–1, tx/ty tilt
+    // degrees −90…90, tw twist degrees 0–359, c the tip or the eraser touches, er the eraser end,
+    // bar the side button held, out it left the screen's range}; null when there is none.
+    penOf(v) {
+      if (!v || typeof v !== 'object') return null;
+      const n = (x, lo, hi) => (typeof x === 'number' && Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : 0);
+      const out = v.out === true;
+      const c = v.c === true && !out;
+      return {
+        p: c ? n(v.p, 0, 1) : 0,
+        tx: n(v.tx, -90, 90), ty: n(v.ty, -90, 90), tw: ((n(v.tw, -720, 720) % 360) + 360) % 360,
+        c, er: v.er === true, bar: v.bar === true && !out, out,
+      };
     },
   };
 

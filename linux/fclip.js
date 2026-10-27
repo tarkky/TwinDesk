@@ -62,9 +62,17 @@ class FileClip {
     });
     this.helper.on('event', (name, m) => {
       if (name !== 'shortcut' || !this.cfg.shortcuts) return;
-      if (m.action === 'copy') this.copy();
-      else if (m.action === 'paste') this.paste();
+      if (m.action === 'copy' || m.action === 'paste') this.shortcut(m.action);
     });
+  }
+
+  // Our shortcut, seen at home. With the pointer on the other computer and the keyboard not shared
+  // (so intercept() never saw it), it happens over there.
+  shortcut(action) {
+    const k = this.kvm;
+    if (k && k.mode === 'driving' && !(k.local && k.local.drives())) return void this.link.send({ t: T.FCLIP_KEY, action });
+    if (action === 'copy') this.copy();
+    else this.paste();
   }
 
   get cfg() {

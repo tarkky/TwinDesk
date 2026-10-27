@@ -33,10 +33,13 @@ function pasteDir() {
 const xml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const uri = (p) => 'file://' + p.split('/').map(encodeURIComponent).join('/');
 
-// The files on the clipboard as files.
-function toClipboard(paths) {
-  const { clipboard } = require('electron');
-  if (process.platform === 'darwin') {
+// The files on the clipboard as files. Electron 44 (the Mac) has no writeBuffer: a text/uri-list
+// ClipboardItem, which macOS also offers as NSFilenamesPboardType.
+async function toClipboard(paths) {
+  const { clipboard, ClipboardItem } = require('electron');
+  if (typeof clipboard.writeBuffer !== 'function') {
+    await clipboard.write([new ClipboardItem({ 'text/uri-list': paths.map(uri).join('\r\n') + '\r\n' })]);
+  } else if (process.platform === 'darwin') {
     const plist = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
       `<plist version="1.0"><array>${paths.map((p) => `<string>${xml(p)}</string>`).join('')}</array></plist>`;
     clipboard.writeBuffer('NSFilenamesPboardType', Buffer.from(plist, 'utf8'));
@@ -46,10 +49,10 @@ function toClipboard(paths) {
 }
 
 // On the clipboard, then the paste keys through the helper's injector. Resolves when pressed.
-function pasteInto(helper, paths) {
+async function pasteInto(helper, paths) {
   const there = paths.filter((p) => fs.existsSync(p));
-  if (!there.length) return Promise.reject(new Error('nothing to paste'));
-  toClipboard(there);
+  if (!there.length) throw new Error('nothing to paste');
+  await toClipboard(there);
   const mod = process.platform === 'darwin' ? 'MetaLeft' : 'ControlLeft';
   return new Promise((resolve) => setTimeout(() => {
     for (const [t, code] of [['k.kd', mod], ['k.kd', 'KeyV'], ['k.ku', 'KeyV'], ['k.ku', mod]]) helper.send('inject', { ev: { t, code } });

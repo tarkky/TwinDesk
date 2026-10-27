@@ -83,6 +83,7 @@ class Screen {
       }
       if (m.fullScreen) this.win.setFullScreen(!this.win.isFullScreen());
       if (typeof m.share === 'boolean' || m.mode) this.control({ share: m.share, mode: m.mode });
+      if (m.share === false) this.close(); // Stop on the bar: nothing left to watch
     });
     ipcMain.on('monitor-ready', (e) => {
       if (!this.win || e.sender !== this.win.webContents) return;

@@ -194,7 +194,7 @@
       const b = el('button', { class: 'phone-tile' + (d.connected ? ' connected' : ''), title: d.connected ? d.name : 'Connect to ' + d.name }, [
         wall,
         el('span', { class: 'phone-text' }, [el('span', { class: 'phone-name', text: d.name }), el('span', { class: 'phone-sub', text: sub })]),
-        d.connected ? el('span', { class: 'dot good' }) : null,
+        d.connected ? el('span', { class: 'dot good' }) : ph.connecting && ph.connecting.id === d.id ? el('span', { class: 'spin', attrs: { 'aria-hidden': 'true' } }) : null,
       ]);
       b.dataset.connected = d.connected ? '1' : '';
       b.classList.toggle('active', d.connected && current && current.def.id === 'phone');

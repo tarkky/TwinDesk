@@ -235,7 +235,7 @@
       }, [
         wall,
         el('span', { class: 'phone-text' }, [el('span', { class: 'phone-name', text: t.name }), el('span', { class: 'phone-sub', text: t.sub })]),
-        t.connected ? el('span', { class: 'dot good' }) : t.state === 'via' ? el('span', { class: 'pill muted', text: 'via ' + (t.via[0] || '…') }) : null,
+        t.connected ? el('span', { class: 'dot good' }) : t.state === 'connecting' ? el('span', { class: 'spin', attrs: { 'aria-hidden': 'true' } }) : t.state === 'via' ? el('span', { class: 'pill muted', text: 'via ' + (t.via[0] || '…') }) : null,
       ]);
       b.dataset.id = t.id;
       b.dataset.connected = t.connected ? '1' : '';

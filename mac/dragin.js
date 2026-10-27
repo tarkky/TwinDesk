@@ -44,6 +44,8 @@ class DragIn {
     Object.assign(this, { server, helper, getSettings, remember });
     this.cur = null; // the drag in progress (one at a time)
     this.isDriven = () => false; // set by kvm.js
+    this.onStarted = () => {}; // kvm.js: the session began (or failed to), the held moves go on
+    this.homeUntil = 0; // kvm.home said the PC's files follow as a drag at home (expectHome)
 
     server.on(`t:${P.T.DRAG_START}`, (m) => this._start(m));
     server.on(`t:${P.T.DRAG_CANCEL}`, (m) => this.cur && m.drag === this.cur.id && this.cancel());
@@ -52,6 +54,10 @@ class DragIn {
       const d = this.cur;
       if (!d || !ev || ev.drag !== d.id) return;
       console.log(`[dragin] ${name} ${JSON.stringify(ev)}`);
+      if (name === 'dragStarted' || name === 'dragEnded') {
+        d.started = true;
+        this.onStarted();
+      }
       if (name === 'dragEnded') this._sessionEnded(ev.result);
       else if (name === 'dragWrite') this._write(Number(ev.index), String(ev.path || ''));
     });
@@ -64,7 +70,9 @@ class DragIn {
     if (this.cur) this.cancel();
     console.log(`[dragin] drag.start ${m.drag} (driven: ${this.isDriven()})`);
     if (this.getSettings().files.dragEdge === false) return this.server.sendToClient({ t: P.T.DRAG_END, drag: m.drag, result: 'cancelled' });
-    if (!this.isDriven()) {
+    const home = Date.now() < this.homeUntil; // the PC's drag came over with the pointer, back home
+    this.homeUntil = 0;
+    if (!this.isDriven() && !home) {
       // Sent just before its kvm.take: start it as soon as the take arrives (onDriven).
       clearTimeout(this.early && this.early.timer);
       const early = { m, offers: [] };
@@ -114,10 +122,17 @@ class DragIn {
       written: 0,
       where: null,
       accepted: false,
+      started: false, // the helper's session began (dragStarted)
       timer: null,
     };
     this.helper.request('dragStart', { drag: id, items: this.cur.items }).catch(() => this._end('failed'));
     console.log(`[dragin] ${id}: ${items.length} item(s), ${files.size} file(s)`);
+  }
+
+  // kvm.js: the pointer came home with the PC's button held in a drag of its files: the drag.start
+  // that follows starts here although the PC doesn't drive this Mac.
+  expectHome() {
+    this.homeUntil = Date.now() + 3000;
   }
 
   // kvm.js: the PC just took this Mac over; a drag.start that came first starts now.
@@ -175,6 +190,11 @@ class DragIn {
     return !!(this.cur && !this.cur.accepted);
   }
 
+  // Asked for, not yet under the pointer: kvm.js holds the PC's moves meanwhile.
+  get arming() {
+    return !!(this.cur && !this.cur.started && !this.cur.accepted);
+  }
+
   _sessionEnded(result) {
     const d = this.cur;
     if (result !== 'dropped') return this._end(result === 'failed' ? 'failed' : 'cancelled');
@@ -228,6 +248,7 @@ class DragIn {
     if (!d) return;
     this.cur = null;
     clearTimeout(d.timer);
+    if (!d.started) this.onStarted(); // it never will: the held moves go on
     for (const i of d.writes.keys()) this.helper.send('dragWritten', { drag: d.id, index: i, error: 'cancelled' });
     const msg = { t: P.T.DRAG_END, drag: d.id, result };
     if (result === 'dropped' && d.where) msg.where = d.where.replace(os.homedir(), '~');

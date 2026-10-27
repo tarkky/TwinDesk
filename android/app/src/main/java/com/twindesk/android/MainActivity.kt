@@ -924,6 +924,9 @@ private fun ScreenPage(core: Core, v: Int) {
         }
         if (!s.inputOn) MacRow("Input is off", "$name doesn’t take input from here (its Share screen › Receive input)")
     }
+    MacCard("Stylus") {
+        SwitchRow("Pen", "Pressure, tilt, the eraser and the side button, as a drawing tablet on $name; your hand on the screen does nothing while the pen is near. Off: the stylus is a mouse", core.store.flag("screen.pen", true), first = true) { s.setOpt("screen.pen", it) }
+    }
     MacCard("Playback") {
         SwitchRow("$name’s sound with the screen", "When $name shares sound with its screen", core.store.flag("screen.sound", false), first = true) { s.setOpt("screen.sound", it) }
         SwitchRow("Smooth", "Even motion, about one frame later. Off: each frame the moment it arrives", core.store.flag("screen.smooth", false)) { s.setOpt("screen.smooth", it) }

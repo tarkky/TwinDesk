@@ -7,6 +7,9 @@
 // client's drag the way Windows' marked button-up does, so the file manager's drag stays parked
 // on the strip (a pointer barrier holds the pointer there) while motion and the button go to the
 // other computer; the real button-up drops it there, and here on the strip, which does nothing.
+// While the other computer drives this one the strip covers the way back instead, for its button
+// held in a file manager drag here: caught the same way, the input goes home with the files
+// (capture_drag_return) and that button is let go on the strip.
 // The window and its XDND messages live on the injection connection (events from main.c).
 #include "helper.h"
 #include <stdio.h>
@@ -19,6 +22,7 @@
 static int dragFiles = 1;
 static Window strip;
 static int shown, sx, sy, sw, sh;
+static int stripSide, stripBack; // the side it covers, and whether as the way back (driven)
 static Window source;   // the drag over the strip
 static int hasUris, requested, taken;
 static double takenAt;
@@ -59,17 +63,23 @@ static void reset(void) {
 
 // Shown only while the left button is held at home with edge crossing on, along the outer edge of
 // the monitor under the pointer.
-void drop_tick(int capturing, int side, int driveOther, int leftDown) {
-  if (taken) {
-    if (now_ms() - takenAt > 60000) { reset(); hide(); } // a drag that never ended
-    return;
-  }
-  if (!leftDown && !shown) return;
+int drop_holding(void) { return source && stripBack && hasUris && dragFiles; }
+
+// backSide: the way back while driven (the button is the driver's, injected), else SIDE_NONE.
+void drop_tick(int capturing, int side, int driveOther, int leftDown, int backSide) {
+  int back = !capturing && backSide != SIDE_NONE;
+  if (!leftDown && !shown && !taken && !back) return;
   Window rr, cr;
   int x = 0, y = 0, wx, wy, mx, my, mw, mh;
   unsigned mask = 0;
   XQueryPointer(dpy_in, root_in, &rr, &cr, &x, &y, &wx, &wy, &mask);
-  int want = dragFiles && driveOther && side != SIDE_NONE && !capturing && leftDown && (mask & Button1Mask) && screens_monitor(x, y, &mx, &my, &mw, &mh);
+  if (taken) {
+    // A drag that never ended, or one that came back home and was dropped somewhere else.
+    if (now_ms() - takenAt > 60000 || (!capturing && !(mask & Button1Mask) && now_ms() - takenAt > 500)) { reset(); hide(); }
+    return;
+  }
+  if (back) side = backSide;
+  int want = dragFiles && (back || driveOther) && side != SIDE_NONE && !capturing && (back || leftDown) && (mask & Button1Mask) && screens_monitor(x, y, &mx, &my, &mw, &mh);
   if (want) {
     int px = side == SIDE_LEFT ? mx : side == SIDE_RIGHT ? mx + mw - 1 : x;
     int py = side == SIDE_TOP ? my : side == SIDE_BOTTOM ? my + mh - 1 : y;
@@ -87,6 +97,8 @@ void drop_tick(int capturing, int side, int driveOther, int leftDown) {
     XMoveResizeWindow(dpy_in, strip, sx, sy, (unsigned)sw, (unsigned)sh);
   }
   if (!shown) { XMapRaised(dpy_in, strip); shown = 1; }
+  stripSide = side;
+  stripBack = back;
   XFlush(dpy_in);
 }
 
@@ -161,7 +173,8 @@ static void got_uris(void) {
     XQueryPointer(dpy_in, root_in, &rr, &cr, &x, &y, &wx, &wy, &m);
     taken = 1;
     takenAt = now_ms();
-    capture_drag_cross(out, x, y, sx, sy, sw, sh);
+    if (stripBack) capture_drag_return(out, x, y, stripSide);
+    else capture_drag_cross(out, x, y, sx, sy, sw, sh);
   }
   free(out);
 }

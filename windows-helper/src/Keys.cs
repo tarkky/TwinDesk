@@ -68,13 +68,16 @@ namespace MacShare
         // keyLayout: what each letter, digit and punctuation key types alone in the layout of the window
         // in front (each thread has its own), lower case: {"KeyY": "z", …} with a German layout
         // (shared/keylayout.js). ToUnicodeEx with flag 4 leaves the keyboard's state (a pending dead
-        // key) alone; a dead key (a negative count) is left out.
-        public static Dictionary<string, object> Layout()
+        // key) alone; a dead key (a negative count) is left out. shift: what each types with Shift
+        // instead, as it is (Sinhala's ඛ on the ක key: no case to guess it from). A key may type several
+        // characters (Sinhala Wij 9's ligatures).
+        public static Dictionary<string, object> Layout(bool shift = false)
         {
             Dictionary<string, object> map = new Dictionary<string, object>();
             IntPtr hkl = GetKeyboardLayout(GetWindowThreadProcessId(Native.GetForegroundWindow(), IntPtr.Zero));
             byte[] state = new byte[256];
-            StringBuilder buf = new StringBuilder(8);
+            if (shift) state[0x10] = 0x80; // VK_SHIFT
+            StringBuilder buf = new StringBuilder(16);
             foreach (KeyValuePair<string, int> kv in ToScan)
             {
                 if (!kv.Key.StartsWith("Key") && !kv.Key.StartsWith("Digit") && Array.IndexOf(Punct, kv.Key) < 0) continue;
@@ -82,7 +85,9 @@ namespace MacShare
                 if (vk == 0) continue;
                 buf.Length = 0;
                 int n = ToUnicodeEx(vk, (uint)kv.Value, state, buf, buf.Capacity, 4, hkl);
-                if (n == 1 && buf.Length >= 1 && buf[0] >= ' ') map[kv.Key] = buf.ToString(0, 1).ToLowerInvariant();
+                if (n < 1 || buf.Length < n || buf[0] < ' ') continue;
+                string typed = buf.ToString(0, n);
+                map[kv.Key] = shift ? typed : typed.ToLowerInvariant();
             }
             return map;
         }

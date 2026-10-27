@@ -96,14 +96,15 @@ class FileClip extends EventEmitter {
     return this.server.current ? this.server.current.name : 'the other computer';
   }
 
-  // (Re)register the two shortcuts from settings.files.copyKeys / pasteKeys.
+  // (Re)register the two shortcuts from settings.files.copyKeys / pasteKeys: only while connected
+  // (syncConnected), so they're other apps' keys the rest of the time.
   apply() {
     for (const acc of this.registered || []) globalShortcut.unregister(acc); // only ours: the cursor lock key is one too
     this.registered = [];
     this.error = '';
-    if (this.cfg.shortcuts !== false) {
+    if (this.cfg.shortcuts !== false && this.live) {
       const bad = [];
-      for (const [acc, fn] of [[this.cfg.copyKeys, () => this.copy()], [this.cfg.pasteKeys, () => this.paste()]]) {
+      for (const [acc, fn] of [[this.cfg.copyKeys, () => this.shortcut('copy')], [this.cfg.pasteKeys, () => this.shortcut('paste')]]) {
         try {
           if (!acc || !globalShortcut.register(acc, fn)) bad.push(acc);
           else this.registered.push(acc);
@@ -114,6 +115,22 @@ class FileClip extends EventEmitter {
       if (bad.length) this.error = `Couldn’t use ${bad.join(' and ')}. Another app may have it.`;
     }
     this.emit('change');
+  }
+
+  // Our shortcut, pressed at home. With the pointer on the other computer and the keyboard not
+  // shared (so intercept() never saw it), it happens over there.
+  shortcut(action) {
+    const k = this.kvm;
+    if (k && k.mode === 'driving' && !(k.local && k.local.drives())) return void this.server.sendToClient({ t: T.FCLIP_KEY, action });
+    if (action === 'copy') this.copy();
+    else this.paste();
+  }
+
+  // main.js, with every state push: whether anything is connected.
+  syncConnected(on) {
+    if (!!on === !!this.live) return;
+    this.live = !!on;
+    this.apply();
   }
 
   // While this Mac drives the other computer, its key events go through here (kvm.js) before they

@@ -86,8 +86,14 @@ static void dispatch(const char *line) {
     } else if (!strcmp(cmd, "inject")) {
       JObj *ev = jobj(c, "ev");
       if (ev) wl_inject(ev);
+    } else if (!strcmp(cmd, "pen")) { // a phone's stylus (pen.c)
+      JObj *pen = jobj(c, "pen");
+      if (pen) pen_at(1, (int)jnum(c, "x", 0), (int)jnum(c, "y", 0), pen);
     } else if (!strcmp(cmd, "releaseAll")) {
+      pen_leave(1);
       wl_release_all();
+    } else if (!strcmp(cmd, "watchRelease")) {
+      wl_watch_release(!jbool(c, "off", 0));
     } else if (!strcmp(cmd, "moveTo")) {
       wl_move_to((int)jnum(c, "x", 0), (int)jnum(c, "y", 0));
     } else if (!strcmp(cmd, "info")) {
@@ -155,8 +161,14 @@ static void dispatch(const char *line) {
     if (ev) inject_apply(ev);
   } else if (!strcmp(cmd, "type")) { // text as it is, whatever the layout (keys.c)
     keys_type(dpy_in, jstr(c, "text", ""));
+  } else if (!strcmp(cmd, "pen")) { // a phone's stylus (pen.c)
+    JObj *pen = jobj(c, "pen");
+    if (pen) pen_at(0, (int)jnum(c, "x", 0), (int)jnum(c, "y", 0), pen);
   } else if (!strcmp(cmd, "releaseAll")) {
+    pen_leave(0);
     inject_release_all();
+  } else if (!strcmp(cmd, "watchRelease")) {
+    capture_watch_release(!jbool(c, "off", 0));
   } else if (!strcmp(cmd, "moveTo")) {
     inject_move_to((int)jnum(c, "x", 0), (int)jnum(c, "y", 0));
   } else if (!strcmp(cmd, "info")) {

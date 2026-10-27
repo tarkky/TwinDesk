@@ -66,13 +66,13 @@ final class Capture {
   private var deadman: Timer?
 #if MULTI
   // edge / return edge push, one state per side
-  private var edgeBy: [String: (push: Double, at: Double)] = [:]
-  private var retBy: [String: (push: Double, at: Double)] = [:]
+  private var edgeBy: [String: (push: Double, at: Double, since: Double)] = [:]
+  private var retBy: [String: (push: Double, at: Double, since: Double)] = [:]
   private var returnSides: [String] = []
 #else
   // edge / return edge push
-  private var edge = (push: 0.0, at: 0.0)
-  private var ret = (push: 0.0, at: 0.0)
+  private var edge = (push: 0.0, at: 0.0, since: 0.0)
+  private var ret = (push: 0.0, at: 0.0, since: 0.0)
   private var returnSide: String?
 #endif
   private var returnResistance = 120.0
@@ -85,6 +85,10 @@ final class Capture {
   // moved 8 pt inward or `guardWindow` passed, so the end of a flick doesn't bounce straight back.
   private var cooldown = 0.25
   private let guardWindow = 0.5
+  // A push crosses once it went `resistance` outward and lasted `dwell` (kvmConfig `dwellMs`,
+  // KVM_EDGE_DWELL_MS; none with no resistance): the end of a quick flick that reaches the edge
+  // is over by then, a push meant to cross goes on.
+  var dwell = 0.15
   private var lastCross = 0.0
   private var arrival: (side: String, at: Double, inward: Double)?
   private var dragPbCount = -1             // drag pasteboard changeCount when the left button went down
@@ -249,7 +253,7 @@ final class Capture {
     guard !returnSides.isEmpty else { return }
     var hit: (side: String, offset: Double)? = nil
     for side in returnSides {
-      var st = retBy[side] ?? (push: 0.0, at: 0.0)
+      var st = retBy[side] ?? (push: 0.0, at: 0.0, since: 0.0)
       let off = push(&st, p, dx, dy, side, returnResistance, returnZones)
       retBy[side] = st
       if hit == nil, let off = off { hit = (side: side, offset: off) }
@@ -258,14 +262,16 @@ final class Capture {
     returnSides = []
     lastCross = now()
     Flash.shared.leave(at: p, side: found.side)
-    emit(["event": "return", "side": found.side, "offset": found.offset])
+    var out: [String: Any] = ["event": "return", "side": found.side, "offset": found.offset]
+    if let d = returnDrag(at: p) { out["drag"] = d }
+    emit(out)
   }
 
   /// The first watched edge the pointer pushed through (its side and offset), if any.
   private func edgeCrossing(_ p: CGPoint, dx: Double, dy: Double) -> (side: String, offset: Double)? {
     var hit: (side: String, offset: Double)? = nil
     for side in sides {
-      var st = edgeBy[side] ?? (push: 0.0, at: 0.0)
+      var st = edgeBy[side] ?? (push: 0.0, at: 0.0, since: 0.0)
       let off = push(&st, p, dx, dy, side, resistance, edgeZones)
       edgeBy[side] = st
       if hit == nil, let off = off { hit = (side: side, offset: off) }
@@ -285,12 +291,35 @@ final class Capture {
     returnSide = nil
     lastCross = now()
     Flash.shared.leave(at: p, side: side)
-    emit(["event": "return", "offset": off])
+    var out: [String: Any] = ["event": "return", "offset": off]
+    if let d = returnDrag(at: p) { out["drag"] = d }
+    emit(out)
   }
 #endif
 
+  /// The driver's left button still held in a file drag as the pointer goes back: it carries on
+  /// there. Our drag in from it (DragIn) comes back (`back`: main cancels it here); a Finder drag
+  /// ends on a catcher here and its files go over (`paths`).
+  private func returnDrag(at p: CGPoint) -> [String: Any]? {
+    guard injector.heldButtons.contains(0) else { return nil }
+    if DragIn.shared.active { return ["back": true] }
+    guard dragFiles else { return nil }
+    let paths = draggedFiles()
+    guard !paths.isEmpty else { return nil }
+    injector.heldButtons.remove(0) // the catcher's button-up releases it
+    DragIn.shared.swallowLocalDrag(at: p)
+    log("return: drag through the edge, \(paths.count) file(s) on the drag pasteboard")
+    return ["paths": paths]
+  }
+
+  /// The driver pressed the left button here (injected, so the tap doesn't see it): a drag that
+  /// starts now is a new one (draggedFiles).
+  func injectedLeftDown() {
+    dragPbCount = NSPasteboard(name: .drag).changeCount
+  }
+
   /// Accumulate outward motion on an outer edge; returns the offset when it went through.
-  private func push(_ st: inout (push: Double, at: Double), _ p: CGPoint, _ dx: Double, _ dy: Double,
+  private func push(_ st: inout (push: Double, at: Double, since: Double), _ p: CGPoint, _ dx: Double, _ dy: Double,
                     _ side: String, _ resistance: Double, _ zones: [ClosedRange<Double>]?) -> Double? {
     let out = side == "right" ? dx : side == "left" ? -dx : side == "bottom" ? dy : -dy
     let t = now()
@@ -313,9 +342,10 @@ final class Capture {
       st.push = 0
       return nil
     }
+    if st.push == 0 { st.since = t }
     st.push += out
     st.at = t
-    guard st.push >= resistance else { return nil }
+    guard st.push >= resistance, resistance <= 0 || t - st.since >= dwell else { return nil }
     st.push = 0
     return Screens.offset(p, side: side)
   }

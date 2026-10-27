@@ -84,7 +84,7 @@ const up = (k, code, ch) => k.code(false, code, ch);
     const ru = layout({ ...RU, Semicolon: 'ж', Backquote: 'ё', Period: 'ю', Slash: '.' });
     assert.deepStrictEqual(ru.tag({ t: 'k.kd', code: 'KeyA' }), { t: 'k.kd', code: 'KeyA', tx: 'ф' });
     assert.deepStrictEqual(ru.tag({ t: 'k.ku', code: 'KeyA' }), { t: 'k.ku', code: 'KeyA' }, 'its key-up: nothing more');
-    assert.deepStrictEqual(ru.tag({ t: 'k.kd', code: 'Slash' }), { t: 'k.kd', code: 'Slash' }, 'not a letter: the key');
+    assert.deepStrictEqual(ru.tag({ t: 'k.kd', code: 'Slash' }), { t: 'k.kd', code: 'Slash', tx: '.' }, 'its punctuation too');
     ru.tag({ t: 'k.kd', code: 'ShiftLeft' });
     assert.deepStrictEqual(ru.tag({ t: 'k.kd', code: 'KeyA' }), { t: 'k.kd', code: 'KeyA', tx: 'Ф' }, 'with Shift: capital');
     ru.tag({ t: 'k.ku', code: 'ShiftLeft' });
@@ -101,7 +101,7 @@ const up = (k, code, ch) => k.code(false, code, ch);
     assert.strictEqual(us.code(true, 'KeyA', undefined, 'ф'), null, 'a repeat: typed again');
     assert.strictEqual(us.code(false, 'KeyA'), null, 'its key-up: nothing');
     assert.deepStrictEqual(typed, [['type', 'ф'], ['type', 'ф']]);
-    assert.strictEqual(us.code(true, 'Semicolon', undefined, 'ж'), 'Semicolon', 'a key with no Latin letter here: the key');
+    assert.strictEqual(us.code(true, 'Semicolon', undefined, 'ж'), null, 'a key typing ; here: typed too');
     up(us, 'Semicolon');
     down(us, 'MetaLeft');
     assert.strictEqual(us.code(true, 'KeyA', undefined, 'ф'), 'KeyA', 'Cmd held: the key');
@@ -114,8 +114,117 @@ const up = (k, code, ch) => k.code(false, code, ch);
     const old = new KeyLayout(() => Promise.resolve({ layout: US }), (cmd, a) => typed.push(a.text));
     await old.refresh();
     assert.strictEqual(old.code(true, 'KeyA', undefined, 'ф'), 'KeyA', 'a helper that can\'t type: the key');
-    assert.strictEqual(typed.length, 2);
+    assert.strictEqual(typed.length, 3);
     us.reset();
+  }
+
+  // Sinhala (Wijesekara: ක on KeyU, ඛ with Shift; the vowel sign ා on KeyD; ෂ on the ; key; a Wij 9
+  // ligature) on an English Mac, and Shift's own map.
+  {
+    const SI = { KeyU: 'ක', KeyD: '්', KeyF: 'ා', Semicolon: 'ස', KeyX: 'ං', Slash: 'ෘ', Digit1: '1' };
+    const SI_SHIFT = { KeyU: 'ඛ', KeyD: 'ෟ', KeyF: 'ෑ', Semicolon: ':', KeyX: 'ක්‍ෂ', Digit1: '!' };
+    const si = new KeyLayout(() => Promise.resolve({ layout: SI, shift: SI_SHIFT, type: true }));
+    await si.refresh();
+    assert.deepStrictEqual(si.tag({ t: 'k.kd', code: 'KeyU' }), { t: 'k.kd', code: 'KeyU', tx: 'ක' });
+    assert.deepStrictEqual(si.tag({ t: 'k.kd', code: 'KeyD' }), { t: 'k.kd', code: 'KeyD', tx: '්' }, 'al-lakuna: a mark');
+    assert.deepStrictEqual(si.tag({ t: 'k.kd', code: 'KeyF' }), { t: 'k.kd', code: 'KeyF', tx: 'ා' }, 'a vowel sign');
+    assert.deepStrictEqual(si.tag({ t: 'k.kd', code: 'Digit1' }), { t: 'k.kd', code: 'Digit1', tx: '1' }, 'a digit: says it too');
+    si.tag({ t: 'k.kd', code: 'ShiftLeft' });
+    assert.deepStrictEqual(si.tag({ t: 'k.kd', code: 'KeyU' }), { t: 'k.kd', code: 'KeyU', tx: 'ඛ' }, 'Shift: its own map, no case');
+    assert.deepStrictEqual(si.tag({ t: 'k.kd', code: 'KeyX' }), { t: 'k.kd', code: 'KeyX', tx: 'ක්‍ෂ' }, 'a ligature');
+    assert.deepStrictEqual(si.tag({ t: 'k.kd', code: 'Semicolon' }), { t: 'k.kd', code: 'Semicolon', tx: ':' }, 'Shift on a Sinhala key: what it types');
+    si.tag({ t: 'k.ku', code: 'ShiftLeft' });
+
+    const typed = [];
+    const us = new KeyLayout(() => Promise.resolve({ layout: US, shift: { KeyA: 'A', Semicolon: ':', Digit1: '!', Quote: '"' }, type: true }), (cmd, a) => typed.push(a.text));
+    await us.refresh();
+    assert.strictEqual(us.code(true, 'KeyU', undefined, 'ක'), null);
+    us.code(false, 'KeyU');
+    assert.strictEqual(us.code(true, 'Semicolon', undefined, 'ස'), null, 'in the ; place');
+    us.code(false, 'Semicolon');
+    us.code(true, 'ShiftLeft');
+    assert.strictEqual(us.code(true, 'Semicolon', undefined, ':'), 'Semicolon', 'Shift+; types : here too: the key');
+    us.code(false, 'Semicolon');
+    assert.strictEqual(us.code(true, 'KeyX', undefined, 'ක්‍ෂ'), null);
+    us.code(false, 'KeyX');
+    assert.strictEqual(us.code(true, 'Digit1', undefined, '!'), 'Digit1', 'the same here: the key');
+    us.code(false, 'Digit1');
+    assert.strictEqual(us.code(true, 'Quote', undefined, ','), null, 'a , in the \' place: typed');
+    us.code(false, 'Quote');
+    assert.strictEqual(us.code(true, 'KeyX', undefined, 'ක්‍ෂ'), null);
+    us.code(false, 'KeyX');
+    us.code(false, 'ShiftLeft');
+    assert.deepStrictEqual(typed, ['ක', 'ස', 'ක්‍ෂ', ',', 'ක්‍ෂ']);
+
+    const same = new KeyLayout(() => Promise.resolve({ layout: SI, shift: SI_SHIFT, type: true }), (cmd, a) => typed.push(a.text));
+    await same.refresh();
+    assert.strictEqual(same.code(true, 'KeyU', undefined, 'ක'), 'KeyU', 'Sinhala here too: its own layout types it');
+    same.code(false, 'KeyU');
+    same.code(true, 'ShiftLeft');
+    assert.strictEqual(same.code(true, 'KeyU', undefined, 'ඛ'), 'KeyU', 'and with Shift');
+  }
+
+  // Any other script the same way, nothing per language: Hindi (Devanagari-QWERTY: the vowel sign ु
+  // on U, ू with Shift) and Arabic (ش on A, ِ with Shift) on an English PC.
+  {
+    for (const [layout, shift, code, alone, shifted] of [
+      [{ KeyU: 'ु', KeyK: 'क' }, { KeyU: 'ू', KeyK: 'ख' }, 'KeyU', 'ु', 'ू'],
+      [{ KeyA: 'ش', KeyS: 'س' }, { KeyA: 'ِ', KeyS: 'ٍ' }, 'KeyA', 'ش', 'ِ'],
+    ]) {
+      const k = new KeyLayout(() => Promise.resolve({ layout, shift, type: true }));
+      await k.refresh();
+      assert.strictEqual(k.tag({ t: 'k.kd', code }).tx, alone);
+      k.tag({ t: 'k.kd', code: 'ShiftRight' });
+      assert.strictEqual(k.tag({ t: 'k.kd', code }).tx, shifted);
+      const typed = [];
+      const us = new KeyLayout(() => Promise.resolve({ layout: US, type: true }), (cmd, a) => typed.push(a.text));
+      await us.refresh();
+      assert.strictEqual(us.code(true, code, undefined, alone), null);
+      us.code(false, code);
+      assert.deepStrictEqual(typed, [alone]);
+    }
+  }
+
+  // Input methods (Japanese, Pinyin, Korean): the keys say the language, the other side switches to
+  // its own input method of it while driven and back after.
+  {
+    const ja = new KeyLayout(() => Promise.resolve({ layout: US, im: 'ja', type: true, selectInput: true }));
+    await ja.refresh();
+    assert.deepStrictEqual(ja.tag({ t: 'k.kd', code: 'KeyK' }), { t: 'k.kd', code: 'KeyK' }, 'not a typing key here: as it is');
+    assert.deepStrictEqual(ja.tag({ t: 'k.kd', code: 'KeyA' }), { t: 'k.kd', code: 'KeyA', im: 'ja', ch: 'a' });
+    assert.deepStrictEqual(ja.tag({ t: 'k.ku', code: 'KeyA' }), { t: 'k.ku', code: 'KeyA', ch: 'a' }, 'key-up: no im');
+    const bad = new KeyLayout(() => Promise.resolve({ layout: US, im: 'x"; rm', type: true }));
+    await bad.refresh();
+    assert.strictEqual(bad.tag({ t: 'k.kd', code: 'KeyA' }).im, undefined, 'not a language: none');
+
+    const sent = [];
+    const us = new KeyLayout(() => Promise.resolve({ layout: US, type: true, selectInput: true }), (cmd, a) => sent.push([cmd, a]));
+    await us.refresh();
+    assert.strictEqual(us.code(true, 'KeyA', 'a', undefined, 'zh-Hans'), 'KeyA', 'the key goes: the input method composes it');
+    us.code(false, 'KeyA', 'a');
+    us.code(true, 'KeyC', 'c', undefined, 'zh-Hans');
+    us.code(false, 'KeyC', 'c');
+    assert.deepStrictEqual(sent, [['selectInput', { lang: 'zh-Hans' }]], 'switched once');
+    us.code(true, 'ControlLeft');
+    us.code(true, 'KeyC', 'c');
+    us.code(false, 'KeyC', 'c');
+    us.code(false, 'ControlLeft');
+    assert.strictEqual(sent.length, 1, 'a shortcut (no im): stays');
+    us.code(true, 'KeyA', 'a', undefined, 'ko');
+    us.code(true, 'KeyA', 'a');
+    us.reset();
+    us.reset();
+    assert.deepStrictEqual(sent.slice(1), [['selectInput', { lang: 'ko' }], ['selectInput', { restore: true }]],
+      'another language, then a layout again: back to ours; reset after: nothing more');
+    us.code(true, 'KeyA', 'a', undefined, 'ja');
+    us.reset();
+    assert.deepStrictEqual(sent.slice(3), [['selectInput', { lang: 'ja' }], ['selectInput', { restore: true }]], 'reset: back');
+
+    const old = new KeyLayout(() => Promise.resolve({ layout: US, type: true }), (cmd, a) => sent.push([cmd, a]));
+    await old.refresh();
+    old.code(true, 'KeyA', 'a', undefined, 'ja');
+    old.reset();
+    assert.strictEqual(sent.length, 5, 'a helper that can\'t select: nothing');
   }
 
   // reset: nothing held.

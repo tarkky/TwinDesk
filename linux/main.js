@@ -17,6 +17,7 @@ const path = require('path');
 const P = require('../shared/protocol.js');
 const { receivedDir } = require('../shared/received.js'); // General › Received files
 const CL = require('../shared/cursorlock.js');
+const trayMenu = require('../shared/traymenu.js');
 const store = require('./store');
 const { Discovery, interfaces, isIPv4, ipToInt } = require('./discovery');
 const Link = require('./link');
@@ -168,7 +169,14 @@ function start() {
   require('../shared/sleepwake.js').sleepWake({ powerMonitor: require('electron').powerMonitor, server: () => hostServer, discovery: () => discovery });
   discovery.on('invite', (d) => {
     // Connect on this computer in our host's list: back to it, taking the session over.
-    if (guest.pairing && d && d.id === guest.pairing.macId) return void (discovery.clearInvite(d.id), guest.connect(true));
+    // A phone connected here (or about to come back) goes first, as with Take over here: it would
+    // keep us from connecting.
+    if (guest.pairing && d && d.id === guest.pairing.macId) {
+      discovery.clearInvite(d.id);
+      const busy = !!(hostServer && (hostServer.current || hostServer.phoneHolds()));
+      if (busy) hostServer.release();
+      return void setTimeout(() => link.connect(true), busy ? 800 : 0);
+    }
     pushState();
     showMain();
   }); // another computer wants to connect: Pair is focused
@@ -283,6 +291,7 @@ function start() {
   // Copy/paste files with shortcuts (the helper watches the keys), the file managers' Send to.
   fileClip = new FileClip({ link, helper, fileDrop, fileRecv, settings, peerName, popup: (kind, text) => hud.show(kind, text), onChange: pushState });
   kvm.fileClip = fileClip; // our copy/paste shortcut while driving → fclip.key
+  fileClip.kvm = kvm; // …also when the keyboard isn't shared
   sendTo = new SendTo({ link, fileDrop, peerName: () => (peerView() || {}).name || '', popup: (kind, text, sub) => hud.show(kind, text, sub) });
   notifs = new Notifs({ link, helper, settings, save: saveSettings, peerName, onChange: pushState });
   wake = new Wake({ link, settings, save: saveSettings, onChange: pushState, address: () => ownAddresses()[0] });
@@ -1132,7 +1141,7 @@ function createTray() {
   updateTray(buildState());
 }
 
-// The tray menu, like the PC's. Rebuilt when what it shows
+// The tray menu, by kind (shared/traymenu.js) like the PC's. Rebuilt when what it shows
 // changes (some Linux trays only take a new menu, not changes to the old one).
 let trayKey = '';
 function updateTray(s) {
@@ -1149,11 +1158,10 @@ function updateTray(s) {
   const host = s.paired && s.paired.macName;
   const again = !connected && host && (s.link.state === 'stopped' || !!s.link.busy);
   const key = JSON.stringify([name, rtt, again, away, kvm.linked, kvm.paused, kvm.locked, kvm.mode, settings.keys.lockKeys, sharing, watching, k.driveOther, k.beDriven, settings.clipboard.enabled,
-    settings.audio.send, settings.app.hud, found.map((d) => [d.id, d.name, d.os]), s.updates && s.updates.available && s.updates.latest]);
+    settings.audio.send, settings.app.hud, k.keyboard, settings.files.edgeDrag, settings.files.shortcuts, settings.files.copyKeys, found.map((d) => [d.id, d.name, d.os]), s.updates && s.updates.available && s.updates.latest]);
   if (key === trayKey) return;
   trayKey = key;
   const other = name || 'Other Computer';
-  const check = (label, checked, click) => ({ label, type: 'checkbox', checked: !!checked, click });
   const set = (section, partial, after) => {
     if (!applySettings(settings, section, partial)) return;
     saveSettings();
@@ -1161,39 +1169,40 @@ function updateTray(s) {
     pushState();
   };
   const kind = (os) => (os === 'mac' ? 'Mac' : os === 'linux' ? 'Linux' : os === 'android' ? 'Phone' : 'PC');
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: connected ? 'Connected to ' + name + rtt : 'Not connected', enabled: false },
-    ...(away ? [{ label: 'Bring Mouse and Keyboard Back', click: () => kvm.home() }] : []),
-    check('Cursor Sharing', kvm.linked && !kvm.paused, (i) => kvm.setShared(i.checked)),
-    ...(connected ? [check('Lock Cursor on ' + (kvm.mode === 'driving' ? other : device.name) + ' (' + CL.keysLabel(settings.keys.lockKeys, 'linux') + ')', kvm.locked, (i) => kvm.setLocked(i.checked))] : []),
-    { type: 'separator' },
-    check('Share Screen', sharing, (i) => pcScreen.setMode(i.checked ? 'mirror' : 'off')),
-    check('Receive Screen', watching, (i) => (i.checked ? screen.open(false) : screen.close())),
-    check('Use Mouse and Keyboard on ' + other, k.driveOther, (i) => set('kvm', { driveOther: i.checked }, () => kvm.applyConfig())),
-    check('Let ' + other + ' Control ' + device.name, k.beDriven, (i) => set('kvm', { beDriven: i.checked }, () => kvm.applyConfig())),
-    check('Share Clipboard', settings.clipboard.enabled, (i) => set('clipboard', { enabled: i.checked }, () => clip.applySettings())),
-    check('Send Sound', settings.audio.send, (i) => set('audio', { send: i.checked }, () => sound.apply())),
-    { type: 'separator' },
-    { label: 'Connect To', submenu: [
-      ...(found.length ? found.map((d) => ({ label: d.name + ' (' + kind(d.os) + ')', click: () => {
-        if (d.os === P.OS.ANDROID) return connectPhoneDev(d);
-        discovery.clearInvite(d.id);
-        link.startPairing({ address: d.address, port: d.port, macName: d.name, id: d.id });
-        showMain();
-      } })) : [{ label: 'Nobody nearby', enabled: false }]),
-      { type: 'separator' },
-      { label: 'Connect by Address…', click: () => goTab('overview') },
-      { label: 'Look Again', click: () => discovery.probe() },
-    ] },
-    ...(connected ? [{ label: 'Disconnect ' + name, click: () => link.disconnect() }] : []),
-    ...(again ? [{ label: (s.link.busy ? 'Take Over ' : 'Connect to ') + host, click: () => link.connect(true) }] : []),
-    check('Show a Popup When Switching', settings.app.hud, (i) => set('app', { hud: i.checked })),
-    { type: 'separator' },
-    ...(s.updates && s.updates.available ? [{ label: 'Download TwinDesk ' + s.updates.latest + '…', click: showUpdateWindow }] : []),
-    { label: 'Open TwinDesk…', click: showMain },
-    { label: 'Open Log Folder', click: () => require('../shared/applog.js').open() },
-    { label: 'Quit TwinDesk', click: () => app.quit() },
-  ]));
+  tray.setContextMenu(Menu.buildFromTemplate(trayMenu.template({
+    connected,
+    status: connected ? 'Connected to ' + name + rtt : 'Not connected',
+    home: away ? () => kvm.home() : null,
+    shared: { checked: kvm.linked && !kvm.paused, set: (on) => kvm.setShared(on) },
+    lock: connected ? { label: 'Lock Cursor on ' + (kvm.mode === 'driving' ? other : device.name) + ' (' + CL.keysLabel(settings.keys.lockKeys, 'linux') + ')', checked: kvm.locked, set: (on) => kvm.setLocked(on) } : null,
+    keyboard: { checked: k.keyboard, set: (on) => set('kvm', { keyboard: on }, () => kvm.applyConfig()) },
+    drive: { label: 'Use Mouse and Keyboard on ' + other, checked: k.driveOther, set: (on) => set('kvm', { driveOther: on }, () => kvm.applyConfig()) },
+    driven: { label: 'Let ' + other + ' Control ' + device.name, checked: k.beDriven, set: (on) => set('kvm', { beDriven: on }, () => kvm.applyConfig()) },
+    popup: { checked: settings.app.hud, set: (on) => set('app', { hud: on }) },
+    screen: [
+      { label: 'Share Screen', checked: sharing, set: (on) => pcScreen.setMode(on ? 'mirror' : 'off') },
+      // Opens/closes the screen window (opening starts the other computer's sharing).
+      { label: 'Receive Screen', checked: watching, set: (on) => (on ? screen.open(false) : screen.close()) },
+    ],
+    clipboard: { checked: settings.clipboard.enabled, set: (on) => set('clipboard', { enabled: on }, () => clip.applySettings()) },
+    sound: { checked: settings.audio.send, set: (on) => set('audio', { send: on }, () => sound.apply()) },
+    drag: { checked: settings.files.edgeDrag, set: (on) => set('files', { edgeDrag: on }, () => kvm.applyConfig()) },
+    shortcuts: { label: 'Copy and Paste Files (' + CL.keysLabel(settings.files.copyKeys, 'linux') + ', ' + CL.keysLabel(settings.files.pasteKeys, 'linux') + ')', checked: settings.files.shortcuts, set: (on) => set('files', { shortcuts: on }, () => { kvm.applyConfig(); fileClip.apply(); }) },
+    found: found.map((d) => ({ label: d.name + ' (' + kind(d.os) + ')', click: () => {
+      if (d.os === P.OS.ANDROID) return connectPhoneDev(d);
+      discovery.clearInvite(d.id);
+      link.startPairing({ address: d.address, port: d.port, macName: d.name, id: d.id });
+      showMain();
+    } })),
+    byAddress: () => goTab('overview'),
+    lookAgain: () => discovery.probe(),
+    again: again ? { label: (s.link.busy ? 'Take Over ' : 'Connect to ') + host, click: () => link.connect(true) } : null,
+    disconnect: connected ? { label: 'Disconnect ' + name, click: () => link.disconnect() } : null,
+    update: s.updates && s.updates.available ? { label: 'Download TwinDesk ' + s.updates.latest + '…', click: showUpdateWindow } : null,
+    open: showMain,
+    log: () => require('../shared/applog.js').open(),
+    quit: () => app.quit(),
+  })));
 }
 
 app.on('before-quit', () => {

@@ -49,6 +49,7 @@ if (!app.requestSingleInstanceLock()) {
 
 const P = require('../../shared/protocol.js');
 const CL = require('../../shared/cursorlock.js');
+const trayMenu = require('../../shared/traymenu.js');
 const store = require('./store');
 const identity = require('../identity');
 const { Discovery, interfaces } = require('../discovery');
@@ -228,6 +229,7 @@ function publishState() {
       lockKey.sync(kvm.hub.bus.connectedIds().length > 0 ? settings.keys.lockKeys : '');
       state.input.lockError = lockKey.error;
     }
+    if (kvm && svc) svc.fileClip.syncConnected(kvm.hub.bus.connectedIds().length > 0); // the file shortcuts too
     if (svc) state.terminal = { ...settings.terminal, ...svc.terminal.view, toPc: svc.sshClient.view };
     if (svc) state.files = { ...settings.files, ...svc.drop.view, ...svc.fileSend.view, clip: svc.fileClip.view };
     if (svc) state.notifs = { ...settings.notifs, ...svc.notifs.view };
@@ -417,7 +419,8 @@ function showUpdateWindow() {
   }
 }
 
-// Menu bar: the app mark as a template icon; the switches people reach for most, one click away.
+// Menu bar: the app mark as a template icon; its menu by kind (shared/traymenu.js), only connecting
+// while nothing is connected.
 function updateTray() {
   if (!tray) return;
   const c = state.client;
@@ -425,41 +428,34 @@ function updateTray() {
   const k = settings.kvm;
   const where = state.input && state.input.where;
   tray.setToolTip(c ? `TwinDesk: ${c.name}` : 'TwinDesk');
-  const check = (label, checked, click, enabled = true) => ({ label, type: 'checkbox', checked: !!checked, enabled, click });
   const found = (state.found || []).filter((d) => !c || d.id !== c.id);
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: c ? `Connected to ${c.name}${c.rttMs != null ? ` · ${c.rttMs} ms` : ''}` : 'Not connected', enabled: false },
-      ...(where === 'driving' || where === 'driven'
-        ? [{ label: 'Bring Mouse and Keyboard Back', click: () => svc.kvm.home() }] : []),
-      check('Cursor Sharing', k.linked !== false, (i) => actions.setKvm({ linked: i.checked })),
-      ...(c ? [check(`Lock Cursor on ${where === 'driving' ? name : id.macName} (${CL.keysLabel(settings.keys.lockKeys, 'mac')})`, svc && svc.kvm.locked, (i) => svc.kvm.setLocked(i.checked))] : []),
-      { type: 'separator' },
-      check('Share Screen', settings.sharing.on, (i) => actions.setSharing(i.checked)),
-      check('Receive Screen', svc && svc.pcView.isOpen, (i) => (i.checked ? actions.showPcView() : actions.closePcView())),
-      check(`Use Mouse and Keyboard on ${c ? name : 'Other Computer'}`, k.driveOther, (i) => actions.setKvm({ driveOther: i.checked })),
-      check(`Let ${c ? name : 'Other Computer'} Control ${id.macName}`, k.beDriven, (i) => actions.setKvm({ beDriven: i.checked })),
-      check('Share Clipboard', settings.clipboard.enabled, (i) => actions.setClipboard({ enabled: i.checked })),
-      check('Send Sound', settings.audio.send, (i) => actions.setAudio({ send: i.checked })),
-      { type: 'separator' },
-      {
-        label: 'Connect To',
-        submenu: [
-          ...(found.length ? found.map((d) => ({ label: `${d.name} (${d.os === 'mac' ? 'Mac' : d.os === 'linux' ? 'Linux' : 'PC'})`, click: () => actions.pairWith(d.id) }))
-            : [{ label: 'Nobody nearby', enabled: false }]),
-          { type: 'separator' },
-          { label: 'Connect by Address…', click: () => { actions.setTab('overview'); showWindow(); } },
-          { label: 'Look Again', click: () => actions.refreshDiscovery() },
-        ],
-      },
-      check('Show a Popup When Switching', settings.app.hud !== false, (i) => actions.setApp({ hud: i.checked })),
-      { type: 'separator' },
-      ...(updates && updates.status.available ? [{ label: `TwinDesk ${updates.status.latest} available…`, click: showUpdateWindow }] : []),
-      { label: 'Open TwinDesk…', click: showWindow },
-      { label: 'Open Log Folder', click: () => require('../../shared/applog.js').open() },
-      { label: 'Quit TwinDesk', click: () => app.quit() },
-    ]),
-  );
+  const other = c ? name : 'Other Computer';
+  tray.setContextMenu(Menu.buildFromTemplate(trayMenu.template({
+    connected: !!c,
+    status: c ? `Connected to ${c.name}${c.rttMs != null ? ` · ${c.rttMs} ms` : ''}` : 'Not connected',
+    home: where === 'driving' || where === 'driven' ? () => svc.kvm.home() : null,
+    shared: { checked: k.linked !== false, set: (on) => actions.setKvm({ linked: on }) },
+    lock: c ? { label: `Lock Cursor on ${where === 'driving' ? name : id.macName} (${CL.keysLabel(settings.keys.lockKeys, 'mac')})`, checked: svc && svc.kvm.locked, set: (on) => svc.kvm.setLocked(on) } : null,
+    keyboard: { checked: k.keyboard, set: (on) => actions.setKvm({ keyboard: on }) },
+    drive: { label: `Use Mouse and Keyboard on ${other}`, checked: k.driveOther, set: (on) => actions.setKvm({ driveOther: on }) },
+    driven: { label: `Let ${other} Control ${id.macName}`, checked: k.beDriven, set: (on) => actions.setKvm({ beDriven: on }) },
+    popup: { checked: settings.app.hud !== false, set: (on) => actions.setApp({ hud: on }) },
+    screen: [
+      { label: 'Share Screen', checked: settings.sharing.on, set: (on) => actions.setSharing(on) },
+      { label: 'Receive Screen', checked: svc && svc.pcView.isOpen, set: (on) => (on ? actions.showPcView() : actions.closePcView()) },
+    ],
+    clipboard: { checked: settings.clipboard.enabled, set: (on) => actions.setClipboard({ enabled: on }) },
+    sound: { checked: settings.audio.send, set: (on) => actions.setAudio({ send: on }) },
+    drag: { checked: settings.files.dragEdge !== false, set: (on) => actions.setFiles({ dragEdge: on }) },
+    shortcuts: { label: `Copy and Paste Files (${CL.keysLabel(settings.files.copyKeys, 'mac')}, ${CL.keysLabel(settings.files.pasteKeys, 'mac')})`, checked: settings.files.shortcuts !== false, set: (on) => actions.setFiles({ shortcuts: on }) },
+    found: found.map((d) => ({ label: `${d.name} (${d.os === 'mac' ? 'Mac' : d.os === 'linux' ? 'Linux' : 'PC'})`, click: () => actions.pairWith(d.id) })),
+    byAddress: () => { actions.setTab('overview'); showWindow(); },
+    lookAgain: () => actions.refreshDiscovery(),
+    update: updates && updates.status.available ? { label: `TwinDesk ${updates.status.latest} available…`, click: showUpdateWindow } : null,
+    open: showWindow,
+    log: () => require('../../shared/applog.js').open(),
+    quit: () => app.quit(),
+  })));
 }
 
 app.whenReady().then(() => {

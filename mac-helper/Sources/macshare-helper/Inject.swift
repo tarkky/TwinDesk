@@ -1,5 +1,5 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
-// Input injection with CGEvent: absolute stream input (`input`) and releaseAll.
+// Input injection with CGEvent: absolute stream input (`input`, a phone's stylus in Pen.swift) and releaseAll.
 // Relative KVM input (`inject`) is in InjectRelative.swift.
 // Every injected event is marked with eventSourceUserData = 0x4D53 so our own tap can skip it.
 import Carbon.HIToolbox
@@ -27,6 +27,8 @@ final class Injector {
   // at most once a second, reusing one assertion.
   private var activityID = IOPMAssertionID(0)
   private var lastActivity: TimeInterval = 0
+  // A phone's stylus (Pen.swift): its pointer events go as a tablet pen's.
+  lazy var pen = PenInput(source: source, post: { [unowned self] e in self.post(e) })
 
   init() {
     source = CGEventSource(stateID: .hidSystemState)
@@ -75,6 +77,7 @@ final class Injector {
     e?.setIntegerValueField(.mouseEventButtonNumber, value: Int64(b))
     if let c = clickState { e?.setIntegerValueField(.mouseEventClickState, value: c) }
     e?.flags = flags
+    if let e = e { pen.decorate(e, at: p) }
     post(e)
   }
 
@@ -88,6 +91,11 @@ final class Injector {
   /// One `in.*` message (key codes already swapped by main) onto the display at `bounds`.
   func input(_ ev: [String: Any], bounds: CGRect) {
     guard let t = ev["t"] as? String else { return }
+    if let p = ev["pen"] as? [String: Any] {
+      guard pen.arrive(p) else { return } // out of range: its proximity ended
+      pen.current = p
+    }
+    defer { pen.current = nil }
     switch t {
     case "in.mm":
       let p = point(ev, bounds)
@@ -224,6 +232,7 @@ final class Injector {
     let p = CGEvent(source: nil)?.location ?? .zero
     for b in heldButtons { mouse(mouseType(b, down: false), at: p, button: b, clickState: clickCount[b] ?? 1) }
     heldButtons.removeAll()
+    pen.leave()
   }
 }
 
@@ -246,6 +255,58 @@ enum InputSources {
     TISSelectInputSource(to)
     log("input source: \(id(to))")
   }
+
+  private static func id(_ s: TISInputSource) -> String {
+    guard let p = TISGetInputSourceProperty(s, kTISPropertyInputSourceID) else { return "" }
+    return Unmanaged<CFString>.fromOpaque(p).takeUnretainedValue() as String
+  }
+
+  /// An input method's mode (not a layout): its first language, "ja", "zh-Hans", "ko"…
+  private static func imLanguage(_ s: TISInputSource) -> String? {
+    guard let t = TISGetInputSourceProperty(s, kTISPropertyInputSourceType),
+          Unmanaged<CFString>.fromOpaque(t).takeUnretainedValue() as String == kTISTypeKeyboardInputMode as String,
+          let l = TISGetInputSourceProperty(s, kTISPropertyInputSourceLanguages),
+          let lang = (Unmanaged<CFArray>.fromOpaque(l).takeUnretainedValue() as? [String])?.first else { return nil }
+    return lang
+  }
+
+  /// keyLayout's im: the language of the input method typed with (Japanese, Pinyin, Korean…), whose
+  /// keys type a–z that it composes; nil on a layout or a mode typing as English (Kotoeri's Roman).
+  static func currentIM() -> String? {
+    guard let lang = imLanguage(TISCopyCurrentKeyboardInputSource().takeRetainedValue()), lang != "en" else { return nil }
+    return lang
+  }
+
+  private static var before: String? // what was in use before select(), for restore()
+
+  /// An enabled input method of that language, for keys from a computer typing with one
+  /// (shared/keylayout.js); false when none is enabled here.
+  static func select(language: String) -> Bool {
+    let props = [
+      kTISPropertyInputSourceCategory as String: kTISCategoryKeyboardInputSource as String,
+      kTISPropertyInputSourceIsSelectCapable as String: true,
+    ] as CFDictionary
+    let cur = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+    if imLanguage(cur) == language { return true }
+    guard let list = TISCreateInputSourceList(props, false)?.takeRetainedValue() as? [TISInputSource],
+          // the plainest mode of it (Hiragana, not Katakana or half-width)
+          let to = list.filter({ imLanguage($0) == language }).min(by: { id($0).count < id($1).count }) else { return false }
+    if before == nil { before = id(cur) }
+    TISSelectInputSource(to)
+    log("input source: \(id(to)) for \(language)")
+    return true
+  }
+
+  /// Back to what was in use before select().
+  static func restore() {
+    guard let was = before else { return }
+    before = nil
+    let props = [kTISPropertyInputSourceID as String: was] as CFDictionary
+    if let s = (TISCreateInputSourceList(props, false)?.takeRetainedValue() as? [TISInputSource])?.first {
+      TISSelectInputSource(s)
+      log("input source: \(was) again")
+    }
+  }
 }
 
 enum KeyLayout {
@@ -257,9 +318,11 @@ enum KeyLayout {
 
   /// What each of those keys types alone in the current keyboard layout, lower case: ["KeyY": "z", …]
   /// on a German Mac. Main uses it to send shortcuts by letter (shared/keylayout.js). With an input
-  /// method (Japanese, Chinese…) its ASCII layout; dead keys give their character.
+  /// method (Japanese, Chinese…) its ASCII layout; dead keys give their character. shift: what each
+  /// types with Shift instead, as it is (Sinhala's ඛ on the ක key: no case to guess it from). A key
+  /// may type several characters (a ligature).
   /// sourceID: another installed layout instead (com.apple.keylayout.German), for tests.
-  static func current(sourceID: String? = nil) -> [String: String] {
+  static func current(sourceID: String? = nil, shift: Bool = false) -> [String: String] {
     var picked: TISInputSource?
     if let sourceID {
       let props = [kTISPropertyInputSourceID as String: sourceID] as CFDictionary
@@ -277,10 +340,13 @@ enum KeyLayout {
         guard let vk = KeyCodes.vk(code) else { continue }
         var dead: UInt32 = 0
         var len = 0
-        var chars = [UniChar](repeating: 0, count: 4)
-        let st = UCKeyTranslate(layout, vk, UInt16(kUCKeyActionDisplay), 0, UInt32(LMGetKbdType()),
+        var chars = [UniChar](repeating: 0, count: 16)
+        let mods = shift ? UInt32(shiftKey >> 8) & 0xFF : 0
+        let st = UCKeyTranslate(layout, vk, UInt16(kUCKeyActionDisplay), mods, UInt32(LMGetKbdType()),
                                 OptionBits(kUCKeyTranslateNoDeadKeysBit), &dead, chars.count, &len, &chars)
-        if st == noErr && len > 0 { out[code] = String(utf16CodeUnits: chars, count: len).lowercased() }
+        guard st == noErr && len > 0 else { continue }
+        let s = String(utf16CodeUnits: chars, count: len)
+        out[code] = shift ? s : s.lowercased()
       }
     }
     return out

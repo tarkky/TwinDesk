@@ -1,6 +1,6 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
 // Input inside Monitor 2 (in.* -> mac-helper `input`, keys swapped Ctrl<->Cmd when
-// `swapKeys()`). The clipboard lives in clipboard.js.
+// `swapKeys()`; a phone's stylus with its `pen`). The clipboard lives in clipboard.js.
 //
 // Stream input is applied only while `enabled()` is true (KVM home; switch it off).
 // Everything we hold is released when the PC goes away, when Monitor 2 loses focus (Windows
@@ -49,6 +49,8 @@ class Input {
         if (typeof msg.code !== 'string' || msg.code.length > 32) return;
         ev = { t: msg.t, code: this.swapKeys() ? P.mapKeyFromOtherPlatform(msg.code) : msg.code };
     }
+    const pen = msg.t === P.T.IN_MOVE || msg.t === P.T.IN_DOWN || msg.t === P.T.IN_UP ? P.penOf(msg.pen) : null;
+    if (pen) ev.pen = pen; // a phone's stylus: a tablet pen (Inject.swift)
     if (msg.t !== P.T.IN_MOVE && msg.t !== P.T.IN_WHEEL) this.dirty = true;
     this.helper.send('input', { ev, bounds: target.bounds });
   }

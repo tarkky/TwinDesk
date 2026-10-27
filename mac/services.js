@@ -56,6 +56,7 @@ function startServices({ server, getSettings, pushState, onHelperReady }) {
   const notifs = new Notifs({ server, helper, getSettings: s, saveSettings: () => store.saveSettings(s()) });
   const fileClip = new FileClip({ server, helper, fileSend, drop, getSettings: s });
   kvm.fileClip = fileClip;
+  fileClip.kvm = kvm; // the shortcut while the pointer is over there (keyboard not shared)
   const appSend = new AppSend({ server, helper, getSettings: s }); // This Mac's apps on another Mac
   const wake = new Wake({ server, getSettings: s, saveSettings: () => store.saveSettings(s()) });
   kvm.blockEdge = () => pcView.focused || pcApps.focused; // moving inside the PC window never crosses to the PC

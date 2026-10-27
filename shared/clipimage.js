@@ -148,6 +148,24 @@ function sigOf(img) {
   return `${width}x${height}:${crypto.createHash('sha1').update(q).digest('hex').slice(0, 16)}`;
 }
 
+// The clipboard's picture as a NativeImage (empty when it holds none), and a PNG put on it. Electron
+// 44 (the Mac) has no readImage/writeImage: there it's read() and write() with a ClipboardItem.
+async function readClipImage(clipboard, nativeImage) {
+  if (typeof clipboard.readImage === 'function') return clipboard.readImage();
+  for (const item of await clipboard.read()) {
+    if (!item.types.includes('image/png')) continue;
+    const blob = await item.getType('image/png');
+    return nativeImage.createFromBuffer(Buffer.from(await blob.arrayBuffer()));
+  }
+  return nativeImage.createEmpty();
+}
+
+async function writeClipImage(clipboard, img, png) {
+  if (typeof clipboard.writeImage === 'function') return clipboard.writeImage(img);
+  const { ClipboardItem } = require('electron');
+  await clipboard.write([new ClipboardItem({ 'image/png': new Blob([png], { type: 'image/png' }) })]);
+}
+
 // The picture half of a computer's one-to-one clipboard (windows/clip.js, linux/clip.js,
 // mac/clipboard.js keep the text): Clipboard › Pictures (settings.clipboard.images) both ways,
 // only with a peer whose clip.policy says images, never through Bluetooth. Text wins: a copy
@@ -202,18 +220,22 @@ class ClipImages {
   }
 
   header(m) {
-    this._got(this.in.header(m));
+    this._got(this.in.header(m)).catch((e) => console.error('[clip] picture not copied:', e.message));
   }
 
   part(m) {
-    this._got(this.in.part(m));
+    this._got(this.in.part(m)).catch((e) => console.error('[clip] picture not copied:', e.message));
+  }
+
+  _read() {
+    return readClipImage(this.clipboard, this.nativeImage);
   }
 
   // The clipboard holds no text: its picture, if there is one and it's new, goes over. Returns
   // what happened: '' (nothing to do), 'sent', or why not (for the tab's note).
   async offerClipboard(concealed) {
     if (!this.canSend) return '';
-    const img = this.clipboard.readImage();
+    const img = await this._read();
     if (img.isEmpty()) return '';
     const sig = sigOf(img);
     if (sig === this.sig.sent || sig === this.sig.received) return '';
@@ -232,14 +254,16 @@ class ClipImages {
     return 'sent';
   }
 
-  _got(pic) {
+  async _got(pic) {
     if (!pic || !this.accept) return;
     const img = this.nativeImage.createFromBuffer(pic.png);
     if (img.isEmpty()) return;
     this.out.cancel(); // theirs is newer than a picture of ours still going
-    this.clipboard.writeImage(img);
+    // Before the clipboard changes: the watcher's read of it must already know it came in.
+    this.sig.received = sigOf(img);
+    await writeClipImage(this.clipboard, img, pic.png);
     // As the clipboard holds it now (it may re-encode it): never sent back.
-    this.sig.received = sigOf(this.clipboard.readImage()) || sigOf(img);
+    this.sig.received = sigOf(await this._read()) || sigOf(img);
     this.o.remember('in', this._item({ png: pic.png, w: pic.w || img.getSize().width, h: pic.h || img.getSize().height }, img, pic.shot));
     this.o.popup('driven', `${pic.shot ? 'Screenshot' : 'Picture'} from ${this.o.peerName()} copied: paste it with ${this.o.pasteKeys || 'Ctrl+V'}`);
     this.o.onChange();
@@ -253,13 +277,14 @@ class ClipImages {
   }
 
   // A Recent picture back on the clipboard. dir 'out': it goes over again by the normal rules.
-  copy(item, dir) {
+  async copy(item, dir) {
     if (!item || !item.png) return;
     const img = this.nativeImage.createFromBuffer(item.png);
     if (img.isEmpty()) return;
-    this.clipboard.writeImage(img);
+    if (dir !== 'out') this.sig.received = sigOf(img);
+    await writeClipImage(this.clipboard, img, item.png);
     if (dir === 'out') this.sig.sent = '';
-    else this.sig.received = sigOf(this.clipboard.readImage()) || sigOf(img);
+    else this.sig.received = sigOf(await this._read()) || sigOf(img);
   }
 }
 

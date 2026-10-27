@@ -80,7 +80,8 @@ class Session extends EventEmitter {
     if (opts.video && opts.maxFps) args.push(`max_fps=${opts.maxFps}`);
     if (opts.video && opts.videoBitRate) args.push(`video_bit_rate=${opts.videoBitRate | 0}`);
     if (opts.audio && opts.audioSource && opts.audioSource !== 'output') args.push(`audio_source=${opts.audioSource}`);
-    if (opts.newDisplay != null) args.push(`new_display=${opts.newDisplay}`);
+    // An app's own display: no Android taskbar or status bar on it, only the app (the window has Back).
+    if (opts.newDisplay != null) args.push(`new_display=${opts.newDisplay}`, 'vd_system_decorations=false');
     if (opts.flex) args.push('flex_display=true');
     if (opts.displayId != null) args.push(`display_id=${opts.displayId | 0}`);
     if (opts.powerOn === false) args.push('power_on=false');

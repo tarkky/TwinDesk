@@ -425,7 +425,7 @@
   }
   const els = (list) => list.map((c) => c.el);
   function layout(mode) {
-    mode = ['side', 'top', 'bottom'].includes(mode) ? mode : 'side';
+    mode = ['side', 'top', 'bottom'].includes(mode) ? mode : 'top';
     document.body.dataset.controls = mode;
     const panel = document.getElementById('panel');
     const navbar = document.getElementById('navbar');

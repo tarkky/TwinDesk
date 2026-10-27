@@ -53,7 +53,7 @@ function normalize(s) {
   const hub = s.hub || {};
   const nt = s.net || {};
   return {
-    rev: 8, // settings revision (upgrades in normalize, like the Mac's store.js)
+    rev: 10, // settings revision (upgrades in normalize, like the Mac's store.js)
     kvm: {
       mouse: bool(kvm.mouse, was),
       keyboard: bool(kvm.keyboard, was),
@@ -106,7 +106,8 @@ function normalize(s) {
     // picture turned clockwise (0, 90, 180, 270)
     // on: the Camera tab's switch (camshare.js and vcam.js loaded only while it's on)
     camera: {
-      on: bool((s.camera || {}).on, was),
+      // Off until turned on, even for settings from before it had a switch; rev 9: off once unless shared
+      on: (s.rev || 0) < 9 && !bool((s.camera || {}).share, false) ? false : bool((s.camera || {}).on, false),
       share: bool((s.camera || {}).share, false),
       virtual: bool((s.camera || {}).virtual, false),
       rotate: [0, 90, 180, 270].includes((s.camera || {}).rotate) ? s.camera.rotate : 0,
@@ -167,9 +168,9 @@ function normalize(s) {
       wallpaper: bool(ph.wallpaper, true),
       input: ph.input === 'phone' ? 'phone' : 'adb', // the mouse and keyboard through adb, or the phone's Accessibility service
       inputPicked: bool(ph.inputPicked, false), // not picked: automatic (phone-bridge.js inputMode)
-      // Where a phone window's controls sit (phoneview.js): 'side' (a panel down the right), 'top'
-      // (the title bar), 'bottom' (Back, Home and Recents under the picture).
-      controls: ['side', 'top', 'bottom'].includes(ph.controls) ? ph.controls : 'side',
+      // Where a phone window's controls sit (phoneview.js): 'top' (the title bar, the default), 'side'
+      // (a panel down the right), 'bottom' (Back, Home and Recents under the picture). rev 10: the title bar once.
+      controls: (s.rev || 0) >= 10 && ['side', 'top', 'bottom'].includes(ph.controls) ? ph.controls : 'top',
       // Keys in a phone window and on the phone (shared/phonechat.js): Enter sends in WhatsApp,
       // Instagram and Telegram (Shift+Enter a new line); the arrow keys swipe the screen.
       enterSends: bool(ph.enterSends, true),

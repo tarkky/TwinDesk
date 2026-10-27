@@ -205,7 +205,7 @@ class Clip {
     const h = this.history[index];
     if (!h) return;
     if (h.image) {
-      this.images.copy(h, h.dir);
+      this.images.copy(h, h.dir).catch((e) => console.error('[clip] picture not copied:', e.message));
       this.seen = '';
       return;
     }

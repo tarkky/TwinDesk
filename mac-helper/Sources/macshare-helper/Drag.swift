@@ -7,6 +7,8 @@
 // files: event `dragWrite {drag, index, path}` → cmd `dragWritten {drag, index, error?}`.
 // `dragCancel` ends the session over a panel that refuses everything (Esc would go to the
 // frontmost app instead). Events: dragStarted {drag}, dragEnded {drag, result: 'dropped'|'none'|'failed'}.
+// `dragLocal {drag, paths}`: the same with this Mac's own files (a drag of ours that went to the PC
+// comes back home with the button still held), as file URLs: Finder moves or copies them as usual.
 import Cocoa
 import UniformTypeIdentifiers
 
@@ -33,6 +35,7 @@ final class DragIn: NSObject, NSDraggingSource, NSFilePromiseProviderDelegate {
   private var phase = Phase.idle
   private var drag = ""
   private var items: [(name: String, dir: Bool)] = []
+  private var local: [URL] = []           // dragLocal: our own files instead of promises
   private var panel: NSPanel?
   private var catcher: NSPanel?
   private var upPending = false          // the PC let go before the session started
@@ -46,10 +49,22 @@ final class DragIn: NSObject, NSDraggingSource, NSFilePromiseProviderDelegate {
   var active: Bool { phase != .idle }
 
   func start(drag: String, items: [[String: Any]]) {
+    local = []
+    arm(drag: drag, items: items.map { (($0["name"] as? String) ?? "file", ($0["dir"] as? Bool) ?? false) })
+  }
+
+  func startLocal(drag: String, paths: [String]) {
+    let urls = paths.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
+    guard !urls.isEmpty else { return emit(["event": "dragEnded", "drag": drag, "result": "failed"]) }
+    local = urls
+    arm(drag: drag, items: urls.map { u in (u.lastPathComponent, (try? u.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true) })
+  }
+
+  private func arm(drag: String, items: [(name: String, dir: Bool)]) {
     if phase != .idle { cancel() }
     if NSApp.activationPolicy() == .prohibited { NSApp.setActivationPolicy(.accessory) } // may own windows
     self.drag = drag
-    self.items = items.map { (($0["name"] as? String) ?? "file", ($0["dir"] as? Bool) ?? false) }
+    self.items = items
     upPending = false
     phase = .arming
     showPanel(size: 240)
@@ -76,9 +91,14 @@ final class DragIn: NSObject, NSDraggingSource, NSFilePromiseProviderDelegate {
     let at = view.convert(event.locationInWindow, from: nil)
     let dragging: [NSDraggingItem] = items.enumerated().map { i, it in
       let type: UTType = it.dir ? .folder : (UTType(filenameExtension: (it.name as NSString).pathExtension) ?? .data)
-      let provider = NSFilePromiseProvider(fileType: type.identifier, delegate: self)
-      provider.userInfo = ["drag": drag, "index": i]
-      let d = NSDraggingItem(pasteboardWriter: provider)
+      let d: NSDraggingItem
+      if i < local.count {
+        d = NSDraggingItem(pasteboardWriter: local[i] as NSURL)
+      } else {
+        let provider = NSFilePromiseProvider(fileType: type.identifier, delegate: self)
+        provider.userInfo = ["drag": drag, "index": i]
+        d = NSDraggingItem(pasteboardWriter: provider)
+      }
       let img = DragIn.image(name: it.name, type: type)
       let o = CGFloat(min(i, 4)) * 3
       d.setDraggingFrame(NSRect(x: at.x - img.size.width / 2 + o, y: at.y - 32 - o, width: img.size.width, height: img.size.height), contents: img)
@@ -210,7 +230,7 @@ final class DragIn: NSObject, NSDraggingSource, NSFilePromiseProviderDelegate {
   // ---- NSDraggingSource ----
 
   func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-    context == .outsideApplication ? .copy : []
+    context != .outsideApplication ? [] : local.isEmpty ? .copy : [.copy, .move, .link, .generic] // ours: as Finder's own drag
   }
 
   func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {

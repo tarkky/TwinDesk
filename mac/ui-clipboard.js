@@ -31,6 +31,8 @@ UI.tab({
     // Pictures (clipimage.js): screenshots put on the clipboard among them. Not in Multi-device yet.
     const pictures = UI.switch((v) => set({ images: v }), { label: 'Pictures' });
     const picturesRow = UI.row('Pictures', '', [pictures]);
+    // Text only: pictures have their own limit (10 MB).
+    const maxKBRow = UI.row('Largest text', '', [maxKB]);
     const historySize = UI.select([
       { value: 0, label: 'Off' }, { value: 10, label: '10 items' }, { value: 20, label: '20 items' },
       { value: 50, label: '50 items' }, { value: 100, label: '100 items' },
@@ -54,7 +56,7 @@ UI.tab({
         modeRow,
         picturesRow,
         UI.row('Skip passwords', 'From password managers', [concealed]),
-        UI.row('Largest item', '', [maxKB]),
+        maxKBRow,
         UI.row('Recent items', 'Never saved to disk', [historySize]),
       ]),
       skipNote,
@@ -71,11 +73,13 @@ UI.tab({
       modeRow.setHint(c.mode === 'instant' ? 'As soon as you copy' : 'When you move to the other computer');
       picturesRow.hidden = !c.imageSupport;
       pictures.set(!!c.images);
-      picturesRow.setHint(!c.images ? 'Pictures and screenshots you copy, up to 10 MB, both ways'
+      // ⇧⌘4 saves a screenshot to a file; with ⌃ it goes on the clipboard, and over.
+      picturesRow.setHint(!c.images ? 'Pictures you copy and screenshots taken with ⌃⇧⌘4, up to 10 MB, both ways'
         : s.client && !c.peerImages ? `Turn on Pictures on ${s.client.name} too (TwinDesk 2.3 or later there)`
-          : 'Pictures and screenshots you copy, up to 10 MB, both ways. Not over Bluetooth');
+          : 'Pictures you copy and screenshots taken with ⌃⇧⌘4, up to 10 MB, both ways. Not over Bluetooth');
       concealed.set(c.skipConcealed);
       maxKB.set(c.maxKB);
+      maxKBRow.setHint(c.imageSupport ? 'Longer text isn’t sent. Pictures: up to 10 MB' : 'Longer text isn’t sent');
       historySize.set(c.historySize);
       peerNote.set(s.client && !c.peerAccepts ? `Turned off on ${s.client.name}.` : '');
       skipNote.set(c.enabled && c.lastSkip ? `Last copy not sent: ${c.lastSkip}.` : '');

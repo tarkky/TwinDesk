@@ -29,6 +29,8 @@ UI.tab({
     // Pictures (clipimage.js): screenshots put on the clipboard among them. Not in Multi-device yet.
     const pictures = UI.switch((v) => set({ images: v }), { label: 'Pictures' });
     const picturesRow = UI.row('Pictures', '', [pictures]);
+    // Text only: pictures have their own limit (10 MB).
+    const maxKBRow = UI.row('Largest text', '', [maxKB]);
     const historySize = UI.select([
       { value: 0, label: 'Off' }, { value: 10, label: '10 items' }, { value: 20, label: '20 items' },
       { value: 50, label: '50 items' }, { value: 100, label: '100 items' },
@@ -46,7 +48,7 @@ UI.tab({
       UI.card('', [modeRow, picturesRow]),
       UI.card('Privacy', [
         UI.row('Skip passwords', 'From password managers', [concealed]),
-        UI.row('Largest item', '', [maxKB]),
+        maxKBRow,
         UI.row('Recent items', 'Never saved to disk', [historySize]),
       ]),
       skipNote,
@@ -66,6 +68,7 @@ UI.tab({
           : 'Pictures and screenshots you copy, up to 10 MB, both ways. Not over Bluetooth');
       concealed.set(c.skipConcealed);
       maxKB.set(c.maxKB);
+      maxKBRow.setHint(c.imageSupport ? 'Longer text isn’t sent. Pictures: up to 10 MB' : 'Longer text isn’t sent');
       historySize.set(c.historySize);
       const refused = s.link.state === 'connected' && !c.peerAccepts;
       peerRow.hidden = !refused;

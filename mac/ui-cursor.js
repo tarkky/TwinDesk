@@ -42,6 +42,7 @@ UI.tab({
       return r;
     };
     let driven2 = null;
+    let speedRow = null;
     body.append(
       status,
       UI.pair(
@@ -52,7 +53,7 @@ UI.tab({
       UI.card('Where the other computer is', [map.el]),
       UI.card('Feel', [
         UI.row('Edge resistance', 'Push a little further to cross', [resistance]),
-        peerRow('Pointer speed on {name}', '', [speed]),
+        speedRow = peerRow('Pointer speed here', '', [speed]),
         peerRow('Reverse scrolling from {name}', '', [reverse]),
         gestureRow,
       ]),
@@ -74,6 +75,9 @@ UI.tab({
       driven.set(k.beDriven);
       resistance.set(k.resistancePx);
       speed.set(k.speed);
+      // A computer's mouse here is sped up by it; with a phone, it's this Mac's pointer there (phone-bridge.js).
+      speedRow.label.dataset.peer = UI.isPhone(s) ? 'Pointer speed on {name}' : 'Pointer speed here';
+      speedRow.label.textContent = UI.fill(speedRow.label.dataset.peer);
       reverse.set(k.reverseScroll);
       gestures.set(k.gestures !== false);
       ble.set(k.ble !== false);

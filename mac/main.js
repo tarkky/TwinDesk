@@ -57,6 +57,7 @@ if (!app.requestSingleInstanceLock()) {
 
 const P = require('../shared/protocol.js');
 const CL = require('../shared/cursorlock.js');
+const trayMenu = require('../shared/traymenu.js');
 const store = require('./store');
 const identity = require('./identity');
 const { Discovery, interfaces } = require('./discovery');
@@ -224,6 +225,7 @@ function pushState() {
       lockKey.sync(kvm.server.current ? settings.keys.lockKeys : '');
       state.input.lockError = lockKey.error;
     }
+    if (kvm && svc) svc.fileClip.syncConnected(!!kvm.server.current); // the file shortcuts too
     if (svc) state.terminal = { ...settings.terminal, ...svc.terminal.view, toPc: svc.sshClient.view };
     if (svc) state.files = { ...settings.files, ...svc.drop.view, ...svc.fileSend.view, clip: svc.fileClip.view };
     if (svc) state.notifs = { ...settings.notifs, ...svc.notifs.view };
@@ -406,8 +408,8 @@ function showUpdateWindow() {
   }
 }
 
-// Menu bar: the app mark as a template icon; the switches people reach for most, one click away.
-// Set again only when what it shows changes: a menu replaced while it's open closes (or its click
+// Menu bar: the app mark as a template icon; its menu by kind (shared/traymenu.js), only connecting
+// while nothing is connected. Set again only when what it shows changes: a menu replaced while it's open closes (or its click
 // goes nowhere), and the state is pushed every second (the ping time isn't in it for that reason).
 let trayKey = '';
 function updateTray() {
@@ -423,49 +425,41 @@ function updateTray() {
   const g = (svc && link && link.view()) || { status: {}, hosts: [] };
   const again = !c && g.hosts.length && (g.status.state === 'stopped' || !!g.status.busy);
   const key = JSON.stringify([c && c.name, c && c.transport, phone, again, where, k.linked, k.ble, svc && svc.kvm.locked, settings.keys.lockKeys, k.driveOther, k.beDriven, settings.sharing.on,
-    !!(svc && svc.pcView.isOpen), phoneView, settings.clipboard.enabled, settings.audio.send, settings.app.hud,
+    !!(svc && svc.pcView.isOpen), phoneView, settings.clipboard.enabled, settings.audio.send, settings.app.hud, k.keyboard, settings.files.dragEdge, settings.files.shortcuts, settings.files.copyKeys,
     found.map((d) => [d.id, d.name, d.os]), updates && updates.status.available && updates.status.latest]);
   if (key === trayKey) return;
   trayKey = key;
   tray.setToolTip(c ? `TwinDesk: ${c.name}` : 'TwinDesk');
-  const check = (label, checked, click, enabled = true) => ({ label, type: 'checkbox', checked: !!checked, enabled, click });
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: c ? `Connected to ${c.name}${c.transport === 'ble' ? ' · Bluetooth' : ''}` : 'Not connected', enabled: false },
-      ...(where === 'driving' || where === 'driven'
-        ? [{ label: 'Bring Mouse and Keyboard Back', click: () => svc.kvm.home() }] : []),
-      check('Cursor Sharing', k.linked !== false && !(svc && svc.kvm.paused), (i) => actions.setKvm({ shared: i.checked })),
-      ...(c ? [check(`Lock Cursor on ${where === 'driving' ? name : id.macName} (${CL.keysLabel(settings.keys.lockKeys, 'mac')})`, svc && svc.kvm.locked, (i) => svc.kvm.setLocked(i.checked))] : []),
-      { type: 'separator' },
-      check('Share Screen', settings.sharing.on, (i) => actions.setSharing(i.checked)),
+  tray.setContextMenu(Menu.buildFromTemplate(trayMenu.template({
+    connected: !!c,
+    status: c ? `Connected to ${c.name}${c.transport === 'ble' ? ' · Bluetooth' : ''}` : 'Not connected',
+    home: where === 'driving' || where === 'driven' ? () => svc.kvm.home() : null,
+    shared: { checked: k.linked !== false && !(svc && svc.kvm.paused), set: (on) => actions.setKvm({ shared: on }) },
+    lock: c ? { label: `Lock Cursor on ${where === 'driving' ? name : id.macName} (${CL.keysLabel(settings.keys.lockKeys, 'mac')})`, checked: svc && svc.kvm.locked, set: (on) => svc.kvm.setLocked(on) } : null,
+    keyboard: { checked: k.keyboard, set: (on) => actions.setKvm({ keyboard: on }) },
+    drive: { label: `Use Mouse and Keyboard on ${name}`, checked: k.driveOther, set: (on) => actions.setKvm({ driveOther: on }) },
+    driven: phone ? null : { label: `Let ${name} Control ${id.macName}`, checked: k.beDriven, set: (on) => actions.setKvm({ beDriven: on }) },
+    popup: { checked: settings.app.hud !== false, set: (on) => actions.setApp({ hud: on }) },
+    screen: [
+      { label: 'Share Screen', checked: settings.sharing.on, set: (on) => actions.setSharing(on) },
       phone
-        ? check('Show Phone Screen', phoneView, (i) => actions.phoneScreen(i.checked))
-        : check('Receive Screen', svc && svc.pcView.isOpen, (i) => (i.checked ? actions.showPcView() : actions.closePcView())),
-      check(`Use Mouse and Keyboard on ${name}`, k.driveOther, (i) => actions.setKvm({ driveOther: i.checked })),
-      ...(phone ? [] : [check(`Let ${name} Control ${id.macName}`, k.beDriven, (i) => actions.setKvm({ beDriven: i.checked }))]),
-      check('Share Clipboard', settings.clipboard.enabled, (i) => actions.setClipboard({ enabled: i.checked })),
-      check('Send Sound', settings.audio.send, (i) => actions.setAudio({ send: i.checked })),
-      { type: 'separator' },
-      {
-        label: 'Connect To',
-        submenu: [
-          ...(found.length ? found.map((d) => ({ label: `${d.name} (${OS[d.os] || 'PC'})`, click: () => actions.pairWith(d.id) }))
-            : [{ label: 'Nobody nearby', enabled: false }]),
-          { type: 'separator' },
-          { label: 'Connect by Address…', click: () => { actions.setTab('overview'); showWindow(); } },
-          { label: 'Look Again', click: () => actions.refreshDiscovery() },
-        ],
-      },
-      ...(c ? [{ label: phone ? 'Disconnect Phone' : `Disconnect ${name}`, click: () => actions.disconnect() }] : []),
-      ...(again ? [{ label: `${g.status.busy ? 'Take Over' : 'Connect to'} ${g.hosts[0].name}`, click: () => actions.connectAgain() }] : []),
-      check('Show a Popup When Switching', settings.app.hud !== false, (i) => actions.setApp({ hud: i.checked })),
-      { type: 'separator' },
-      ...(updates && updates.status.available ? [{ label: `TwinDesk ${updates.status.latest} available…`, click: showUpdateWindow }] : []),
-      { label: 'Open TwinDesk…', click: showWindow },
-      { label: 'Open Log Folder', click: () => require('../shared/applog.js').open() },
-      { label: 'Quit TwinDesk', click: () => app.quit() },
-    ]),
-  );
+        ? { label: 'Show Phone Screen', checked: phoneView, set: (on) => actions.phoneScreen(on) }
+        : { label: 'Receive Screen', checked: svc && svc.pcView.isOpen, set: (on) => (on ? actions.showPcView() : actions.closePcView()) },
+    ],
+    clipboard: { checked: settings.clipboard.enabled, set: (on) => actions.setClipboard({ enabled: on }) },
+    sound: { checked: settings.audio.send, set: (on) => actions.setAudio({ send: on }) },
+    drag: { checked: settings.files.dragEdge !== false, set: (on) => actions.setFiles({ dragEdge: on }) },
+    shortcuts: { label: `Copy and Paste Files (${CL.keysLabel(settings.files.copyKeys, 'mac')}, ${CL.keysLabel(settings.files.pasteKeys, 'mac')})`, checked: settings.files.shortcuts !== false, set: (on) => actions.setFiles({ shortcuts: on }) },
+    found: found.map((d) => ({ label: `${d.name} (${OS[d.os] || 'PC'})`, click: () => actions.pairWith(d.id) })),
+    byAddress: () => { actions.setTab('overview'); showWindow(); },
+    lookAgain: () => actions.refreshDiscovery(),
+    again: again ? { label: `${g.status.busy ? 'Take Over' : 'Connect to'} ${g.hosts[0].name}`, click: () => actions.connectAgain() } : null,
+    disconnect: c ? { label: phone ? 'Disconnect Phone' : `Disconnect ${name}`, click: () => actions.disconnect() } : null,
+    update: updates && updates.status.available ? { label: `TwinDesk ${updates.status.latest} available…`, click: showUpdateWindow } : null,
+    open: showWindow,
+    log: () => require('../shared/applog.js').open(),
+    quit: () => app.quit(),
+  })));
 }
 
 app.whenReady().then(() => {
@@ -523,6 +517,7 @@ app.whenReady().then(() => {
   peer.on('client', (ctx) => {
     console.log(`[peer] session with ${ctx.name} (${ctx.os}, ${ctx.role === 'host' ? 'we are its guest' : 'it is our guest'})`);
     peer.send(ctx, { t: P.T.STREAM_INPUT, on: settings.streamInput !== false });
+    screenStateKey = ''; // a new connection (one replacing the same device's too) hears screen.state: its Extend/Mirror
     pushState();
   });
   peer.on('closed', pushState);

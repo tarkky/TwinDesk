@@ -33,19 +33,30 @@ namespace MacShare
         // capture state
         bool capturing, capMouse, capKeys;
         Point saved, parked;
+        // When the pointer was parked (Begin). A capture begun outside the mouse hook (a file drag
+        // crossing, DropEdge.cs) can still get moves measured from where the pointer was: half a
+        // screen at once, which put the drag past the middle of the other screen. Dropped.
+        DateTime parkedAt;
+        const int StaleMs = 200, StalePx = 150;
+        public bool HoldReturn; // DropEdge.cs is catching a file drag on the way back: it goes home with it
         readonly HashSet<uint> heldVks = new HashSet<uint>(), swallowVks = new HashSet<uint>();
         readonly HashSet<int> heldButtons = new HashSet<int>(), swallowButtons = new HashSet<int>();
         DateTime lastCmd = DateTime.UtcNow;
 
         // edge push (home) and return edge (driven)
 #if !MULTI
-        double push; DateTime lastPush;
-        bool retArmed; string retSide; double retResistance, retPush; DateTime retLast;
+        double push; DateTime lastPush, pushSince;
+        bool retArmed; string retSide; double retResistance, retPush; DateTime retLast, retSince;
 #endif
         // No new crossing within CooldownMs of the last one, either way (kvmConfig cooldownMs,
         // KVM_CROSS_COOLDOWN_MS). After arriving, the edge it came through only counts once the pointer
         // moved 8 px inward or GuardMs passed, so the end of a flick doesn't bounce straight back.
         public int CooldownMs = 250;
+        // A push crosses once it went the resistance outward and lasted DwellMs (kvmConfig dwellMs,
+        // KVM_EDGE_DWELL_MS; none with no resistance): the end of a quick flick that reaches the edge
+        // is over by then, a push meant to cross goes on.
+        public int DwellMs = 150;
+        bool Dwelt(double resistance, DateTime since, DateTime now) { return resistance <= 0 || (now - since).TotalMilliseconds >= DwellMs; }
         // Where along the side the other computer's monitors touch ours (shared/kvm-geom.js zones, 0–1
         // of the bounding box, as Offset): the edge and the way back only cross inside them. null: anywhere.
         public List<double[]> EdgeZones, ReturnZones;
@@ -206,6 +217,7 @@ namespace MacShare
                 HideCursor.Hide();
                 // Park in the middle so outward motion isn't clamped by the screen edge.
                 parked = Screens.Center();
+                parkedAt = DateTime.UtcNow;
                 parkPad.Cover(parked);
                 Native.SetCursorPos(parked.X, parked.Y);
             }
@@ -236,6 +248,33 @@ namespace MacShare
 #endif
 
         public bool Capturing { get { return capturing; } }
+        public DateTime LastCross { get { return lastCross; } } // the last crossing, either way
+
+        // A button pressed while capturing has its release swallowed at home (Stop). A drag that came
+        // home with it (dragStart home, dragLocal) is dropped by that release: let it through.
+        public void Unswallow(int button) { swallowButtons.Remove(button); }
+
+        // A file drag caught on the way back (DropEdge.cs, while driven): the input goes home with its
+        // files, `return {offset, drag:{paths}}`.
+        public void ReturnWithDrag(Point p, string side, string[] paths)
+        {
+            HoldReturn = false;
+            retArmed = false;
+#if MULTI
+            retPushes.Clear();
+#endif
+            lastCross = DateTime.UtcNow;
+            if (Flash != null) Flash.Play(p, side, true);
+            Dictionary<string, object> d = Ev("return");
+            d["offset"] = Math.Round(Screens.Offset(p.X, p.Y, side), 4);
+#if MULTI
+            d["side"] = side;
+#endif
+            Dictionary<string, object> drag = new Dictionary<string, object>();
+            drag["paths"] = paths;
+            d["drag"] = drag;
+            emit(d);
+        }
 
         // The pointer came to this PC (back home, or placed by the driver) through `side`, or by the
         // hotkey (null): starts the cooldown and the arrival guard, and clears every push.
@@ -334,6 +373,8 @@ namespace MacShare
             if (msg == Native.WM_MOUSEMOVE)
             {
                 int dx = m.pt.x - parked.X, dy = m.pt.y - parked.Y;
+                if ((DateTime.UtcNow - parkedAt).TotalMilliseconds < StaleMs && (Math.Abs(dx) > StalePx || Math.Abs(dy) > StalePx))
+                    return (IntPtr)1; // from before the park
                 if (dx != 0 || dy != 0)
                 {
                     double s = Screens.Scale(parked.X, parked.Y);
@@ -504,8 +545,9 @@ namespace MacShare
             DateTime now = DateTime.UtcNow;
             if ((now - lastPush).TotalMilliseconds > 300) push = 0;
             lastPush = now;
+            if (push == 0) pushSince = now;
             push += outward;
-            if (push < ResistancePx) return;
+            if (push < ResistancePx || !Dwelt(ResistancePx, pushSince, now)) return;
             double offset = Screens.Offset(p.x, p.y, Side);
             Begin(true, EdgeKeyboard); // start capturing at once so no motion leaks, then tell main
             saved = new Point(p.x, p.y);
@@ -517,15 +559,16 @@ namespace MacShare
         // Injected moves report here too (Injector.Moved): the owner's hand reaches the edge.
         public void FeedReturn(int x, int y, double dx, double dy)
         {
-            if (!retArmed) return;
+            if (!retArmed || HoldReturn) return;
             double outward = Screens.Outward(retSide, dx, dy);
             if (!MayCross(retSide, outward)) { retPush = 0; return; }
             if (outward <= 0 || !Screens.OnOuterEdge(x, y, retSide) || !InZone(ReturnZones, x, y, retSide)) { retPush = 0; return; }
             DateTime now = DateTime.UtcNow;
             if ((now - retLast).TotalMilliseconds > 300) retPush = 0;
             retLast = now;
+            if (retPush == 0) retSince = now;
             retPush += outward;
-            if (retPush < retResistance) return;
+            if (retPush < retResistance || !Dwelt(retResistance, retSince, now)) return;
             retArmed = false;
             lastCross = now;
             if (Flash != null) Flash.Play(new Point(x, y), retSide, true); // leaving this PC for the Mac

@@ -10,6 +10,7 @@ const { clipboard } = require('electron');
 const { EventEmitter } = require('events');
 const P = require('../shared/protocol.js');
 const { ClipImages, trimPictures, itemView } = require('../shared/clipimage.js');
+const { keysLabel } = require('../shared/cursorlock.js');
 
 // Electron 44's clipboard.readText() returns a Promise in the main process (older: a string).
 const readText = async () => String((await clipboard.readText()) || '');
@@ -112,6 +113,15 @@ class Clipboard extends EventEmitter {
     if (!c.enabled || !c.send || !this.server.current) return;
     if (!this.peerAccepts) return this._skip(`${this.server.current ? this.server.current.name : 'the other computer'} doesn’t take the clipboard`);
     const text = await readText();
+    // Files copied in Finder: the clipboard also holds their names and icon, which aren't the copy.
+    // Files go with the Files tab's shortcuts (fclip.js).
+    const src = await this.helper.request('fileSource').catch(() => ({}));
+    if (src.files && src.files.length) {
+      this.lastSent = text;
+      const f = this.getSettings().files;
+      return this._skip(f.shortcuts ? `files aren’t sent by ⌘C: copy them with ${keysLabel(f.copyKeys, 'mac')}, paste with ${keysLabel(f.pasteKeys, 'mac')}`
+        : 'files aren’t sent by ⌘C: turn on the shortcuts in Files');
+    }
     if (!text) return this._picture(why);
     if (text === this.lastSent || text === this.lastReceived) return;
     if (c.skipConcealed) {
@@ -162,7 +172,7 @@ class Clipboard extends EventEmitter {
   copyHistory(index) {
     const h = this.history[index];
     if (!h) return;
-    if (h.image) return this.images.copy(h, h.dir);
+    if (h.image) return this.images.copy(h, h.dir).catch((e) => console.error('[clip] picture not copied:', e.message));
     clipboard.writeText(h.text);
     this.lastSent = h.dir === 'out' ? null : this.lastSent;
   }

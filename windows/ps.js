@@ -34,8 +34,13 @@ function exec(args, timeoutMs) {
   return new Promise((resolve, reject) => {
     execFile(PS, args, { windowsHide: true, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env },
       (err, stdout, stderr) => {
-        if (err) reject(new Error(String(stderr || err.message).trim().split('\n')[0]));
-        else resolve(String(stdout));
+        // Node's own message is "Command failed: <the whole command line>", which says nothing:
+        // killed means the timeout ran out (elevated, often a UAC prompt left behind other windows).
+        if (!err) return resolve(String(stdout));
+        const msg = String(stderr || '').trim().split('\n')[0];
+        if (msg) reject(new Error(msg));
+        else if (err.killed) reject(new Error('Timed out' + (args.includes(ELEVATE) ? ' waiting for the administrator prompt (it may be behind other windows)' : '')));
+        else reject(new Error('PowerShell exited with ' + (err.code ?? err.signal)));
       });
   });
 }

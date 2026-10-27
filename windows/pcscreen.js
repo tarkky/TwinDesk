@@ -254,7 +254,8 @@ class PcScreen {
   _input(m) {
     if (!this.sending || m.wid != null) return;
     const r = this.sending.rect;
-    this.input.handle(m, (x, y) => this.helper.send('moveTo', { x: Math.round(r.x + x * (r.width - 1)), y: Math.round(r.y + y * (r.height - 1)) }));
+    const at = (x, y) => ({ x: Math.round(r.x + x * (r.width - 1)), y: Math.round(r.y + y * (r.height - 1)) });
+    this.input.handle(m, (x, y) => this.helper.send('moveTo', at(x, y)), null, (x, y, pen) => this.helper.send('pen', { ...at(x, y), pen }));
   }
 
   applyInput() {

@@ -301,12 +301,39 @@
       }
       return out;
     },
+    // A webcam, its picture flowing across onto the other screen: someone there, live.
+    camera: (id) => {
+      const flow = 'M138 102Q190 62 236 94';
+      let out = '<ellipse class="fa-bg" cx="206" cy="122" rx="174" ry="100"/>'
+        + '<rect class="fa-dev" x="91" y="124" width="12" height="38"/><rect class="fa-dev" x="62" y="158" width="70" height="7" rx="3.5"/>'
+        + `<rect fill="url(#fa-g-${id})" x="56" y="76" width="82" height="54" rx="27"/>`
+        + '<circle class="fa-dev" cx="97" cy="103" r="18"/><circle class="fa-scr" cx="97" cy="103" r="11"/><circle class="fa-c1" cx="92" cy="98" r="3.5"/>'
+        + `<circle class="fa-band thin" cx="97" cy="103" r="18" opacity="0"><animate attributeName="r" dur="2s" ${rep} values="18;34"/>${fade(2, '0.9;0', '0;1')}</circle>`
+        + `<path class="fa-dash" d="${flow}"/>`;
+      for (let i = 0; i < 3; i++) out += `<circle class="fa-c2" r="4"><animateMotion dur="2.1s" ${rep} begin="-${i * 0.7}s" path="${flow}"/></circle>`;
+      out += monitor(222, 40, 150, 100) + '<rect class="fa-sky" x="228" y="46" width="138" height="88" rx="4"/>'
+        + `<g>${spin(3, '-2 297 134;2 297 134;-2 297 134')}${person(297, 134, 1.05, { skin: 'sk2', hair: 'hr2', style: 'long', shirt: 'fa-c2' })}</g>`
+        + `<circle class="fa-paper" cx="354" cy="58" r="4.5">${fade(1.2, '1;0.2;1', '0;0.5;1')}</circle>`;
+      return out;
+    },
+    // The phone as a touchpad: a finger moves on it, the pointer follows on the computer and clicks.
+    remote: (id) => {
+      const t = '0;0.4;0.5;0.85;1';
+      return '<circle class="fa-bg" cx="206" cy="120" r="106"/>'
+        + phone(52, 40, 88, 164) + '<rect class="fa-paper fa-out" x="64" y="56" width="64" height="92" rx="9"/>'
+        + `<rect fill="url(#fa-g-${id})" x="64" y="154" width="31" height="30" rx="7"/><rect fill="url(#fa-g-${id})" x="97" y="154" width="31" height="30" rx="7"/>`
+        + `<circle class="fa-c2" r="9" opacity="0.85">${along(4.5, '78,134;114,80;114,80;88,116;78,134', t)}</circle>`
+        + [0, 1, 2].map((i) => `<path class="fa-band" d="M${150 + i * 9} ${84 - i * 8}a${16 + i * 11} ${16 + i * 11} 0 0 1 ${8 + i * 5} ${22 + i * 13}" opacity="0"><animate attributeName="opacity" dur="1.8s" ${rep} begin="${i * 0.3}s" values="0;1;0" keyTimes="0;0.4;1"/></path>`).join('')
+        + monitor(196, 44, 176, 112) + win(276, 58, 82, 58) + '<rect class="fa-c1" x="288" y="80" width="58" height="24" rx="5"/>'
+        + `<circle class="fa-c2" cx="318" cy="92" r="0" opacity="0.8"><animate attributeName="r" dur="4.5s" ${rep} values="0;0;14;14" keyTimes="0;0.4;0.5;1"/>${fade(4.5, '0;0;0.8;0;0', '0;0.4;0.41;0.5;1')}</circle>`
+        + `<g>${along(4.5, '214,132;318,92;318,92;238,118;214,132', t)}<path class="fa-ptr" d="${POINTER}"/></g>`;
+    },
   };
   // Tab ids -> scene: the Mac's screen tabs and the PC apps' are called differently.
   const SCENE = {
     cursor: 'cursor', keyboard: 'keyboard', clipboard: 'clipboard', notifications: 'notifications', audio: 'audio', apps: 'apps',
     share: 'share', receive: 'view', 'mac-pc': 'view', 'pc-mac': 'mirror', files: 'files', terminal: 'terminal', mount: 'mount',
-    calls: 'calls', messages: 'messages', media: 'media', pfiles: 'pfiles',
+    calls: 'calls', messages: 'messages', media: 'media', pfiles: 'pfiles', camera: 'camera', remote: 'remote',
   };
 
   // The feature's name and what it does, the same for every device.
@@ -328,6 +355,8 @@
     messages: ['Text messages', 'Read and send your phone’s texts here.'],
     media: ['Phone photos', 'See your phone’s photos and videos and copy them here.'],
     pfiles: ['Phone files', 'Browse the phone’s storage and copy files to and from it, no cable needed.'],
+    camera: ['Camera sharing', 'The other device’s camera here: see its picture, or pick it as a camera in any app.'],
+    remote: ['Phone as a remote', 'Use the phone as this computer’s touchpad, keyboard or gamepad.'],
   };
 
   const has = (id) => id in SCENE;

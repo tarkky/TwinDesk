@@ -321,6 +321,7 @@ class Kvm {
       deadmanMs: P.HELPER_DEADMAN_MS,
       doubleTapMs: P.DOUBLE_TAP_MS,
       cooldownMs: P.KVM_CROSS_COOLDOWN_MS,
+      dwellMs: P.KVM_EDGE_DWELL_MS,
       dragFiles: this._dragsOut(sides.length ? this.edges[sides[0]] : null), // the edge strip that picks up file drags
       gestures: k.gestures !== false, // Touchpad gestures go over as k.ge while capturing
     });
@@ -425,6 +426,7 @@ class Kvm {
       // on) it moves the keyboard over and back instead.
       case 'hotkey': {
         const k = this.cfg;
+        if (!this.hub.bus.connectedIds().length) break; // nothing connected: the hotkey does nothing (no sharing to switch)
         if (k.hotkeySwitch && !k.mouse && k.keyboard && this.linked) {
           if (this.mode !== 'home') this.home();
           else if (!this._canDrive()) {
@@ -693,10 +695,11 @@ class Kvm {
     if (ev.t === T.K_KEY_DOWN || ev.t === T.K_KEY_UP) {
       if (typeof ev.code !== 'string') return;
       if (this.settings.keys.swapCtrlCmd && P.keySwapNeeded(P.OS.WIN, this._peerOs(from))) ev.code = P.mapKeyFromOtherPlatform(ev.code);
-      ev.code = this.keys.code(ev.t === T.K_KEY_DOWN, ev.code, ev.ch, ev.tx); // a shortcut's letter: our key for it
+      ev.code = this.keys.code(ev.t === T.K_KEY_DOWN, ev.code, ev.ch, ev.tx, ev.im); // a shortcut's letter: our key for it
       if (!ev.code) return; // another alphabet's letter: typed as it is
       delete ev.ch;
       delete ev.tx;
+      delete ev.im;
     } else if (ev.t === T.K_MOVE) {
       ev.dx = (Number(ev.dx) || 0) * k.speed;
       ev.dy = (Number(ev.dy) || 0) * k.speed;

@@ -50,7 +50,7 @@ UI.tab({
       UI.note('info', 'Which device each edge of the screen leads to: Multi-device › Layout.'),
       UI.card('Feel', [
         UI.row('Edge resistance', 'Push a little further to cross', [resistance]),
-        peerRow('Pointer speed on {name}', '', [speed]),
+        UI.row('Pointer speed here', 'Another computer’s mouse on this Mac, and this Mac’s on a phone', [speed]),
         peerRow('Reverse scrolling from {name}', '', [reverse]),
         gestureRow,
       ]),

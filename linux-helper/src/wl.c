@@ -7,9 +7,10 @@
 // for buttons, wheel and keys. Same commands and events as the X11 backend (main.c, capture.c).
 //
 // The compositor never tells anyone where the pointer is, so we follow it: our own moves are exact,
-// the user's are dead-reckoned from the mice's deltas with an acceleration curve close to
-// libinput's default, clamped to the monitors (which main sends with `screens`). Pinned against
-// an edge both agree again, which is where the edge push is measured.
+// the user's are dead-reckoned from the mice's deltas with libinput's acceleration (the desktop's
+// profile and speed, kvmConfig accelProfile/accelSpeed), clamped to the monitors (which main sends
+// with `screens`). Pinned against an edge both agree again, which is where the edge push is
+// measured. Ahead of the real pointer, a quick flick crossed before it reached the edge.
 #include "helper.h"
 #include <dirent.h>
 #include <errno.h>
@@ -48,6 +49,8 @@ static int hotkeyEvs[2] = { 100, -1 };
 static int driveOther, edgeKeyboard = 1;
 static double deadmanMs = 1500, doubleTapMs = 400;
 static double speed = 1.0;
+static int accelFlat;          // the desktop's pointer profile is flat (no acceleration)
+static double accelSpeed;       // the desktop's pointer speed, libinput's -1..1
 
 // state
 static double px, py;                 // where we think the pointer is (logical px)
@@ -55,9 +58,14 @@ static int capturing, capMouse, capKeys, wantCapture, wantMouse, wantKeys;
 static double wantSince, lastCmd;
 static unsigned char localKeys[256], localButtons[8];
 static unsigned char sentKeys[256], sentButtons[8];
-static double push, lastPush;
+static double push, lastPush, pushSince;
 static int retArmed, retSide = SIDE_NONE;
-static double retResistance, retPush, retLast;
+static double retResistance, retPush, retLast, retSince;
+// A push crosses once it went the resistance outward and lasted dwellMs (kvmConfig dwellMs,
+// KVM_EDGE_DWELL_MS; none with no resistance): the end of a quick flick that reaches the edge is
+// over by then, a push meant to cross goes on.
+static double dwellMs = 150;
+static int dwelt(double resistance, double since, double now) { return resistance <= 0 || now - since >= dwellMs; }
 // Cooldown and arrival guard, as in capture.c.
 #define GUARD_MS 500
 static double cooldownMs = 250, lastCross;
@@ -285,6 +293,14 @@ static void inj_key(const char *code, int down) {
   usyn(urel);
 }
 
+void wl_button(int b, int down) { inj_button(b, down); }
+
+void wl_pen_moved(int x, int y) {
+  int cx, cy;
+  screens_clamp(x, y, (int)px, (int)py, &cx, &cy);
+  px = cx; py = cy;
+}
+
 void wl_release_all(void) {
   for (int i = 0; i < 256; i++) if (injKeys[i]) { injKeys[i] = 0; uemit(urel, EV_KEY, i, 0); }
   for (int b = 0; b < 5; b++) if (injButtons[b]) { injButtons[b] = 0; uemit(urel, EV_KEY, BTN[b], 0); }
@@ -365,8 +381,9 @@ static void feed_return(double dx, double dy) {
   double now = now_ms();
   if (now - retLast > 300) retPush = 0;
   retLast = now;
+  if (retPush == 0) retSince = now;
   retPush += outward;
-  if (retPush < retResistance) return;
+  if (retPush < retResistance || !dwelt(retResistance, retSince, now)) return;
   retArmed = 0;
   lastCross = now;
   JOut o;
@@ -380,6 +397,7 @@ void wl_config(const JObj *c) {
   side = side_of(jstr(c, "side", NULL));
   resistancePx = jnum(c, "resistancePx", 120);
   cooldownMs = jnum(c, "cooldownMs", 250);
+  dwellMs = jnum(c, "dwellMs", 150);
   nEdgeZ = zones_parse(jstr(c, "zones", NULL), edgeZ, 8);
   const char *hk = jstr(c, "hotkey", "AltRight");
   char l[24], r[24];
@@ -391,6 +409,8 @@ void wl_config(const JObj *c) {
   else { hotkeyEvs[0] = 100; hotkeyEvs[1] = -1; }
   driveOther = jbool(c, "driveOther", 0);
   edgeKeyboard = jbool(c, "keyboard", 1);
+  accelFlat = !strcmp(jstr(c, "accelProfile", "adaptive"), "flat");
+  accelSpeed = fmax(-1, fmin(1, jnum(c, "accelSpeed", 0)));
   deadmanMs = jnum(c, "deadmanMs", 1500);
   doubleTapMs = jnum(c, "doubleTapMs", 400);
   shortcut_config(c);
@@ -470,10 +490,14 @@ static void on_key(int ev, int value) {
   if (hot) fire_hotkey();
 }
 
+static int watchRel; // wl_watch_release: say `released` at our next left button-up at home
+void wl_watch_release(int on) { watchRel = on; }
+
 static void on_button(int code, int down) {
   int b = code == BTN_LEFT ? 0 : code == BTN_RIGHT ? 1 : code == BTN_MIDDLE ? 2 : code == BTN_SIDE ? 3 : code == BTN_EXTRA ? 4 : -1;
   if (b < 0) return;
   localButtons[b] = (unsigned char)down;
+  if (b == 0 && !down && watchRel && !capturing) { watchRel = 0; emit("{\"event\":\"released\"}"); }
   if (!capturing || !capMouse) return;
   if (!down && !sentButtons[b]) return;
   if (down) flush_hotkey();
@@ -496,19 +520,40 @@ static void on_wheel(int horiz, int v) {
   forward(jo_end(&k));
 }
 
-// libinput's default (adaptive) profile, roughly: slow hands 1:1, faster ones up to ~3x.
-static double accel(double dx, double dy, double dtMs) {
-  double v = sqrt(dx * dx + dy * dy) / (dtMs > 1 ? dtMs : 1); // units per ms
-  double f = v < 0.35 ? 1.0 : 1.0 + (v - 0.35) * 1.6;
-  return (f > 3.2 ? 3.2 : f) * speed;
+// libinput's pointer acceleration for a mouse (filter-flat.c, filter-linear.c) at the desktop's
+// speed s: flat, 1 + s; adaptive (the default), slow hands slowed a little, 1:1 up to a
+// threshold, then steeper up to 2 + 1.5 s. v: units per ms.
+static double accel(double v) {
+  if (accelFlat) return fmax(0.005, 1 + accelSpeed) * speed;
+  double threshold = fmax(0.2, 0.4 - 0.25 * accelSpeed);
+  double f = v < 0.07 ? 10 * v + 0.3 : v < threshold ? 1 : 1 + (1.1 + 0.75 * accelSpeed) * (v - threshold);
+  return fmin(f, 2.0 + 1.5 * accelSpeed) * speed;
 }
 
-static double lastMotion;
+// The hand's speed as libinput sees it: over the last few events (up to 8, within 50 ms) by the
+// times the kernel stamped them, not when we read them (several read at once aren't instant).
+#define TRACK 8
+static double trackT[TRACK], trackD[TRACK];
+static int trackN, trackI;
 
-static void on_motion(double rdx, double rdy) {
+static double velocity(double dist, double tMs) {
+  trackT[trackI] = tMs; trackD[trackI] = dist;
+  trackI = (trackI + 1) % TRACK;
+  if (trackN < TRACK) trackN++;
+  // The way covered since an earlier event, over the time since then.
+  double sum = 0, span = 0;
+  for (int k = 1; k < trackN; k++) {
+    int cur = (trackI - k + TRACK) % TRACK, prev = (cur - 1 + TRACK) % TRACK;
+    if (tMs - trackT[prev] > 50) break;
+    sum += trackD[cur];
+    span = tMs - trackT[prev];
+  }
+  return span > 0 ? sum / span : dist / 8; // the first after a pause: as slow as a frame (8 ms) of it
+}
+
+static void on_motion(double rdx, double rdy, double tMs) {
   double now = now_ms();
-  double f = accel(rdx, rdy, now - lastMotion);
-  lastMotion = now;
+  double f = accel(velocity(sqrt(rdx * rdx + rdy * rdy), tMs));
   double dx = rdx * f, dy = rdy * f;
   if (capturing) {
     if (!capMouse || (dx == 0 && dy == 0)) return;
@@ -531,8 +576,9 @@ static void on_motion(double rdx, double rdy) {
   if (outward <= 0 || !screens_on_outer_edge((int)px, (int)py, side) || !zones_contain(edgeZ, nEdgeZ, (int)px, (int)py, side)) { push = 0; return; }
   if (now - lastPush > 300) push = 0;
   lastPush = now;
+  if (push == 0) pushSince = now;
   push += outward;
-  if (push < resistancePx) return;
+  if (push < resistancePx || !dwelt(resistancePx, pushSince, now)) return;
   double offset = screens_offset((int)px, (int)py, side);
   really_begin(1, edgeKeyboard);
   JOut o;
@@ -574,7 +620,7 @@ static void read_in(int i) {
           if (in->hasLast) { mdx += (in->absX - in->lastX) * in->scaleX; mdy += (in->absY - in->lastY) * in->scaleY; }
           in->lastX = in->absX; in->lastY = in->absY; in->hasLast = 1;
         }
-        if (mdx != 0 || mdy != 0) { on_motion(mdx, mdy); mdx = mdy = 0; }
+        if (mdx != 0 || mdy != 0) { on_motion(mdx, mdy, e->input_event_sec * 1000.0 + e->input_event_usec / 1000.0); mdx = mdy = 0; }
       }
     }
   }

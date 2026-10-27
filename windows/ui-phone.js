@@ -90,12 +90,12 @@ UI.tab({
     const enterSends = UI.switch((v) => api.setPhone({ enterSends: v }), { label: 'Enter sends messages' });
     const arrowSwipe = UI.switch((v) => api.setPhone({ arrowSwipe: v }), { label: 'Arrow keys swipe' });
     const controls = UI.select([
-      { value: 'side', label: 'Side panel' }, { value: 'top', label: 'Title bar' }, { value: 'bottom', label: 'Bottom bar' },
+      { value: 'top', label: 'Title bar' }, { value: 'side', label: 'Side panel' }, { value: 'bottom', label: 'Bottom bar' },
     ], (v) => api.setPhone({ controls: v }));
     const optsCard = UI.card('Settings', [
       UI.row('Phone sound in the screen window', 'Android 11 or later', [sound]),
       UI.row('Picture', 'For the screen window and app windows', [quality]),
-      UI.row('Window controls', 'Side panel: Back, Home, Recents, volume, rotate, screenshot and more down the right of each phone window. Title bar: the main ones up top. Bottom bar: Back, Home and Recents under the picture', [controls]),
+      UI.row('Window controls', 'Title bar: Back, Home, Recents and the main ones up top. Side panel: those, volume, rotate, screenshot and more down the right of each phone window. Bottom bar: Back, Home and Recents under the picture', [controls]),
       UI.row('Enter sends messages', 'In WhatsApp, Instagram and Telegram, in a phone window or with this keyboard on the phone. Shift+Enter: a new line', [enterSends]),
       UI.row('Arrow keys swipe', 'In a phone window: up and down through feeds, Reels and Shorts, left and right through pages. Off: they move the cursor', [arrowSwipe]),
       UI.row('Show the phone’s wallpaper here', 'Lets TwinDesk on the phone read it (set up over wireless debugging)', [wall]),
@@ -169,7 +169,7 @@ UI.tab({
       wall.set(settings.wallpaper !== false);
       enterSends.set(settings.enterSends !== false);
       arrowSwipe.set(settings.arrowSwipe === true);
-      controls.set(settings.controls || 'side');
+      controls.set(settings.controls || 'top');
       via.set(br.input || (settings.input === 'phone' ? 'phone' : 'adb'));
       viaRow.setHint(br.inputMode === 'auto' ? (br.state === 'ready' ? 'Automatic: ADB, wireless debugging is ready' : 'Automatic: Accessibility until wireless debugging is ready')
         : br.input === 'phone' ? 'TwinDesk on the phone taps and types itself. The phone asks once to allow it in Accessibility' : 'Wireless debugging: full control');

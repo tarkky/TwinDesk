@@ -18,6 +18,8 @@ const E = require('../../shared/kvm-edges.js');
 const blepipe = require('../../shared/blepipe.js');
 const { KvmMoves } = require('../../shared/kvm-moves.js');
 const { KeyLayout } = require('../../shared/keylayout.js');
+const inputMethods = require('../inputmethod.js');
+const pointerAccel = require('../pointeraccel.js');
 const CL = require('../../shared/cursorlock.js');
 
 const T = P.T;
@@ -32,6 +34,7 @@ class Kvm {
     this.route = 0;
     this.peerRoute = 0;
     this.sub = null; // driven by a computer, passing its input on to a phone through our own bridge: {to, side, route}
+    pointerAccel.watch(() => this.applyConfig()); // the desktop's mouse acceleration, for the Wayland helper
     this.subRoute = 0;
     this.partner = null; // the device our input goes to (driving) or comes from (driven); null at home
     this.message = '';
@@ -56,7 +59,8 @@ class Kvm {
     this.injectMoves = new KvmMoves({
       send: (m) => this.mode === 'driven' && this.helper.send('inject', { ev: { t: P.T.K_MOVE, dx: m.dx, dy: m.dy } }),
     });
-    this.keys = new KeyLayout((cmd, args) => this.helper.request(cmd, args), (cmd, args) => this.helper.send(cmd, args)); // shortcuts and alphabets across layouts
+    const im = inputMethods.wrap((cmd, args) => this.helper.request(cmd, args), (cmd, args) => this.helper.send(cmd, args)); // Fcitx 5 / IBus
+    this.keys = new KeyLayout(im.request, im.send); // shortcuts, alphabets and input methods across layouts
     this.locked = false; // cursor lock (shared/cursorlock.js): the pointer stays on the device it is on
     this.lockAt = 0;
     this.lockKey = new CL.LockKey(() => this.settings.keys.lockKeys);
@@ -324,13 +328,15 @@ class Kvm {
       deadmanMs: P.HELPER_DEADMAN_MS,
       doubleTapMs: P.DOUBLE_TAP_MS,
       cooldownMs: P.KVM_CROSS_COOLDOWN_MS,
+      dwellMs: P.KVM_EDGE_DWELL_MS,
       // the same sides for linux-helper, whose JSON reader skips arrays: its -multi build reads this one
       sideList: sides.join(','),
       dragFiles: this._dragsOut(sides.length ? this.edges[sides[0]] : null), // the edge strip that picks up file drags (X11)
-      shortcuts: !!f.shortcuts, // the copy/paste-files shortcuts at home (fclip.js)
+      shortcuts: !!f.shortcuts && this.hub.bus.connectedIds().length > 0, // the copy/paste-files shortcuts at home (fclip.js), while connected
       copyKeys: f.copyKeys,
       pasteKeys: f.pasteKeys,
       lockKeys: this.hub.bus.connectedIds().length ? this.settings.keys.lockKeys || '' : '', // the cursor lock key (shortcut.c)
+      ...pointerAccel.get(), // accelProfile, accelSpeed: how the Wayland helper follows the pointer (wl.c)
     });
     // Our switch, for every connected device (it doesn't send drags towards us while it's off).
     const accept = !!(f.edgeDrag && f.acceptFromMac);
@@ -437,6 +443,7 @@ class Kvm {
       // on) it moves the keyboard over and back instead.
       case 'hotkey': {
         const k = this.cfg;
+        if (!this.hub.bus.connectedIds().length) break; // nothing connected: the hotkey does nothing (no sharing to switch)
         if (k.hotkeySwitch && !k.mouse && k.keyboard && this.linked) {
           if (this.mode !== 'home') this.home();
           else if (!this._canDrive()) {
@@ -696,10 +703,11 @@ class Kvm {
     if (ev.t === T.K_KEY_DOWN || ev.t === T.K_KEY_UP) {
       if (typeof ev.code !== 'string') return;
       if (this.settings.keys.swapCtrlCmd && P.keySwapNeeded(P.OS.LINUX, this._peerOs(from) || P.OS.MAC)) ev.code = P.mapKeyFromOtherPlatform(ev.code);
-      ev.code = this.keys.code(ev.t === T.K_KEY_DOWN, ev.code, ev.ch, ev.tx); // a shortcut's letter: our key for it
+      ev.code = this.keys.code(ev.t === T.K_KEY_DOWN, ev.code, ev.ch, ev.tx, ev.im); // a shortcut's letter: our key for it
       if (!ev.code) return; // another alphabet's letter: typed as it is
       delete ev.ch;
       delete ev.tx;
+      delete ev.im;
     } else if (ev.t === T.K_MOVE) {
       ev.dx = (Number(ev.dx) || 0) * k.speed;
       ev.dy = (Number(ev.dy) || 0) * k.speed;

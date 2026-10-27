@@ -25,6 +25,7 @@ class Kvm {
     this.keepalive = null;
     this.silence = null;
     this.dragPending = false; // we crossed with a file drag; cleared when our left button comes up
+    this.dragOutPaths = null; // its files, for when it comes back home still held (kvm.home drag.back)
     // k.mm summed while driving, sent as one (shared/kvm-moves.js): paced for Bluetooth, and held
     // (still summed) while the socket is backed up, so the pointer never replays old moves.
     this.moves = new KvmMoves({
@@ -89,8 +90,14 @@ class Kvm {
     link.on(T.KVM_HOME, (m) => {
       if (this.mode !== 'driving' || m.route !== this.route) return;
       const has = typeof m.offset === 'number';
+      // Our file drag came back with the button still held: it goes on here (_setMode stops its
+      // transfer); or the other computer's files follow as a drag here (drag.start next).
+      const d = m.drag && typeof m.drag === 'object' ? m.drag : null;
+      const back = d && d.back && this.dragPending && this.fileDrop.drag && d.back === this.fileDrop.drag.drag ? this.dragOutPaths : null;
+      if (d && d.count && this.dragRecv) this.dragRecv.expectHome();
       this.helper.send('capture', has ? { on: false, side: this.crossingSide, offset: m.offset } : { on: false });
       this._setMode('home', '');
+      if (back) this.helper.send('dragLocal', { drag: 'back', paths: back }); // Windows' own drag of them, at the pointer
     });
     for (const t of K_TYPES) link.on(t, (m) => this._inject(m));
     link.on(T.K_GESTURE, (m) => this._onGesture(m)); // Trackpad gestures
@@ -206,6 +213,7 @@ class Kvm {
       deadmanMs: P.HELPER_DEADMAN_MS,
       doubleTapMs: P.DOUBLE_TAP_MS,
       cooldownMs: P.KVM_CROSS_COOLDOWN_MS,
+      dwellMs: P.KVM_EDGE_DWELL_MS,
       zones: this.map.zones(), // only where the monitors touch (null: anywhere on the side)
       dragFiles: this._dragsOut(), // the edge strip that picks up file drags
       gestures: k.gestures !== false, // Touchpad gestures go over as k.ge while capturing
@@ -335,6 +343,7 @@ class Kvm {
           const drag = paths.length ? this.fileDrop.prepareDrag(paths) : null;
           this._take({ side: P.opposite(this.crossingSide), offset: this.map.toPeer(msg.offset), ...(drag ? { drag: { count: drag.count } } : {}) });
           if (drag) { // order: kvm.take, drag.start, then the files
+            this.dragOutPaths = paths;
             this.fileDrop.beginDrag(drag);
             this.dragPending = true;
           }
@@ -345,6 +354,7 @@ class Kvm {
       // on) it moves the keyboard over and back instead.
       case 'hotkey': {
         const k = this.cfg;
+        if (!this.connected) break; // nothing connected: the hotkey does nothing (no sharing to switch)
         if (k.hotkeySwitch && !k.mouse && k.keyboard && this.linked) {
           if (this.mode !== 'home') this.home();
           else if (!this._canDrive()) {
@@ -373,7 +383,7 @@ class Kvm {
         break;
       }
       case 'return':
-        if (this.mode === 'driven' && !this.locked) this._sendHome(msg.offset);
+        if (this.mode === 'driven' && !this.locked) this._sendHome(msg.offset, '', msg.drag || {});
         break;
       case 'ev':
         if (this.mode === 'driving' && msg.ev && (K_TYPES.has(msg.ev.t) || (msg.ev.t === T.K_GESTURE && this.cfg.gestures !== false))) {
@@ -504,10 +514,11 @@ class Kvm {
       if (typeof ev.code !== 'string') return;
       if (this.settings.keys.swapCtrlCmd && P.keySwapNeeded(P.OS.WIN, this.link.peerOs)) ev.code = P.mapKeyFromOtherPlatform(ev.code);
       if (this._lockKeyHere(ev)) return;
-      ev.code = this.keys.code(ev.t === T.K_KEY_DOWN, ev.code, ev.ch, ev.tx); // a shortcut's letter: our key for it
+      ev.code = this.keys.code(ev.t === T.K_KEY_DOWN, ev.code, ev.ch, ev.tx, ev.im); // a shortcut's letter: our key for it
       if (!ev.code) return; // another alphabet's letter: typed as it is
       delete ev.ch;
       delete ev.tx;
+      delete ev.im;
     } else if (ev.t === T.K_MOVE) {
       ev.dx = (Number(ev.dx) || 0) * k.speed;
       ev.dy = (Number(ev.dy) || 0) * k.speed;
@@ -562,9 +573,28 @@ class Kvm {
   }
 
   // Row 8c: we send the input home (return edge or hotkey).
-  _sendHome(offset, message = '') {
-    this.link.send(typeof offset === 'number' ? { t: T.KVM_HOME, route: this.peerRoute, offset: this.map.toPeer(offset) } : { t: T.KVM_HOME, route: this.peerRoute });
+  // `drag` (from the return edge): the Mac's button may still be held in a file drag, which carries
+  // on there — its own drag comes back (`back`), or an Explorer drag here ended at the edge
+  // (DropEdge.cs) and its files follow (`paths`).
+  _sendHome(offset, message = '', drag) {
+    const msg = typeof offset === 'number' ? { t: T.KVM_HOME, route: this.peerRoute, offset: this.map.toPeer(offset) } : { t: T.KVM_HOME, route: this.peerRoute };
+    const out = this._dragHome(msg, drag);
+    this.link.send(msg);
+    if (out) this.fileDrop.beginDrag(out); // after kvm.home: drag.start, then the files
     this._drivenHome(message, true);
+  }
+
+  // kvm.home's `drag` for a return with the button held; the drag to begin after it, if any.
+  _dragHome(msg, drag) {
+    if (!drag || typeof drag !== 'object') return null;
+    if (this.dragRecv && this.dragRecv.dragging) { // not dropped yet: the button that drags it is still held
+      msg.drag = { back: this.dragRecv.cur.drag };
+      return null;
+    }
+    const paths = Array.isArray(drag.paths) && this._dragsOut() ? drag.paths.filter((p) => typeof p === 'string') : [];
+    const out = paths.length ? this.fileDrop.prepareDrag(paths) : null;
+    if (out) msg.drag = { count: out.count };
+    return out;
   }
 
   // Rows 8b, 8c, 9b.

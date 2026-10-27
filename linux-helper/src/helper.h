@@ -27,7 +27,7 @@ double jnum(const JObj *o, const char *k, double def);
 int jbool(const JObj *o, const char *k, int def);
 JObj *jobj(const JObj *o, const char *k);
 
-typedef struct { char buf[1024]; size_t len; int first; } JOut;
+typedef struct { char buf[4096]; size_t len; int first; } JOut; // keyLayout's two maps of Sinhala (3 UTF-8 bytes each) need ~2 KB
 void jo_begin(JOut *o);
 void jo_str(JOut *o, const char *k, const char *v);
 void jo_num(JOut *o, const char *k, double v);
@@ -88,12 +88,17 @@ void shortcut_tick(void);
 
 // ---- drop.c: file drags across the edge, out (X11): the edge strip, an XDND drop target ----
 void drop_config(const JObj *c);
-void drop_tick(int capturing, int side, int driveOther, int leftDown);
+void drop_tick(int capturing, int side, int driveOther, int leftDown, int backSide);
 void drop_xevent(XEvent *e);
 void drop_shutdown(void);
-// capture.c, called by drop.c: the drag crossed (paths: a built JSON array) / the source let go
+int drop_holding(void); // a file drag is being caught on the way back: no plain return meanwhile
+// capture.c, called by drop.c: the drag crossed (paths: a built JSON array) / the source let go /
+// a drag caught on the way back while driven
 void capture_drag_cross(const char *paths, int x, int y, int sx, int sy, int sw, int sh);
 void capture_drag_dropped(void);
+void capture_drag_return(const char *paths, int x, int y, int side);
+void capture_watch_release(int on); // `released` at our next left button-up at home
+void inject_button_up(int b);       // inject.c: an injected button's release (0 left)
 
 // ---- xclip.c: the files on the clipboard, as an X client (XWayland on Wayland) ----
 void xclip_files(double id);
@@ -102,6 +107,7 @@ void xclip_files(double id);
 void inject_apply(const JObj *ev);
 void inject_move_to(int x, int y);
 void inject_release_all(void);
+void inject_button(int b, int down);
 
 // ---- wins.c: top-level windows for Apps (X11) ----
 void wins_list(double id);
@@ -125,12 +131,19 @@ void wl_return_zones(const char *text);
 void wl_arm_return(int on, int side, double resistance);
 void wl_inject(const JObj *ev);
 void wl_move_to(int x, int y);
+void wl_button(int b, int down);
+void wl_pen_moved(int x, int y); // the pen put the pointer there (pen.c)
 void wl_release_all(void);
+void wl_watch_release(int on); // `released` at our next left button-up at home
 void wl_touch(void);
 int wl_active(void);
 void wl_position(int *x, int *y);
 void wl_shutdown(void);
 int wl_devices(void);
+
+// ---- pen.c: a phone's stylus as a uinput tablet pen (both backends; wl: on Wayland) ----
+void pen_at(int wl, int x, int y, const JObj *pen);
+void pen_leave(int wl);
 
 // ---- ble.c: Bluetooth LE through BlueZ (Ble.cs's commands and events), its own thread ----
 int ble_handle(const char *line); // 1: a ble*/blp* command, taken

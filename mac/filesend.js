@@ -178,6 +178,14 @@ class FileSend extends EventEmitter {
     if (tell) this._dragEnd({ drag, result: 'cancelled' });
   }
 
+  // Our drag came back home with the button still held (kvm.home drag.back): it goes on here as our
+  // own drag, so its transfer stops and it isn't listed as cancelled.
+  forgetDrag(drag) {
+    this.cancelDrag(drag, false);
+    this.drags.delete(drag);
+    this.emit('change');
+  }
+
   _dragEnd(m) {
     const d = this.drags.get(m.drag);
     if (!d) return;

@@ -302,6 +302,7 @@ class Kvm extends EventEmitter {
         driveOther: sides.length > 0,
         hotkey: this.getSettings().keys.hotkey || P.HOTKEY_MAC,
         cooldownMs: P.KVM_CROSS_COOLDOWN_MS,
+        dwellMs: P.KVM_EDGE_DWELL_MS,
         gestures: k.gestures !== false, // Trackpad gestures go over as k.ge
         dragFiles: this.fileSend.dragOn && this.fileSend.peerDrag, // drag.policy, both sides
       })
@@ -530,6 +531,7 @@ class Kvm extends EventEmitter {
       // and on again. In keyboard-only mode (Cursor off + "Switch the keyboard with the hotkey") it
       // moves the keyboard over and back instead.
       case 'hotkey':
+        if (!this.hub.bus.connectedIds().length) break; // nothing connected: the hotkey does nothing (no sharing to switch)
         if (k.hotkeySwitch && !k.mouse && k.keyboard && this.linked) {
           if (this.mode === 'home') {
             if (!this._canDrive()) return;
@@ -690,7 +692,7 @@ class Kvm extends EventEmitter {
         }
         ev = { t: m.t, code: this._swapKeys(from) ? P.mapKeyFromOtherPlatform(m.code) : m.code };
         if (this._lockKeyHere(ev)) return;
-        ev.code = this.keys.code(m.t === P.T.K_KEY_DOWN, ev.code, m.ch, m.tx); // a shortcut's letter: our key for it
+        ev.code = this.keys.code(m.t === P.T.K_KEY_DOWN, ev.code, m.ch, m.tx, m.im); // a shortcut's letter: our key for it
         if (!ev.code) return; // another alphabet's letter: typed as it is
     }
     this._injectEv(ev);

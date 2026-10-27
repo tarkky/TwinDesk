@@ -39,6 +39,7 @@ class DragRecv {
     this.root = path.join(app.getPath('userData'), 'drag');
     this.cur = null; // {drag, dir, entries, files: Map(rel → file), byId: Map(id → file), where, state}
     this.last = null; // {text, ok, at}
+    this.homeUntil = 0; // kvm.home said the Mac's files follow as a drag here at home (expectHome)
     const link = this.link;
     link.on(T.DRAG_START, (m) => this._start(m));
     link.on(T.DRAG_CANCEL, (m) => this.cur && m.drag === this.cur.drag && this.cancel('cancelled', false));
@@ -56,7 +57,9 @@ class DragRecv {
     const end = (result) => this.link.send({ t: T.DRAG_END, drag: m.drag, result });
     if (typeof m.drag !== 'string' || !m.drag) return;
     if (this.cur) this.cancel('cancelled', false);
-    if (!this.settings.files.edgeDrag || !this.settings.files.acceptFromMac || !this.isDriven()) return end('cancelled');
+    const home = Date.now() < this.homeUntil; // the Mac's drag came over with the pointer, back home
+    this.homeUntil = 0;
+    if (!this.settings.files.edgeDrag || !this.settings.files.acceptFromMac || !(this.isDriven() || home)) return end('cancelled');
     const list = Array.isArray(m.list) ? m.list : [];
     if (!list.length && !(Array.isArray(m.dirs) && m.dirs.length) || list.length > MAX_FILES) return end('failed');
     // Folders first (parents before children: Explorer creates them in order), then the files.
@@ -67,8 +70,14 @@ class DragRecv {
     if (!built) return end('failed');
     const { dir, files, entries, names, count } = built;
     this.cur = { drag: m.drag, dir, files, byId: new Map(), where: '', state: 'dragging', count, name: names[0] ? names[0].replace(/\/$/, '') : '' };
-    this.helper.send('dragStart', { drag: m.drag, entries, names });
+    this.helper.send('dragStart', { drag: m.drag, entries, names, home }); // home: our own button drops it
     this.onChange();
+  }
+
+  // kvm.js: the pointer came home with the Mac's button held in a drag of its files: the drag.start
+  // that follows starts here although the Mac doesn't drive this PC.
+  expectHome() {
+    this.homeUntil = Date.now() + 3000;
   }
 
   // The temp files and the helper's entries for a tree (folders first, then the files), or null.

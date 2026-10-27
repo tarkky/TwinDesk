@@ -82,6 +82,7 @@ func handle(_ line: String) {
                              cooldown: num("cooldownMs", 250) / 1000)
 #endif
     Capture.shared.gestures = (msg["gestures"] as? Bool) ?? true
+    Capture.shared.dwell = num("dwellMs", 150) / 1000
     reply(id)
   case "gesture": // A gesture from the other computer, done by macOS itself
     GesturePost.handle(msg)
@@ -117,8 +118,15 @@ func handle(_ line: String) {
     if let ev = msg["ev"] as? [String: Any] { injector.injectRel(ev) }
   case "ping":
     reply(id)
-  case "keyLayout": // what each key types alone in the current layout (shared/keylayout.js); type: it takes "type"
-    reply(id, ["layout": KeyLayout.current(sourceID: msg["source"] as? String), "type": true])
+  case "keyLayout": // what each key types alone and with Shift in the current layout (shared/keylayout.js); type: it takes "type"
+    let source = msg["source"] as? String
+    var r: [String: Any] = ["layout": KeyLayout.current(sourceID: source), "shift": KeyLayout.current(sourceID: source, shift: true),
+                            "type": true, "selectInput": true]
+    if let im = InputSources.currentIM() { r["im"] = im } // typing with an input method: its language
+    reply(id, r)
+  case "selectInput": // an input method of the other computer's language ({lang}), or back to ours ({restore})
+    if (msg["restore"] as? Bool) == true { InputSources.restore(); reply(id) }
+    else { reply(id, ["found": InputSources.select(language: (msg["lang"] as? String) ?? "")]) }
   case "type": // text as it is, whatever the layout
     if let text = msg["text"] as? String { injector.type(text) }
   case "permissions":
@@ -231,6 +239,9 @@ func handle(_ line: String) {
     reply(id)
   case "dragCancel":
     DragIn.shared.cancel()
+    reply(id)
+  case "dragLocal": // our own files, dragged back home with the button still held: a drag of them here
+    DragIn.shared.startLocal(drag: (msg["drag"] as? String) ?? "local", paths: (msg["paths"] as? [String]) ?? [])
     reply(id)
   case "dragWritten":
     DragIn.shared.written(drag: (msg["drag"] as? String) ?? "", index: (msg["index"] as? NSNumber)?.intValue ?? -1,

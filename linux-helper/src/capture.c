@@ -34,9 +34,14 @@ static double swallowSince;
 static double lastCmd;
 
 // edge push (home) and return edge (driven)
-static double push, lastPush;
+static double push, lastPush, pushSince;
 static int retArmed, retSide = SIDE_NONE;
-static double retResistance, retPush, retLast;
+static double retResistance, retPush, retLast, retSince;
+// A push crosses once it went the resistance outward and lasted dwellMs (kvmConfig dwellMs,
+// KVM_EDGE_DWELL_MS; none with no resistance): the end of a quick flick that reaches the edge is
+// over by then, a push meant to cross goes on.
+static double dwellMs = 150;
+static int dwelt(double resistance, double since, double now) { return resistance <= 0 || now - since >= dwellMs; }
 // No new crossing within cooldownMs of the last one, either way (kvmConfig cooldownMs,
 // KVM_CROSS_COOLDOWN_MS). After arriving, the edge it came through only counts once the pointer
 // moved 8 px inward or GUARD_MS passed, so the end of a flick doesn't bounce straight back.
@@ -55,9 +60,9 @@ static int nEdgeZ = -1, nRetZ = -1;
 // which side. `side` stays the first one (the file-drag strip, drop.c). The lists come as sideList
 // ("left,top"): our JSON reader skips arrays. Without MULTI, the one-side code below is all there is.
 static int sides[4], nsides;                 // the edges watched at home
-static double pushBy[4], lastPushBy[4];      // the push per side (indexed by SIDE_*)
+static double pushBy[4], lastPushBy[4], pushSinceBy[4]; // the push per side (indexed by SIDE_*)
 static int retSides[4], nret;                // the edges watched while driven
-static double retPushBy[4], retLastBy[4];
+static double retPushBy[4], retLastBy[4], retSinceBy[4];
 
 // "left,top" -> out (valid, no repeats); none given: the one side `fallback`, if any.
 static int parse_sides(const char *list, int fallback, int *out) {
@@ -87,6 +92,7 @@ static double repeatAt, repeatDelay = 500, repeatInterval = 33;
 // and keyboard grabs; a barrier keeps the pointer on the strip until the real button-up, then
 // capture takes its grabs (softUp)
 static int soft, softUp, leftDown;
+static int watchRel; // capture_watch_release: say `released` at our next left button-up at home
 static double softSince;
 static PointerBarrier bars[3];
 static int nbars;
@@ -194,6 +200,7 @@ void capture_config(const JObj *c) {
   deadmanMs = jnum(c, "deadmanMs", 1500);
   doubleTapMs = jnum(c, "doubleTapMs", 400);
   cooldownMs = jnum(c, "cooldownMs", 250);
+  dwellMs = jnum(c, "dwellMs", 150);
   nEdgeZ = zones_parse(jstr(c, "zones", NULL), edgeZ, 8);
   shortcut_config(c);
   drop_config(c);
@@ -411,6 +418,30 @@ void capture_drag_cross(const char *paths, int x, int y, int sx, int sy, int sw,
   free(line);
 }
 
+// A file drag caught on the way back (drop.c, while driven): the input goes home with its files
+// (`return {offset, drag:{paths}}`), and the driver's button that holds it here is let go on the
+// strip, where the drop does nothing.
+void capture_drag_return(const char *paths, int x, int y, int s) {
+  if (!retArmed || capturing) return;
+  retArmed = 0;
+#ifdef MULTI
+  memset(retPushBy, 0, sizeof retPushBy);
+#endif
+  lastCross = now_ms();
+  size_t cap = strlen(paths) + 160;
+  char *line = malloc(cap);
+#ifdef MULTI
+  snprintf(line, cap, "{\"event\":\"return\",\"side\":\"%s\",\"offset\":%.4f,\"drag\":{\"paths\":%s}}", side_name(s), screens_offset(x, y, s), paths);
+#else
+  snprintf(line, cap, "{\"event\":\"return\",\"offset\":%.4f,\"drag\":{\"paths\":%s}}", screens_offset(x, y, s), paths);
+#endif
+  emit(line);
+  free(line);
+  inject_button_up(0);
+}
+
+void capture_watch_release(int on) { watchRel = on; }
+
 // The file manager's drag ended on the strip (drop.c): take the grabs as soon as it lets go.
 void capture_drag_dropped(void) {
   if (soft) softUp = 1;
@@ -438,7 +469,7 @@ void capture_tick(void) {
   repeat_tick(now);
   shortcut_tick();
   soft_tick(now);
-  drop_tick(capturing, side, driveOther, leftDown);
+  drop_tick(capturing, side, driveOther, leftDown, retArmed ? retSide : SIDE_NONE);
   if (capturing && now - lastCmd > deadmanMs) {
     capture_stop(SIDE_NONE, 0, 0); // rule 1: a hung main or a dead link never keeps the user's input
     JOut o;
@@ -557,6 +588,7 @@ static void on_key(int ev, int down) {
 static void on_button(int xb, int down) {
   if (xb < 0 || xb >= 32) return;
   if (xb == 1) { leftDown = down; if (!down && soft) softUp = 1; }
+  if (xb == 1 && !down && watchRel && !capturing) { watchRel = 0; emit("{\"event\":\"released\"}"); }
   if (!down && swallowButtons[xb]) { swallowButtons[xb] = 0; release_grabs(); return; }
   if (!capturing || !capMouse) return;
   if (xb >= 4 && xb <= 7) {
@@ -585,7 +617,7 @@ static void on_button(int xb, int down) {
 #ifdef MULTI
 // Every armed side counts, summed on its own; the first through says which side it left by.
 void capture_feed_return(int x, int y, double dx, double dy) {
-  if (!retArmed) return;
+  if (!retArmed || drop_holding()) return;
   double now = now_ms();
   for (int i = 0; i < nret; i++) {
     int s = retSides[i];
@@ -594,8 +626,9 @@ void capture_feed_return(int x, int y, double dx, double dy) {
     if (outward <= 0 || !screens_on_outer_edge(x, y, s) || !zones_contain(retZ, nRetZ, x, y, s)) { retPushBy[s] = 0; continue; }
     if (now - retLastBy[s] > 300) retPushBy[s] = 0;
     retLastBy[s] = now;
+    if (retPushBy[s] == 0) retSinceBy[s] = now;
     retPushBy[s] += outward;
-    if (retPushBy[s] < retResistance) continue;
+    if (retPushBy[s] < retResistance || !dwelt(retResistance, retSinceBy[s], now)) continue;
     retArmed = 0;
     memset(retPushBy, 0, sizeof retPushBy);
     lastCross = now;
@@ -620,8 +653,9 @@ static void multi_edge_push(int x, int y, unsigned mask, double rdx, double rdy)
     if (outward <= 0 || !screens_on_outer_edge(x, y, s) || !zones_contain(edgeZ, nEdgeZ, x, y, s)) { pushBy[s] = 0; continue; }
     if (now - lastPushBy[s] > 300) pushBy[s] = 0;
     lastPushBy[s] = now;
+    if (pushBy[s] == 0) pushSinceBy[s] = now;
     pushBy[s] += outward;
-    if (pushBy[s] < resistancePx) continue;
+    if (pushBy[s] < resistancePx || !dwelt(resistancePx, pushSinceBy[s], now)) continue;
     double offset = screens_offset(x, y, s);
     // Start capturing at once so no motion leaks, then tell main.
     if (!capture_begin(1, edgeKeyboard)) { memset(pushBy, 0, sizeof pushBy); return; }
@@ -637,15 +671,16 @@ static void multi_edge_push(int x, int y, unsigned mask, double rdx, double rdy)
 }
 #else
 void capture_feed_return(int x, int y, double dx, double dy) {
-  if (!retArmed) return;
+  if (!retArmed || drop_holding()) return;
   double outward = screens_outward(retSide, dx, dy);
   if (!may_cross(retSide, outward)) { retPush = 0; return; }
   if (outward <= 0 || !screens_on_outer_edge(x, y, retSide) || !zones_contain(retZ, nRetZ, x, y, retSide)) { retPush = 0; return; }
   double now = now_ms();
   if (now - retLast > 300) retPush = 0;
   retLast = now;
+  if (retPush == 0) retSince = now;
   retPush += outward;
-  if (retPush < retResistance) return;
+  if (retPush < retResistance || !dwelt(retResistance, retSince, now)) return;
   retArmed = 0;
   lastCross = now;
   JOut o;
@@ -682,8 +717,9 @@ static void on_motion(double dx, double dy, double rdx, double rdy) {
   double now = now_ms();
   if (now - lastPush > 300) push = 0;
   lastPush = now;
+  if (push == 0) pushSince = now;
   push += outward;
-  if (push < resistancePx) return;
+  if (push < resistancePx || !dwelt(resistancePx, pushSince, now)) return;
   double offset = screens_offset(x, y, side);
   // Start capturing at once so no motion leaks, then tell main.
   if (!capture_begin(1, edgeKeyboard)) { push = 0; return; }

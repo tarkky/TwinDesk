@@ -215,7 +215,8 @@ UI.tab({
       discRow.setHint(!d.localNetwork ? 'Allow Local Network for TwinDesk, or connect by address.' : d.error);
       discFix.hidden = d.localNetwork;
       const pairedIds = new Set([...s.paired.map((x) => x.id), ...g.hosts.map((x) => x.id)]);
-      const fk = JSON.stringify([s.found, [...pairedIds], c && c.id, blocked, s.pairing, g.pairing, Object.keys(pending)]);
+      const phoneGoing = s.phone && s.phone.connecting ? s.phone.connecting.id : ''; // a phone connecting: its row turns
+      const fk = JSON.stringify([s.found, [...pairedIds], c && c.id, blocked, s.pairing, g.pairing, Object.keys(pending), phoneGoing]);
       if (fk !== foundKey) {
         foundKey = fk;
         const rows = s.found.map((dev) => {
@@ -223,13 +224,14 @@ UI.tab({
           const known = pairedIds.has(dev.id);
           const st = dev.os === 'android' ? null : rowState(s, dev, online); // a phone has its own popup
           const kind = known ? 'take' : dev.os === 'mac' ? 'pair' : 'invite';
-          const label = online || (st && !st.fail) ? null : st ? 'Retry' : known ? 'Take over' : dev.os === 'mac' ? 'Pair' : 'Connect';
+          const going = dev.os === 'android' && phoneGoing === dev.id;
+          const label = online || going || (st && !st.fail) ? null : st ? 'Retry' : known ? 'Take over' : dev.os === 'mac' ? 'Pair' : 'Connect';
           const btn = label && UI.button(label, () => go(dev, kind), `small${dev.invited || st ? ' primary' : ''}`);
           const match = st && st.code ? UI.button(st.allow ? 'Allow' : 'Codes match', () => (st.allow ? api.pairRespond(true) : api.confirmGuestCode()), 'small primary') : null;
-          const hint = !st || st.ok ? `${dev.address}${dev.invited ? ' · wants to connect' : ''}`
+          const hint = going ? 'Connecting…' : !st || st.ok ? `${dev.address}${dev.invited ? ' · wants to connect' : ''}`
             : st.code ? `Check the code: ${st.code.slice(0, 3)} ${st.code.slice(3)} (the same on ${dev.name}?)` : st.text;
           const r = UI.row(dev.name, hint, [
-            st && (st.busy || st.wait) ? el('span', { class: 'spin', attrs: { 'aria-hidden': 'true' } }) : null,
+            going || (st && (st.busy || st.wait)) ? el('span', { class: 'spin', attrs: { 'aria-hidden': 'true' } }) : null,
             st && st.ok ? el('span', { class: 'pill good', text: st.text }) : online ? el('span', { class: 'pill good', text: 'Connected' }) : known && !st ? el('span', { class: 'pill muted', text: 'Paired' }) : null,
             match, btn]);
           if (st && st.fail) r.hint.classList.add('bad');
