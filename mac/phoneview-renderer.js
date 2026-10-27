@@ -19,7 +19,7 @@
   const canvas = document.getElementById('screen');
   const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
   const status = document.getElementById('status');
-  const ACTION = { DOWN: 0, UP: 1, MOVE: 2, HOVER_MOVE: 7 };
+  const ACTION = { DOWN: 0, UP: 1, MOVE: 2, HOVER_MOVE: 7, HOVER_EXIT: 10 };
   const FINGER = -2; // scrcpy's generic finger
   let size = null; // video size
   let decoder = null;
@@ -287,6 +287,11 @@
       down = false;
       api.send({ t: 'touch', action: ACTION.UP, pointer: FINGER, ...at(e) });
     }
+  });
+  // Off the picture: the mouse stops hovering there (left hovering, the phone's edges and gesture
+  // navigation stop answering touches until it restarts).
+  canvas.addEventListener('pointerleave', (e) => {
+    if (!down && !rightDown) api.send({ t: 'touch', action: ACTION.HOVER_EXIT, pointer: -1, ...at(e) });
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 

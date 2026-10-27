@@ -79,7 +79,13 @@ class Core private constructor(val ctx: Context) : Link.Events {
 
     val host: Host? get() = if (link.connected) link.host else null
 
-    fun start() {
+    // Not after Exit (the notification's): Android brings the process back for the notification
+    // listener or the Accessibility service, and nothing should start or show then. wake() (TwinService.start:
+    // the app opened, the phone restarted, a cable) starts it again.
+    private var started = false
+    private fun start() {
+        if (started || store.flag("exited", false)) return
+        started = true
         discovery.start()
         Notify.channels(ctx)
         updates.start()
@@ -337,5 +343,7 @@ class Core private constructor(val ctx: Context) : Link.Events {
         fun get(ctx: Context): Core = instance ?: synchronized(this) {
             instance ?: Core(ctx.applicationContext).also { instance = it; it.start() }
         }
+
+        fun wake(ctx: Context): Core = get(ctx).also { it.store.setFlag("exited", false); it.start() }
     }
 }

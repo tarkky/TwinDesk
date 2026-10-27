@@ -110,7 +110,7 @@ object Notify {
             else -> {
                 b.setContentTitle("Ready for your computer")
                 val near = core.hosts().firstOrNull { core.isNear(it.id) }
-                b.setContentText(if (near != null) "${near.name} is nearby" else "Open TwinDesk on your Mac to connect")
+                b.setContentText(if (near != null) "${near.name} is nearby" else "Open TwinDesk on your computer to connect")
                 if (near != null) b.addAction(Notification.Action.Builder(null, "Connect to ${near.name}", action(ctx, ActionReceiver.CONNECT, 13, near.id)).build())
             }
         }

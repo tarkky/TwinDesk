@@ -20,6 +20,7 @@ class TwinService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        running = true
         val core = Core.get(this)
         try {
             startForeground(Notify.ID_LINK, Notify.link(this, core), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
@@ -30,8 +31,16 @@ class TwinService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
+    override fun onDestroy() {
+        running = false
+        super.onDestroy()
+    }
+
     companion object {
+        @Volatile private var running = false
+
         fun start(ctx: Context) {
+            Core.wake(ctx)
             runCatching { ctx.startForegroundService(Intent(ctx, TwinService::class.java)) }
                 .onFailure { Log.w("TwinDesk", "start service: ${it.message}") }
         }
@@ -39,6 +48,7 @@ class TwinService : Service() {
         // The ongoing notification follows the link.
         private var lastKey = ""
         fun refresh(ctx: Context) {
+            if (!running) return // stopped (Exit): no notification without the service
             val core = Core.get(ctx)
             val key = listOf(core.host?.name, core.link.state, core.adb.wifiDebugging, core.files.activeLine(), core.hosts().firstOrNull { core.isNear(it.id) }?.id).toString()
             if (key == lastKey) return
@@ -83,6 +93,7 @@ class ActionReceiver : BroadcastReceiver() {
     // the process, so nothing reconnects or comes back until TwinDesk is opened again (or the phone
     // restarts: BootReceiver).
     private fun exit(ctx: Context, core: Core) {
+        core.store.setFlag("exited", true)
         core.disconnect()
         ctx.stopService(Intent(ctx, TwinService::class.java))
         ctx.getSystemService(NotificationManager::class.java).cancelAll()

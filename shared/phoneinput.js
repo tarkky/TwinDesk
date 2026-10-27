@@ -12,7 +12,7 @@
 
 const P = require('./protocol.js');
 
-const ACTION = { DOWN: 0, UP: 1, MOVE: 2, HOVER_MOVE: 7 }; // scrcpy.js's
+const ACTION = { DOWN: 0, UP: 1, MOVE: 2, HOVER_MOVE: 7, HOVER_EXIT: 10 }; // scrcpy.js's
 const MOVE_MS = 30;
 const SCROLL_MS = 60;
 
@@ -28,7 +28,7 @@ class PhoneInput {
   mouse(action, x, y, w, h, actionButton, buttons) {
     x = Math.round(x);
     y = Math.round(y);
-    if (action === ACTION.HOVER_MOVE) return; // only the pointer moves (phone.pointer)
+    if (action === ACTION.HOVER_MOVE || action === ACTION.HOVER_EXIT) return; // only the pointer moves (phone.pointer)
     if (action === ACTION.MOVE) {
       const now = Date.now();
       if (now - this.lastMove < MOVE_MS) return;

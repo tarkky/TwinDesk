@@ -564,7 +564,7 @@ private fun OverviewPage(core: Core, v: Int) {
             MacRow(f.name, "${if (f.os == "mac") "Mac" else if (f.os == "linux") "Linux" else "PC"} · ${if (f.address.startsWith("ble:") || f.address.startsWith("blp:")) "Bluetooth" else f.address}", first) { Secondary("Pair") { core.pair(f) } }
             first = false
         }
-        if (first) MacRow("Looking for computers…", if (core.bleOn && core.ble.allowed()) "Open TwinDesk on your computer (same Wi-Fi, or Bluetooth on)" else "Open TwinDesk on your Mac (same Wi-Fi)", true)
+        if (first) MacRow("Looking for computers…", if (core.bleOn && core.ble.allowed()) "Open TwinDesk on your computer (same Wi-Fi, or Bluetooth on)" else "Open TwinDesk on your computer (same Wi-Fi)", true)
         BleSwitch(core, "Allow Nearby devices on the General page")
         var addr by remember { mutableStateOf("") }
         Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(1.dp).background(pal.line))

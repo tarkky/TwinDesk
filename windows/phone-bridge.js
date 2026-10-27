@@ -190,9 +190,9 @@ class PhoneBridge extends EventEmitter {
   }
 
   _stopAll(message) {
+    if (this.kvm) this._kvmEnd(false); // before the control session goes: its button up and hover exit
     if (this.control) this.control.stop();
     this.control = null;
-    if (this.kvm) this._kvmEnd(false);
     if (this.views) this.views.closeAll();
     this.serial = null;
     this._set('off', message);
@@ -440,6 +440,11 @@ class PhoneBridge extends EventEmitter {
     });
     await s.start();
     this.control = s;
+    // A session that ended without its hover exit (the Wi-Fi gone, the app quit) left Android a mouse
+    // hovering over the status bar or the gesture area: edges and gesture navigation stop answering
+    // until the phone restarts. Any hover exit from here clears it.
+    const d = this._display();
+    if (d) s.mouse(ACTION.HOVER_EXIT, 0, 0, d.w, d.h, 0, 0);
     this._set('ready');
   }
 
@@ -633,6 +638,8 @@ class PhoneBridge extends EventEmitter {
     if (!k) return;
     const d = this._display();
     if (k.buttons && d && this.ctl) this.ctl.mouse(ACTION.UP, k.x, k.y, d.w, d.h, k.buttons, 0);
+    // The pointer leaves: without a hover exit Android keeps a mouse hovering where it was.
+    if (d && this.ctl) this.ctl.mouse(ACTION.HOVER_EXIT, k.x, k.y, d.w, d.h, 0, 0);
     for (const code of [...this.keys.held]) this._key({ t: T.K_KEY_UP, code });
     this.kvm = null;
     clearTimeout(this.pointerTimer);

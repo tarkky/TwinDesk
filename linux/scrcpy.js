@@ -28,7 +28,7 @@ const TYPE = {
   CAMERA_SET_TORCH: 18, CAMERA_ZOOM_IN: 19, CAMERA_ZOOM_OUT: 20, // scrcpy 5.0.1's ControlMessage
 };
 // MotionEvent / KeyEvent actions
-const ACTION = { DOWN: 0, UP: 1, MOVE: 2, HOVER_MOVE: 7 };
+const ACTION = { DOWN: 0, UP: 1, MOVE: 2, HOVER_MOVE: 7, HOVER_EXIT: 10 };
 const POINTER_MOUSE = -1n;
 const pushed = new Map(); // serial -> the push of the jar (one per run, shared by every session)
 
