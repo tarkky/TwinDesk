@@ -123,11 +123,67 @@ X11 and Wayland · shared folders through Samba · the phone app page by page ·
 **🤖 Android**<br><sub>10 or later, phones and tablets</sub>
 
 <a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.4.0/TwinDesk-2.4.0.apk"><img src="https://img.shields.io/badge/Phone_app-.apk-3ddc84?style=for-the-badge" alt="Android app"></a><br>
-<sub>The full app (notifications, texts, Accessibility) is installed by the computer over wireless debugging</sub>
+<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.4.0/TwinDesk-2.4.0-full.apk"><img src="https://img.shields.io/badge/Full_app-.apk-1b8a4c?style=for-the-badge" alt="Android full app"></a><br>
+<sub>The full app adds notifications, texts and Accessibility; the computer can install it for you over wireless debugging</sub>
 
 </td>
 </tr>
 </table>
+
+<p align="center">🍺 <b>Homebrew</b> on macOS: <code>brew install --cask inukaasith/twindesk/twindesk</code><br>
+<sub>Update with <code>brew upgrade --cask twindesk</code>: TwinDesk opens again by itself if it was running, so a Mac you drive only through it gets its mouse back. The <a href="https://github.com/InukaAsith/homebrew-twindesk">tap</a> follows every release.</sub></p>
+
+<a name="first-launch"></a>
+
+<details>
+<summary><b>⚠️ First launch: the apps aren't code-signed</b> <sub>how to allow them on macOS, Windows and Android</sub></summary>
+
+TwinDesk is free and has no paid Apple Developer ID or Windows code-signing certificate, so
+macOS and Windows don't know who made it and ask once before opening it. The source is all here.
+
+**🍎 macOS**
+
+The easiest way is **Homebrew**, which installs it ready to open:
+`brew install --cask inukaasith/twindesk/twindesk`
+
+From the .dmg instead:
+
+1. Drag TwinDesk into Applications and open it. macOS says it can't verify TwinDesk: click **Done**
+   (not Move to Bin).
+2. Open **System Settings › Privacy & Security**, scroll down to Security and click **Open Anyway**
+   next to "TwinDesk was blocked". Enter your password, then click **Open Anyway** again.
+
+You do this once; updates open normally. If macOS says TwinDesk **is damaged and can't be
+opened**, it isn't: run this in Terminal, then open it again:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/TwinDesk.app
+```
+
+**🪟 Windows**
+
+1. If the browser warns that the file isn't commonly downloaded, choose **Keep** (in Edge: **⋯ ›
+   Keep › Show more › Keep anyway**).
+2. When the installer shows **Windows protected your PC** (SmartScreen), click **More info**, then
+   **Run anyway**.
+
+On Windows 11 with **Smart App Control** on, unsigned apps are blocked with no Run anyway button.
+The only way past it is turning it off (Windows Security › App & browser control › Smart App Control
+settings), and on many Windows 11 versions it can't be turned back on without reinstalling Windows.
+
+**🤖 Android**
+
+1. Open the downloaded .apk. Android asks to allow your browser or Files app to **install unknown
+   apps**: tap **Settings**, turn on **Allow from this source**, go back and tap **Install**.
+2. If Play Protect warns about an unrecognised developer, tap **More details › Install anyway**.
+
+The **full app** (notifications, texts and Accessibility) is easiest installed by the computer over
+[wireless debugging](#wireless-debugging) (Phone page › Notifications from the phone): Android then
+lets you turn those on. Installed by hand, Play Protect may block it, and Android 13 and later grey
+out notification access and Accessibility as a **restricted setting**: open **Settings › Apps ›
+TwinDesk**, tap **⋮ › Allow restricted settings**, then turn them on.
+
+</details>
 
 <p align="center"><sub>Every file and older version is on the <a href="https://github.com/InukaAsith/TwinDesk/releases">releases page</a>.</sub></p>
 
