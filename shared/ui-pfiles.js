@@ -15,7 +15,7 @@ UI.tab({
   title: 'Phone Files',
   icon: 'folder',
   color: 'linear-gradient(#64d2ff, #0a84ff)',
-  desc: 'Browse your phone’s storage, copy files both ways. No ADB: TwinDesk on the phone does it.',
+  desc: 'Browse the phone’s storage and copy files both ways. No wireless debugging needed.',
   hidden: (s) => !UI.isPhone(s), // only while a phone is connected
   wifiOnly: true, // files are too big for Bluetooth: Connect with Wi-Fi Direct on top, nothing loads
   master: { get: (s) => !!(s.hub && s.hub.files), set: (v) => UI.api.hub({ do: 'set', what: 'files', on: v }) },
@@ -78,7 +78,12 @@ UI.tab({
     const serveSw = UI.switch((v) => api.hub({ do: 'share', a: 'serve', on: v }), { label: 'Share a folder with the phone' });
     const mineRow = UI.row('Share a folder with the phone', '', [chooseBtn, defaultBtn, serveSw]);
     const shareCard = UI.card('Shared folders', [phoneRow, mineRow]);
-    body.append(top.el, shareCard, wrap);
+    // Explorer's Import from phone (Windows: right-click a folder › TwinDesk): Save goes there.
+    const importRow = UI.row('', 'Choose files on the phone, then Import. They go into this folder.', [UI.button('Cancel', () => api.importCancel && api.importCancel(), 'small')]);
+    const importCard = UI.card('', [importRow], { cls: 'import-card' });
+    importCard.hidden = true;
+    let importTo = null;
+    body.append(top.el, importCard, shareCard, wrap);
     const tilde = (p) => String(p || '').replace(/^(\/Users\/[^/]+|\/home\/[^/]+|[A-Z]:\\Users\\[^\\]+)/, '~');
     function renderShare(s) {
       const sh = s.hub && s.hub.share;
@@ -179,7 +184,7 @@ UI.tab({
       if (!items.length) list.append(el('div', { class: 'hub-empty', text: asking === cwd ? 'Loading…' : 'This folder is empty' }));
       selBar.hidden = !chosen.size;
       selText.textContent = `${chosen.size} chosen`;
-      saveBtn.textContent = `Save to ${UI.fill('{me}')}`;
+      saveBtn.textContent = importTo ? `Import to ${importTo.name}` : `Save to ${UI.fill('{me}')}`;
       renameBtn.hidden = chosen.size !== 1;
       deleteBtn.textContent = confirmDelete ? `Delete ${chosen.size === 1 ? [...chosen][0] : `${chosen.size} items`}?` : 'Delete';
       deleteBtn.classList.toggle('danger', confirmDelete);
@@ -241,6 +246,13 @@ UI.tab({
     return (s) => {
       top.render(s);
       renderShare(s);
+      const imp = (s.files && s.files.importTo) || null;
+      importCard.hidden = !imp;
+      if (imp) {
+        importRow.label.textContent = (imp.why === 'capture' ? 'Capturing into ' : 'Importing into ') + imp.name;
+        importRow.setHint(imp.why === 'capture' ? 'Take photos with the phone’s camera. Each one comes into this folder.' : 'Choose files on the phone, then Import. They go into this folder.');
+      }
+      if (JSON.stringify(imp) !== JSON.stringify(importTo)) { importTo = imp; if (loaded) paint(); }
       const ready = UI.hubReady(s, 'files') && !UI.onBle(s); // over Bluetooth: the Wi-Fi Direct note only
       wrap.hidden = !ready;
       if (!ready) { loaded = false; return; }

@@ -21,6 +21,8 @@ object Notify {
     const val CH_UPDATES = "updates"
     const val CH_SCREEN = "screen"
     const val CH_ASK = "ask"
+    const val CH_REZUME = "rezume.now" // what's in use on the computer: shown with the others, no sound ("rezume", silent, hid it)
+    const val CH_REZUME_SENT = "rezume.sent" // … sent on purpose (Send to), rings
 
     const val ID_LINK = 1
     const val ID_INVITE = 2
@@ -33,6 +35,8 @@ object Notify {
     const val ID_WIFI = 9
     const val ID_INPUT = 10
     const val ID_HUB_ASK = 11
+    const val ID_REZUME = 13 // ReZume: the computer's tab or document (the last one only)
+    const val ID_REZUME_READY = 14 // … a document that came, to open
     const val ID_SOUND = 12 // the sound capture: asking for Start, then its service's own
     private const val ID_FILES_BASE = 1000
     private const val ID_COMPUTER_BASE = 100000
@@ -410,6 +414,53 @@ object Notify {
                 .setAutoCancel(true)
                 .build(),
         )
+    }
+
+    // ReZume (Rezume.kt): the computer's tab or document, to go on with here. Constant (like Handoff's
+    // icon, it stays while the computer offers it), quiet, replaced by the next, gone when the computer
+    // offers nothing; Open and Dismiss. loud: sent on purpose (Send to on the computer). Its channel is made the first time.
+    fun rezume(ctx: Context, computer: String, o: Rezume.Offer, loud: Boolean) {
+        val n = nm(ctx)
+        if (n.getNotificationChannel(CH_REZUME) == null) {
+            runCatching { n.deleteNotificationChannel("rezume") } // the first one, silent: it went under the computer's notifications
+            n.createNotificationChannel(NotificationChannel(CH_REZUME, "ReZume", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "What you were doing on your computer, to go on with here"
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(false)
+            })
+        }
+        if (loud && n.getNotificationChannel(CH_REZUME_SENT) == null) n.createNotificationChannel(NotificationChannel(CH_REZUME_SENT, "ReZume: sent to this phone", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "A page or document sent here from your computer"
+        })
+        val tap = PendingIntent.getActivity(ctx, ID_REZUME, Intent(ctx, RezumeActivity::class.java).putExtra("id", o.id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val what = if (o.kind == "web") (Uri.parse(o.url).host ?: o.url) else o.name
+        n.notify(ID_REZUME, Notification.Builder(ctx, if (loud) CH_REZUME_SENT else CH_REZUME)
+            .setSmallIcon(R.drawable.ic_stat)
+            .setContentTitle("Continue from $computer")
+            .setContentText(o.title + if (what != o.title) " · $what" else "")
+            .setSubText(o.appName.ifEmpty { null })
+            .setContentIntent(tap)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setGroup("rezume") // its own card, never bundled with the computer's notifications
+            .setOnlyAlertOnce(!loud)
+            .addAction(Notification.Action.Builder(null, "Open", tap).build())
+            .addAction(Notification.Action.Builder(null, "Dismiss", action(ctx, ActionReceiver.REZUME_DISMISS, ID_REZUME)).build())
+            .build())
+    }
+
+    fun cancelRezume(ctx: Context) = runCatching { nm(ctx).cancel(ID_REZUME) }.let { }
+
+    fun rezumeReady(ctx: Context, name: String, view: Intent) {
+        nm(ctx).notify(ID_REZUME_READY, Notification.Builder(ctx, CH_FILES)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle(name)
+            .setContentText("From your computer. Tap to open.")
+            .setContentIntent(PendingIntent.getActivity(ctx, ID_REZUME_READY, view, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+            .setAutoCancel(true)
+            .build())
     }
 
     fun viewIntent(uri: Uri, mime: String?): Intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime ?: "*/*")

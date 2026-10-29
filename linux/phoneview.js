@@ -258,6 +258,7 @@ class PhoneViews extends EventEmitter {
     win.webContents.once('did-finish-load', () => {
       v.ready = true;
       for (const [ch, m] of v.queue.splice(0)) win.webContents.send(ch, m);
+      win.webContents.send('phoneview:opts', { panel: this.getSettings().phone.panel !== false });
     });
     win.on('focus', () => this.emit('focus'));
     win.on('blur', () => this.emit('focus'));
@@ -315,6 +316,20 @@ class PhoneViews extends EventEmitter {
   }
 
   _input(v, m) {
+    // Fullscreen (its title-bar button, F11): only the picture, black around it; F11 again leaves.
+    if (m.t === 'full') {
+      const on = !v.win.isFullScreen();
+      v.win.setFullScreen(on);
+      return this._send(v, 'phoneview:opts', { full: on });
+    }
+    // The title bar's panel button: the controls shown or hidden in every phone window, remembered.
+    if (m.t === 'panel') {
+      const ph = this.getSettings().phone;
+      ph.panel = ph.panel === false;
+      this.bridge.emit('save');
+      for (const w of this.views.values()) this._send(w, 'phoneview:opts', { panel: ph.panel });
+      return this.emit('change');
+    }
     const s = v.session;
     const size = v.size;
     if (!s || s.closed) return;

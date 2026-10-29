@@ -5,12 +5,13 @@
 'use strict';
 
 UI.tab({
-  id: 'overview',
-  order: 0,
-  title: 'Overview',
-  heading: 'TwinDesk',
+  id: 'connection', // was Overview: the device's own Overview is shared/ui-device.js
+  order: 1,
+  title: 'Connection',
+  heading: 'Connection',
+  icon: 'link',
   desc: '',
-  color: 'linear-gradient(#8e8e93, #636366)',
+  color: 'linear-gradient(#5ac8fa, #007aff)',
   badge: (s) => (s.discovery && (!s.discovery.on || !s.discovery.localNetwork) ? '!' : ''),
   build(body) {
     const { el, api } = UI;

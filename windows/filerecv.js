@@ -44,7 +44,7 @@ class FileRecv {
     if (typeof m.id !== 'string' || this.files.has(m.id) || this.bfiles.has(m.id) || m.drop === 'drag') return; // drags: dragrecv.js
     if (this.claims && this.claims(m)) return; // a paste Windows copies itself (dragrecv.js)
     const refuse = (why) => this.link.send({ t: T.FILE_REFUSE, id: m.id, why });
-    if (m.drop === 'send' || m.drop === 'paste') return this._offerBatch(m, refuse);
+    if (m.drop === 'send' || m.drop === 'paste' || m.drop === 'rezume') return this._offerBatch(m, refuse); // rezume: a document taken here (shared/rezume.js)
     if (!this.settings.files.acceptFromMac) return refuse('not_allowed');
     if (!(m.size >= 0) || m.size > P.FILE_MAX_BYTES) return refuse('too_big');
     const name = safeName(m.name);
@@ -152,7 +152,7 @@ class FileRecv {
     let b = this.batches.get(m.batch);
     if (!b) {
       const pasted = this.expected.get(m.batch);
-      if (m.drop === 'paste' && !pasted) return refuse('not_allowed'); // we never asked for it
+      if ((m.drop === 'paste' || m.drop === 'rezume') && !pasted) return refuse('not_allowed'); // we never asked for it
       if (m.drop === 'send' && !this.settings.files.acceptFromMac) return refuse('not_allowed');
       // total: the whole batch's bytes (file.offer `bytes`, or what fclip.offer said); 0 = unknown.
       const total = Number(m.bytes) > 0 ? Number(m.bytes) : pasted ? pasted.bytes : 0;

@@ -15,6 +15,7 @@ import android.provider.Settings
 import android.util.Base64
 import java.io.ByteArrayOutputStream
 import android.service.notification.StatusBarNotification
+import org.json.JSONArray
 import org.json.JSONObject
 
 class Notifs(core: Core) : Feature(core) {
@@ -28,6 +29,18 @@ class Notifs(core: Core) : Feature(core) {
     private val iconsIn = object : LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
         override fun removeEldestEntry(e: MutableMap.MutableEntry<String, Bitmap>?) = size > 100
     }
+    // Each sent notification's reply action (a chat's Reply), for notif.reply from the computer.
+    private val replies = object : LinkedHashMap<String, Notification.Action>(32, 0.75f, true) {
+        override fun removeEldestEntry(e: MutableMap.MutableEntry<String, Notification.Action>?) = size > 80
+    }
+    // Messages' chat apps on the computer (shared/chats.js): while it asks (chat.want), each chat
+    // app conversation's recent messages as its notification shows them (chat.conv), whether or not
+    // notifications go there; answered through the same Reply (notif.reply).
+    @Volatile private var chatsWanted = false
+    private val chatApps = setOf(
+        "com.whatsapp", "com.whatsapp.w4b", "com.instagram.android", "org.telegram.messenger", "org.telegram.messenger.web",
+        "org.thunderdog.challegram", "com.facebook.orca", "org.thoughtcrime.securesms",
+    )
     private val recentSent = object : LinkedHashMap<String, Long>(32, 0.75f, true) {
         override fun removeEldestEntry(e: MutableMap.MutableEntry<String, Long>?) = size > 64
     }
@@ -50,11 +63,13 @@ class Notifs(core: Core) : Feature(core) {
 
     override fun onWelcome(host: Host) {
         peerAccepts = false
+        chatsWanted = false
         sendPolicy()
     }
 
     override fun onClosed() {
         peerAccepts = false
+        chatsWanted = false
         synchronized(iconsSent) { iconsSent.clear() }
     }
 
@@ -121,8 +136,67 @@ class Notifs(core: Core) : Feature(core) {
         return ""
     }
 
+    private fun appNameOf(pkg: String): String = when (pkg) {
+        "com.whatsapp" -> "WhatsApp"
+        "com.whatsapp.w4b" -> "WhatsApp Business"
+        "com.instagram.android" -> "Instagram"
+        "org.telegram.messenger", "org.telegram.messenger.web" -> "Telegram"
+        "com.facebook.orca" -> "Messenger"
+        "org.thoughtcrime.securesms" -> "Signal"
+        else -> runCatching { core.ctx.packageManager.let { pm -> pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() } }.getOrDefault(pkg)
+    }
+
+    // A chat app's conversation for the computer's Messages: its MessagingStyle messages (sender,
+    // text, time; the user's own have no sender), else the notification's text as one message.
+    private fun chatPosted(sbn: StatusBarNotification) {
+        if (!chatsWanted || !core.link.connected || sbn.packageName !in chatApps) return
+        val n = sbn.notification ?: return
+        if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
+        if (core.store.flag("notifs.hideText", false)) return
+        val x = n.extras
+        val title = extractTitle(x)
+        val convTitle = x.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim().orEmpty()
+        val name = convTitle.ifEmpty { title }
+        val key = (if (Build.VERSION.SDK_INT >= 26) n.shortcutId else null)?.takeIf { it.isNotEmpty() } ?: name
+        if (key.isEmpty()) return
+        val items = JSONArray()
+        val msgs = messages(x)
+        if (!msgs.isNullOrEmpty()) {
+            for (p in msgs) {
+                if (p !is Bundle) continue
+                val text = p.getCharSequence("text")?.toString()?.trim().orEmpty()
+                if (text.isEmpty()) continue
+                val person = senderOf(p)
+                val sender = p.getCharSequence("sender")
+                val me = person == null && sender == null
+                val from = if (me) "" else (person?.name ?: sender)?.toString()?.trim().orEmpty()
+                items.put(JSONObject().put("at", p.getLong("time", sbn.postTime)).put("from", from.take(120)).put("text", text.take(4000)).put("me", me))
+            }
+        } else {
+            val text = extractText(x)
+            if (text.isNotEmpty()) items.put(JSONObject().put("at", sbn.postTime).put("from", title.take(120)).put("text", text.take(4000)).put("me", false))
+        }
+        if (items.length() == 0) return
+        val reply = n.actions?.firstOrNull { a -> a.remoteInputs?.any { it.allowFreeFormInput } == true }
+        if (reply != null) synchronized(replies) { replies[sbn.key] = reply }
+        val group = x.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION, false)
+        core.send(
+            msg(
+                "chat.conv", "key" to key.take(300), "app" to sbn.packageName, "appName" to appNameOf(sbn.packageName),
+                "name" to name.take(200), "group" to group, "id" to sbn.key.take(200), "reply" to (reply != null), "items" to items,
+            ),
+        )
+    }
+
+    // The conversations open on the phone now (the computer just asked).
+    private fun chatSnapshot() {
+        val l = NotifListener.running ?: return
+        runCatching { l.activeNotifications }.getOrNull()?.forEach { runCatching { chatPosted(it) } }
+    }
+
     // From NotifListener: a new notification on this phone.
     fun posted(sbn: StatusBarNotification) {
+        runCatching { chatPosted(sbn) }
         if (!peerAccepts || !core.sync.get("notifs", "out") || !core.link.connected) return
         val n = sbn.notification ?: return
         val pkg = sbn.packageName
@@ -156,6 +230,8 @@ class Notifs(core: Core) : Feature(core) {
             else -> runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }.getOrDefault(pkg)
         }
 
+        val reply = n.actions?.firstOrNull { a -> a.remoteInputs?.any { it.allowFreeFormInput } == true }
+        if (reply != null) synchronized(replies) { replies[sbn.key] = reply }
         val hide = core.store.flag("notifs.hideText", false)
         val icon = if (synchronized(iconsSent) { iconsSent.add(pkg) }) appIcon(pkg) else null
         core.send(
@@ -163,7 +239,10 @@ class Notifs(core: Core) : Feature(core) {
                 Proto.T.NOTIF, "id" to sbn.key.take(200), "app" to pkg, "appName" to appName,
                 "title" to title.take(300), "subtitle" to (x.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString() ?: "").take(200),
                 "body" to if (hide) "" else text.take(1000), "at" to sbn.postTime,
-            ).apply { if (icon != null) put("icon", icon) },
+            ).apply {
+                if (icon != null) put("icon", icon)
+                if (reply != null) put("reply", true) // the computer may answer it (notif.reply)
+            },
         )
         sent++
         core.changed()
@@ -172,6 +251,10 @@ class Notifs(core: Core) : Feature(core) {
     override fun onMessage(t: String, m: JSONObject): Boolean {
         when (t) {
             Proto.T.NOTIF_POLICY -> peerAccepts = m.optBoolean("accept")
+            "chat.want" -> {
+                chatsWanted = m.optBoolean("on") && hasAccess
+                if (chatsWanted) chatSnapshot()
+            }
             Proto.T.NOTIF -> {
                 if (!core.sync.get("notifs", "in")) return true
                 val app = m.str("appName", 80).ifEmpty { m.str("app", 80) }
@@ -179,6 +262,19 @@ class Notifs(core: Core) : Feature(core) {
                 val body = listOf(m.str("subtitle", 200), m.str("body", 1000)).filter { it.isNotEmpty() }.joinToString("\n")
                 Notify.fromComputer(core.ctx, m.str("id", 200), app, title, body, core.host?.name ?: "Computer", iconIn(m))
                 shown++
+            }
+            // An answer typed on the computer (Overview, Messages' chat apps): through the app's own Reply.
+            "notif.reply" -> {
+                val key = m.str("id", 200)
+                val text = m.str("text", 5000)
+                val a = synchronized(replies) { replies[key] } ?: return true
+                if (text.isNotEmpty()) runCatching {
+                    val intent = android.content.Intent()
+                    val results = Bundle()
+                    for (ri in a.remoteInputs.orEmpty()) results.putCharSequence(ri.resultKey, text)
+                    android.app.RemoteInput.addResultsToIntent(a.remoteInputs, intent, results)
+                    a.actionIntent.send(core.ctx, 0, intent)
+                }
             }
             else -> return false
         }

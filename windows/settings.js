@@ -5,7 +5,7 @@ const P = require('../shared/protocol.js');
 const CL = require('../shared/cursorlock.js');
 const { normalizeFolder } = require('../shared/received.js');
 
-const TABS = ['phone', 'overview', 'calls', 'messages', 'media', 'pfiles', 'mac-pc', 'pc-mac', 'cursor', 'keyboard', 'clipboard', 'notifications', 'files', 'mount', 'terminal', 'audio', 'camera', 'remote', 'apps', 'multi', 'general', 'about'];
+const TABS = ['phone', 'overview', 'connection', 'mirror', 'papps', 'calls', 'messages', 'media', 'pfiles', 'mac-pc', 'pc-mac', 'cursor', 'keyboard', 'clipboard', 'notifications', 'files', 'mount', 'terminal', 'audio', 'camera', 'remote', 'apps', 'rezume', 'multi', 'general', 'about'];
 
 const OLD_TABS = { display: 'mac-pc', receive: 'mac-pc', share: 'pc-mac' }; // older names
 
@@ -100,6 +100,8 @@ function normalize(s) {
     // Remote tab (shared/phone-remote.js): the phone's Remote page moves the pointer and types here
     // Real gamepad (pad): its sticks and buttons as a controller here, off until turned on
     remote: { allow: bool((s.remote || {}).allow, was), pad: bool((s.remote || {}).pad, false) },
+    // ReZume tab (shared/rezume.js): off until turned on; what goes, which ways, where it shows
+    rezume: require('../shared/rezume.js').normalize(s.rezume),
     // Camera tab (shared/camshare.js): this computer's camera to the other one, off until turned
     // on; device: which camera (a deviceId), '' = the default one; virtual: the running camera's
     // picture also goes to the virtual camera (shared/vcam.js), off until turned on; rotate: its
@@ -171,6 +173,7 @@ function normalize(s) {
       // Where a phone window's controls sit (phoneview.js): 'top' (the title bar, the default), 'side'
       // (a panel down the right), 'bottom' (Back, Home and Recents under the picture). rev 10: the title bar once.
       controls: (s.rev || 0) >= 10 && ['side', 'top', 'bottom'].includes(ph.controls) ? ph.controls : 'top',
+      panel: bool(ph.panel, true), // the controls shown in phone windows (the title bar's panel button), as last left
       // Keys in a phone window and on the phone (shared/phonechat.js): Enter sends in WhatsApp,
       // Instagram and Telegram (Shift+Enter a new line); the arrow keys swipe the screen.
       enterSends: bool(ph.enterSends, true),
@@ -194,9 +197,15 @@ function normalize(s) {
     // General and Display show what's missing (a firewall that changes with the network, a helper
     // that restarts, a phone connecting don't bring the screen back).
     setup: { skipped: Array.isArray(setup.skipped) ? setup.skipped.filter((x) => typeof x === 'string').slice(0, 10) : [], done: bool(setup.done, Array.isArray(setup.skipped) && setup.skipped.length > 0) },
-    ui: { tab: OLD_TABS[ui.tab] || (TABS.includes(ui.tab) ? ui.tab : 'overview') },
+    // overview: what Overview shows (General › Overview), each on unless switched off.
+    ui: { tab: OLD_TABS[ui.tab] || (TABS.includes(ui.tab) ? ui.tab : 'overview'), overview: overviewParts(ui.overview), chats: bool(ui.chats, false) },
     windows: s.windows && typeof s.windows === 'object' ? s.windows : {},
   };
+}
+
+function overviewParts(o) {
+  const v = o && typeof o === 'object' ? o : {};
+  return { media: bool(v.media, true), qs: bool(v.qs, true), notifs: bool(v.notifs, true), apps: bool(v.apps, true), features: bool(v.features, true) };
 }
 
 // pair.sync values per paired device: booleans only, at most 20 devices.

@@ -26,7 +26,7 @@ UI.tab({
     // On Bluetooth: onto a direct Wi-Fi link on request, until Back to Bluetooth (netlink.js 'user').
     let wifiOn = false;
     const wifiBtn = UI.button('Connect with Wi-Fi Direct', () => api.netWifi(!wifiOn));
-    const hotspotBtn = UI.button('Connect with hotspot', () => { api.netWifi('hotspot'); UI.go('overview'); }); // its name and password there
+    const hotspotBtn = UI.button('Connect with hotspot', () => { api.netWifi('hotspot'); UI.go('connection'); }); // its name and password there
     // How the mouse and keyboard reach the phone (settings.phone.input; the phone's own toggle too).
     const via = UI.segmented([
       { value: 'adb', label: 'ADB', title: 'Wireless debugging: full control' },

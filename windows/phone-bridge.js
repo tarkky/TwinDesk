@@ -368,6 +368,15 @@ class PhoneBridge extends EventEmitter {
     return null;
   }
 
+  // Paired some other way (wireless debugging's QR code, shared/adbqr.js): connect as after a code.
+  pairedNow() {
+    this.pairedAt = Date.now();
+    this.misses = 0;
+    this._known(true);
+    this._set('connecting', 'Paired. Connecting…');
+    setTimeout(() => this._kick(), 1000);
+  }
+
   // The code from "Pair device with pairing code" (and its address:port when mDNS can't see it).
   async pair(code, where) {
     code = String(code || '').replace(/\D/g, '');
@@ -404,6 +413,10 @@ class PhoneBridge extends EventEmitter {
       `cmd notification allow_listener ${APP_ID}/${APP_ID}.NotifListener`,
       `dumpsys deviceidle whitelist +${APP_ID}`,
       `appops set ${APP_ID} RUN_ANY_IN_BACKGROUND allow`,
+      // Overview's most used apps, auto-rotate and Do not disturb from the computer (DevCtl.kt).
+      `appops set ${APP_ID} GET_USAGE_STATS allow`,
+      `appops set ${APP_ID} WRITE_SETTINGS allow`,
+      `cmd notification allow_dnd ${APP_ID}`,
     ];
     if (this.getSettings().phone && this.getSettings().phone.wallpaper !== false) cmds.push(`appops set ${APP_ID} MANAGE_EXTERNAL_STORAGE allow`);
     for (const c of cmds) await this.adb.shell(serial, c, { timeout: 8000 });

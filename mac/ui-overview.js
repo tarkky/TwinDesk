@@ -1,16 +1,72 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
-// Overview tab: this Mac's address and Connect by address on top, the
-// computers nearby (always visible), the two computers, one switch per feature and direction,
-// and everything paired.
+// Connection page (was Overview): this Mac's address and Connect by address on top, the computers
+// and phones nearby, pairing a phone with a QR code, the link itself, the phone's wireless debugging
+// and everything paired. The start page until something is connected; then Overview
+// (shared/ui-device.js) shows the device, with the feature switches below (UI.featureCards, here).
 'use strict';
 
+// Every feature's two switches, one card per direction; a row opens its page.
+UI.featureCards = () => {
+  const { el, api } = UI;
+  const sw = (label, tab, get, set, { phone = true, only = false } = {}) => {
+    const c = UI.switch(set, { label });
+    const row = UI.row(label, '', [c, el('span', { class: 'chev', text: '›' })], { onClick: () => UI.go(tab) });
+    return { c, row, get, phone, only }; // phone: false = hidden while a phone is the peer; only: shown only with one
+  };
+  const notPhone = { phone: false };
+  const m2w = [
+    sw('Screen', 'share', (s) => s.sharing && s.sharing.on, (v) => api.setSharing(v)),
+    sw('Sound', 'audio', (s) => s.audio && s.audio.send, (v) => api.setAudio({ send: v })),
+    sw('Mouse and keyboard', 'cursor', (s) => s.kvm && s.kvm.driveOther, (v) => api.setKvm({ driveOther: v })),
+    sw('Clipboard', 'clipboard', (s) => s.clipboard && s.clipboard.send, (v) => api.setClipboard({ send: v })),
+    sw('Notifications', 'notifications', (s) => s.notifs && s.notifs.send, (v) => api.setNotifs({ send: v })),
+    sw('Shared folder', 'files', (s) => s.smb && s.smb.sharing, (v) => api.setShareMac(v)),
+    sw('Terminal', 'terminal', (s) => s.terminal && s.terminal.connectPc, (v) => api.setTerminal({ connectPc: v }), notPhone),
+    sw('Apps', 'apps', (s) => s.apps && s.apps.offer, (v) => api.setApps({ offer: v }), notPhone),
+  ];
+  const w2m = [
+    sw('Screen', 'receive', (s) => s.receive && s.receive.open, (v) => (v ? api.showPcView() : api.closePcView()), notPhone),
+    sw('Sound', 'audio', (s) => s.audio && s.audio.receive, (v) => api.setAudio({ receive: v })),
+    sw('Mouse and keyboard', 'cursor', (s) => s.kvm && s.kvm.beDriven, (v) => api.setKvm({ beDriven: v })),
+    sw('Clipboard', 'clipboard', (s) => s.clipboard && s.clipboard.receive, (v) => api.setClipboard({ receive: v })),
+    sw('Notifications', 'notifications', (s) => s.notifs && s.notifs.receive, (v) => api.setNotifs({ receive: v })),
+    sw('Shared folder', 'files', (s) => s.smb && s.smb.connectPc, (v) => api.setSmb({ connectPc: v })),
+    sw('Terminal', 'terminal', (s) => s.terminal && s.terminal.allowPc, (v) => api.setTerminal({ allowPc: v }), notPhone),
+    sw('Apps', 'apps', (s) => s.papps && s.papps.on, (v) => api.setPcApps({ on: v }), notPhone),
+  ];
+  const hub = (what) => (v) => api.hub({ do: 'set', what, on: v });
+  const phoneOnly = { phone: true, only: true };
+  w2m.splice(5, 0,
+    sw('Calls', 'calls', (s) => s.hub && s.hub.calls, hub('calls'), phoneOnly),
+    sw('Messages', 'messages', (s) => s.hub && s.hub.messages, hub('messages'), phoneOnly),
+    sw('Photos', 'media', (s) => s.hub && s.hub.media, hub('media'), phoneOnly),
+    sw('Phone Files', 'pfiles', (s) => s.hub && s.hub.files, hub('files'), phoneOnly));
+  w2m.push(sw('ReZume', 'rezume', (s) => s.rezume && s.rezume.on && s.rezume.receive, (v) => api.setRezume(v ? { on: true, receive: true } : { receive: false })));
+  m2w.push(sw('ReZume', 'rezume', (s) => s.rezume && s.rezume.on && s.rezume.send, (v) => api.setRezume(v ? { on: true, send: true } : { send: false })));
+  const all = [...m2w, ...w2m];
+  return {
+    el: UI.pair(UI.dir('m2w', m2w.map((x) => x.row)), UI.dir('w2m', w2m.map((x) => x.row))),
+    update(s) {
+      const phone = UI.isPhone(s) || !!(s.phone && s.phone.connected);
+      for (const x of all) {
+        let on = false;
+        try { on = !!x.get(s); } catch (e) { /* not in this state */ }
+        x.c.set(on);
+        x.row.hidden = (x.phone === false && phone) || (x.only && !phone);
+      }
+    },
+  };
+};
+
 UI.tab({
-  id: 'overview',
-  order: 0,
-  title: 'Overview',
-  heading: 'TwinDesk',
+  id: 'connection',
+  order: 1,
+  title: 'Connection',
+  heading: 'Connection',
+  icon: 'link',
+  group: 'Device',
   desc: '',
-  color: 'linear-gradient(#8e8e93, #636366)',
+  color: 'linear-gradient(#5ac8fa, #007aff)',
   badge: (s) => (s.discovery && (!s.discovery.on || !s.discovery.localNetwork) ? '!' : ''),
   build(body) {
     const { el, api } = UI;
@@ -70,59 +126,23 @@ UI.tab({
       el('div', { class: 'hero-actions' }, [wifiBtn, hotspotBtn]),
     ]);
 
-    // ---- feature switches ----
-    const sw = (label, tab, get, set, { phone = true } = {}) => {
-      const c = UI.switch(set, { label });
-      const row = UI.row(label, '', [c, el('span', { class: 'chev', text: '›' })], { onClick: () => UI.go(tab) });
-      return { c, row, get, phone }; // phone: false = hidden while a phone is the peer
-    };
-    const notPhone = { phone: false };
-    const m2w = [
-      sw('Screen', 'share', (s) => s.sharing && s.sharing.on, (v) => api.setSharing(v)),
-      sw('Sound', 'audio', (s) => s.audio && s.audio.send, (v) => api.setAudio({ send: v })),
-      sw('Mouse and keyboard', 'cursor', (s) => s.kvm && s.kvm.driveOther, (v) => api.setKvm({ driveOther: v })),
-      sw('Clipboard', 'clipboard', (s) => s.clipboard && s.clipboard.send, (v) => api.setClipboard({ send: v })),
-      sw('Notifications', 'notifications', (s) => s.notifs && s.notifs.send, (v) => api.setNotifs({ send: v })),
-      sw('Shared folder', 'files', (s) => s.smb && s.smb.sharing, (v) => api.setShareMac(v)),
-      sw('Terminal', 'terminal', (s) => s.terminal && s.terminal.connectPc, (v) => api.setTerminal({ connectPc: v }), notPhone),
-      sw('Apps', 'apps', (s) => s.apps && s.apps.offer, (v) => api.setApps({ offer: v }), notPhone),
-    ];
-    const w2m = [
-      sw('Screen', 'receive', (s) => s.receive && s.receive.open, (v) => (v ? api.showPcView() : api.closePcView()), notPhone),
-      sw('Sound', 'audio', (s) => s.audio && s.audio.receive, (v) => api.setAudio({ receive: v })),
-      sw('Mouse and keyboard', 'cursor', (s) => s.kvm && s.kvm.beDriven, (v) => api.setKvm({ beDriven: v })),
-      sw('Clipboard', 'clipboard', (s) => s.clipboard && s.clipboard.receive, (v) => api.setClipboard({ receive: v })),
-      sw('Notifications', 'notifications', (s) => s.notifs && s.notifs.receive, (v) => api.setNotifs({ receive: v })),
-      sw('Shared folder', 'files', (s) => s.smb && s.smb.connectPc, (v) => api.setSmb({ connectPc: v })),
-      sw('Terminal', 'terminal', (s) => s.terminal && s.terminal.allowPc, (v) => api.setTerminal({ allowPc: v }), notPhone),
-      sw('Apps', 'apps', (s) => s.papps && s.papps.on, (v) => api.setPcApps({ on: v }), notPhone),
-    ];
-    const quick = [...m2w, ...w2m];
-
     // ---- permissions missing after Setup (it shows only once): a row here, the switches in General ----
     const PERMS = [['screen', 'Screen Recording', (p) => p.screen !== 'granted'], ['accessibility', 'Accessibility', (p) => !p.accessibility], ['inputMonitoring', 'Input Monitoring', (p) => p.inputMonitoring === false]];
     const permRow = UI.row('', '', [UI.button('Open General', () => UI.go('general'), 'small primary')]);
     const permCard = UI.card('', [permRow]);
 
-    // ---- a connected phone's wireless debugging, until it works (the Phone page has it too) ----
-    const ADB = { needsPair: ['bad', 'Pair once'], waitingWifi: ['bad', 'Off'], connecting: ['muted', 'Looking…'], missing: ['bad', 'Missing'], error: ['bad', 'Problem'] };
-    const adbPill = el('span', { class: 'pill bad' });
-    const adbRow = UI.row('Wireless debugging', '', [adbPill, UI.button('Try Again', () => api.phoneRetry(), 'small')]);
-    const adbCode = el('input', { type: 'text', placeholder: '123456', maxLength: 7, inputMode: 'numeric', autocomplete: 'off', spellcheck: false, attrs: { 'aria-label': 'Pairing code' } });
-    const adbWhere = el('input', { type: 'text', placeholder: 'Address:port (optional)', autocomplete: 'off', spellcheck: false, attrs: { 'aria-label': 'Pairing address' } });
-    const adbPair = UI.button('Pair', () => api.phonePair({ code: adbCode.value.replace(/\D/g, ''), where: adbWhere.value }), 'small primary'); // "123 456", "123-456" too
-    adbCode.onkeydown = adbWhere.onkeydown = (e) => { if (e.key === 'Enter') adbPair.click(); };
-    const adbPairRow = UI.row('Pairing code', 'Or type it on the phone, in TwinDesk’s notification', [adbCode, adbWhere, adbPair]);
-    const adbCard = UI.card('Phone screen, mouse and keyboard', [adbRow, adbPairRow]);
+    // ---- a connected phone's wireless debugging (shared/ui-adb.js) and pairing by QR code (shared/ui-qrpair.js) ----
+    const adb = UI.adbCard();
+    const qrPair = UI.qrPairCard ? UI.qrPairCard() : null;
     const pairedList = el('div');
 
     body.append(
       permCard,
       UI.card('', [addrRow, ipRow]),
       UI.card('Nearby', [discRow, foundList, ...bleRows], { actions: [refresh] }),
+      ...(qrPair ? [qrPair.el] : []),
       hero,
-      adbCard,
-      UI.pair(UI.dir('m2w', m2w.map((x) => x.row)), UI.dir('w2m', w2m.map((x) => x.row))),
+      adb.el,
       UI.card('Paired', [pairedList]),
     );
 
@@ -275,24 +295,9 @@ UI.tab({
       wifiBtn.hidden = !c || !(wifiOn || c.transport === 'ble');
       hotspotBtn.hidden = !c || wifiOn || n.state === 'hotspot' || c.transport !== 'ble' || !UI.isPhone(s);
 
-      // the phone's wireless debugging: only while it needs something
-      const ph = s.phone || {};
-      const br = (ph.connected && ph.bridge) || { state: 'off' };
-      const pairable = br.state === 'needsPair' || !!br.canPair;
-      adbCard.hidden = !ph.connected || !(pairable || ['waitingWifi', 'missing', 'error'].includes(br.state));
-      if (!adbCard.hidden) {
-        const [cls, label] = ADB[br.state] || ADB.error;
-        adbPill.className = `pill ${cls}`;
-        adbPill.textContent = label;
-        adbRow.setHint(br.message || '');
-        adbPairRow.hidden = !pairable;
-        if (UI.adbBle(s, adbCard, adbRow, adbPill)) adbPairRow.hidden = true;
-      }
-
-      for (const x of quick) {
-        x.c.set(x.get(s));
-        x.row.hidden = !!(x.phone === false && p.phone);
-      }
+      // the phone's wireless debugging, and pairing a phone with a QR code
+      adb.update(s);
+      if (qrPair) qrPair.update(s);
 
       // paired: guests (they connect to us) and hosts (we connect to them)
       const wk = (s.wake && s.wake.peers) || {};

@@ -251,6 +251,15 @@
       // {b, lx, ly, rx, ry, lt, rt}, only while remote.state says pad: b the buttons (bits 0..13: A B X Y LB RB
       // Back Start L3 R3 Up Down Left Right), the sticks -1..1 (y down), the triggers 0..1; on change, at most every 8 ms
       REMOTE_PAD: 'remote.pad',
+      // ReZume (shared/rezume.js, ReZume.kt): what is in use on one side, to go on with on the other.
+      // Off until turned on on both sides; offers go only to a side whose rz.policy says on.
+      RZ_POLICY: 'rz.policy', // either way, after welcome and on change {on, web, docs, apps, push}: this side takes the other's ReZume offers (and of which kinds)
+      // sender->receiver {id, kind: 'web'|'doc'|'app', title, url? (web), name?, size? (doc), app (bundle id, exe or package), appName, icon? (small PNG data: URL), at, push?}:
+      // the tab, document or phone app in use there (kept until another or rz.clear); push: sent on purpose (Send to / Open on computer), opened at once
+      RZ_OFFER: 'rz.offer',
+      RZ_CLEAR: 'rz.clear', // sender->receiver {id}: nothing to go on with any more
+      RZ_TAKE: 'rz.take', // receiver->sender {id}: taken; a doc's file follows as file.offer drop 'rezume', batch 'rz-<id>' (only to a side that asked)
+      RZ_DONE: 'rz.done', // sender->receiver {id, ok, why?}: a doc that couldn't be sent (gone, too big)
       PHONE_SEND: 'phone.send', // computer->phone: clicks the active app's Send button
       PHONE_ACTIVE_APP: 'phone.activeApp', // phone->computer {pkg}: current foreground package
       // Wireless debugging (adb), which the Mac uses for the screen, touch, mouse and keyboard,

@@ -7,7 +7,7 @@
 UI.tab({
   id: 'cursor',
   order: 20,
-  title: 'Cursor',
+  title: 'Mouse',
   color: 'linear-gradient(#ffb340, #ff9500)',
   desc: 'Move the pointer off the edge of the screen to go to the other computer.',
   // One switch: cursor sharing, the same one the hotkey's double-tap and the other
@@ -29,7 +29,10 @@ UI.tab({
     const bleRow = UI.row('Over Bluetooth', 'When {name} isn’t on this network and you’re connected through Bluetooth (slower). Off: nothing crosses until you’re on Wi-Fi again. The same on both', [ble]);
     // A phone as the peer: how the pointer and keys reach it (settings.phone.input, the phone's own toggle too).
     const via = UI.segmented([{ value: 'adb', label: 'ADB' }, { value: 'phone', label: 'Accessibility' }], (v) => api.setPhone({ input: v, inputPicked: true }));
-    const viaRow = UI.row('Through', 'ADB: full control. Accessibility: TwinDesk on the phone taps and types itself, over Wi-Fi, Wi-Fi Direct or Bluetooth, no developer options', [via.el]);
+    // With a phone: its own card on top, with the way to its wireless debugging (Connection).
+    const adbBtn = UI.button('Wireless Debugging', () => UI.go('connection'), 'small');
+    const viaRow = UI.row('Control the phone with', '', [via.el, adbBtn]);
+    const viaCard = UI.card('Phone', [viaRow]);
     const resistance = UI.slider({ min: 0, max: 400, step: 10, format: (v) => (v ? v + ' px' : 'None') }, (v) => set({ resistancePx: v }));
     const pair = UI.dirCards(
       { on: { get: (s) => s.kvm.beDriven, set: (v) => set({ beDriven: v }) }, label: 'Use {name}’s mouse and keyboard on {me}', hint: 'Push the pointer past the edge there', rows: [
@@ -38,7 +41,6 @@ UI.tab({
       ] },
       { on: { get: (s) => s.kvm.driveOther, set: (v) => set({ driveOther: v }) }, label: 'Use {me}’s mouse and keyboard on {name}', hint: 'Push the pointer past the edge', rows: [
         UI.row('Edge resistance', 'Push a little further to cross', [resistance]),
-        viaRow,
       ] },
     );
 
@@ -48,6 +50,7 @@ UI.tab({
     const lock = UI.cursorLock();
 
     body.append(
+      viaCard,
       pair.el,
       lock.el,
       UI.card('Feel', [gestureRow]),
@@ -67,8 +70,14 @@ UI.tab({
       resistance.set(k.resistancePx);
       ble.set(k.ble !== false);
       lock.update(s);
-      viaRow.hidden = !UI.peer(s).phone;
-      via.set(((s.phone || {}).bridge || {}).input || (((s.phone || {}).settings || {}).input === 'phone' ? 'phone' : 'adb'));
+      viaCard.hidden = !UI.peer(s).phone;
+      const br = (s.phone || {}).bridge || {};
+      const pset = (s.phone || {}).settings || {};
+      via.set(br.input || (pset.input === 'phone' ? 'phone' : 'adb'));
+      adbBtn.hidden = br.state === 'ready';
+      viaRow.setHint(br.inputMode === 'auto' ? (br.state === 'ready' ? 'Automatic: ADB, wireless debugging is ready' : 'Automatic: Accessibility until wireless debugging is set up')
+        : br.input === 'phone' ? 'Accessibility: TwinDesk on the phone taps and types. Works over Wi-Fi, Wi-Fi Direct and Bluetooth, no developer options'
+          : 'ADB: full control through wireless debugging' + (br.state === 'ready' ? '' : ' (not set up yet)'));
       // kvm.layout says where this computer is seen from the other one; the other one is opposite.
       const p = UI.peer(s);
       const m = (s.kvmState && s.kvmState.map) || { mine: [], theirs: [], along: null };

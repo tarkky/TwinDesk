@@ -41,6 +41,9 @@
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" /> <!-- Do not disturb and Silent from the computer's Overview (DevCtl.kt) -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" /> <!-- the most used apps on Overview: granted over wireless debugging -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" /> <!-- auto-rotate from the computer's Overview -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
@@ -132,6 +135,53 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity-alias>
+
+        <!-- ReZume (Rezume.kt): a link shared opens on the computer. Enabled only while ReZume is on. -->
+        <activity-alias
+            android:name=".OpenOnComputer"
+            android:targetActivity=".ShareActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="Open on computer"
+            android:icon="@mipmap/ic_launcher">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity
+            android:name=".RezumeActivity"
+            android:exported="false"
+            android:theme="@style/Theme.TwinDesk.Invisible"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="" />
+
+        <!-- Pairing by the computer's QR code: the camera app opens twindesk://pair links here -->
+        <activity
+            android:name=".QrActivity"
+            android:exported="true"
+            android:theme="@style/Theme.TwinDesk.Invisible"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="twindesk" android:host="pair" />
+            </intent-filter>
+        </activity>
+
+        <!-- Capture from phone (the computer's Explorer menu): the camera app, each photo to the computer -->
+        <activity
+            android:name=".CaptureActivity"
+            android:exported="false"
+            android:theme="@style/Theme.TwinDesk.Invisible"
+            android:excludeFromRecents="true"
+            android:taskAffinity="" />
 
         <activity
             android:name=".ClipActivity"

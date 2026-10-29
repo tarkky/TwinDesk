@@ -9,7 +9,8 @@
 //       popup: {checked, set}, screen: [{label, checked, set}], clipboard: {checked, set},
 //       sound: {checked, set}, drag: {checked, set}, shortcuts: {label, checked, set},
 //       found: [{label, click}], byAddress(), lookAgain(), again?: {label, click},
-//       disconnect?: {label, click}, update?: {label, click}, open(), log(), quit()}
+//       disconnect?: {label, click}, update?: {label, click}, open(), log(), quit(),
+//       rezume?: [{label, click}] (Continue …, Send … to: shared/rezume.js)}
 'use strict';
 
 const check = (label, o) => ({ label, type: 'checkbox', checked: !!o.checked, click: (i) => o.set(i.checked) });
@@ -35,6 +36,7 @@ function template(m) {
   return [
     status,
     ...(m.home ? [{ label: 'Bring Mouse and Keyboard Back', click: m.home }] : []),
+    ...(m.rezume && m.rezume.length ? [...m.rezume, sep] : []),
     check('Cursor Sharing', m.shared),
     sep,
     {

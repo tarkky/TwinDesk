@@ -30,7 +30,10 @@ const ICONS = {
   doc: 'M5 2.5h6.5L15 6v11.5H5z M11.5 2.5V6H15',
   folder: 'M2.5 5h5.5l1.5 2h8v9.5h-15z',
   camera: 'M2.5 6h10v8h-10z M12.5 8.5l5-2.5v8l-5-2.5', // a video camera: Camera
+  rezume: 'M2 4.5h8v6H2z M1 12.5h10 M13.5 6.5h4.5v10h-4.5z M15.2 14.5h1.1 M3.5 16h6 M8 14.4l1.6 1.6L8 17.6', // a computer and a phone, something going across: ReZume
   remote: 'M7 2.5h6v15H7z M10 5.2v.1 M8.6 8.5h2.8 M8.6 11h2.8 M8.6 13.5h2.8', // a remote control: Remote
+  globe: 'M10 2.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15z M2.5 10h15 M10 2.5c-2.2 2.3-2.2 12.7 0 15 M10 2.5c2.2 2.3 2.2 12.7 0 15', // Sharing
+  link: 'M8.5 11.5a3.2 3.2 0 0 0 4.5 0l2.5-2.5a3.2 3.2 0 0 0-4.5-4.5l-.8.8 M11.5 8.5a3.2 3.2 0 0 0-4.5 0L4.5 11a3.2 3.2 0 0 0 4.5 4.5l.8-.8', // two chain links: Connection
   multi: 'M2 5h9v6.5H2z M5 14h3 M6.5 11.5V14 M13 4h5v12h-5z M15 13.5h1', // a computer and a phone: Multi-device
 };
 

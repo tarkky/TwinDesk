@@ -7,7 +7,7 @@ UI.tab({
   id: 'cursor',
   group: 'Input',
   order: 20,
-  title: 'Cursor',
+  title: 'Mouse',
   desc: 'Move the pointer off the edge of the screen to go to the other computer.',
   color: 'linear-gradient(#ffb340, #ff9500)',
   // One switch: cursor sharing, the same one the hotkey's double-tap and the other
@@ -34,7 +34,10 @@ UI.tab({
 
     // A phone as the peer: how the pointer and keys reach it (settings.phone.input, the phone's own toggle too).
     const via = UI.segmented([{ value: 'adb', label: 'ADB' }, { value: 'phone', label: 'Accessibility' }], (v) => api.setPhone({ input: v, inputPicked: true }));
-    const viaRow = UI.row('Through', 'ADB: full control. Accessibility: TwinDesk on the phone taps and types itself, over Wi-Fi, Wi-Fi Direct or Bluetooth, no developer options', [via.el]);
+    // With a phone: its own card on top, with the way to its wireless debugging (Connection).
+    const adbBtn = UI.button('Wireless Debugging', () => UI.go('connection'), 'small');
+    const viaRow = UI.row('Control the phone with', '', [via.el, adbBtn]);
+    const viaCard = UI.card('Phone', [viaRow]);
     // A row whose label follows the other computer's name (UI.names fills it on render).
     const peerRow = (label, hint, controls) => {
       const r = UI.row(label, hint, controls);
@@ -45,8 +48,9 @@ UI.tab({
     let speedRow = null;
     body.append(
       status,
+      viaCard,
       UI.pair(
-        UI.dir('m2w', [peerRow('Use {me}’s mouse and keyboard on {name}', 'Push the pointer past the edge', [drive]), viaRow]),
+        UI.dir('m2w', [peerRow('Use {me}’s mouse and keyboard on {name}', 'Push the pointer past the edge', [drive])]),
         UI.dir('w2m', [driven2 = peerRow('Use {name}’s mouse and keyboard on {me}', '', [driven])]),
       ),
       lock.el,
@@ -81,8 +85,13 @@ UI.tab({
       reverse.set(k.reverseScroll);
       gestures.set(k.gestures !== false);
       ble.set(k.ble !== false);
-      viaRow.hidden = !p.phone;
-      via.set(((s.phone || {}).bridge || {}).input || (((s.phone || {}).settings || {}).input === 'phone' ? 'phone' : 'adb'));
+      viaCard.hidden = !p.phone;
+      const br = (s.phone || {}).bridge || {};
+      via.set(br.input || (((s.phone || {}).settings || {}).input === 'phone' ? 'phone' : 'adb'));
+      adbBtn.hidden = br.state === 'ready';
+      viaRow.setHint(br.inputMode === 'auto' ? (br.state === 'ready' ? 'Automatic: ADB, wireless debugging is ready' : 'Automatic: Accessibility until wireless debugging is set up')
+        : br.input === 'phone' ? 'Accessibility: TwinDesk on the phone taps and types. Works over Wi-Fi, Wi-Fi Direct and Bluetooth, no developer options'
+          : 'ADB: full control through wireless debugging' + (br.state === 'ready' ? '' : ' (not set up yet)'));
     };
   },
 });

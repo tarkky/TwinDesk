@@ -145,7 +145,7 @@ class Files(core: Core) : Feature(core) {
         val id = m.optString("id")
         if (id.isEmpty() || incoming.containsKey(id)) return
         val drop = m.optString("drop")
-        if (drop != "send" && drop != "paste" && drop != "drag") return refuse(id, "not_allowed")
+        if (drop != "send" && drop != "paste" && drop != "drag" && drop != "rezume") return refuse(id, "not_allowed") // rezume: a document taken here (Rezume.kt), only when asked
         val size = m.optLong("size", -1)
         if (size < 0 || size > 4L * 1024 * 1024 * 1024) return refuse(id, "too_big")
         val batchId = (if (drop == "drag") m.optString("drag") else m.optString("batch")).ifEmpty { id }

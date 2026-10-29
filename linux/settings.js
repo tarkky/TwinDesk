@@ -5,7 +5,7 @@ const P = require('../shared/protocol.js');
 const CL = require('../shared/cursorlock.js');
 const { normalizeFolder } = require('../shared/received.js');
 
-const TABS = ['phone', 'overview', 'calls', 'messages', 'media', 'pfiles', 'mac-pc', 'pc-mac', 'cursor', 'keyboard', 'clipboard', 'notifications', 'files', 'mount', 'terminal', 'audio', 'camera', 'remote', 'apps', 'multi', 'general', 'about'];
+const TABS = ['phone', 'overview', 'connection', 'mirror', 'papps', 'calls', 'messages', 'media', 'pfiles', 'mac-pc', 'pc-mac', 'cursor', 'keyboard', 'clipboard', 'notifications', 'files', 'mount', 'terminal', 'audio', 'camera', 'remote', 'apps', 'rezume', 'multi', 'general', 'about'];
 
 const OLD_TABS = { display: 'mac-pc', receive: 'mac-pc', share: 'pc-mac' }; // older names
 
@@ -100,6 +100,8 @@ function normalize(s) {
     // Remote tab (shared/phone-remote.js): the phone's Remote page moves the pointer and types here
     // Real gamepad (pad): its sticks and buttons as a controller here, off until turned on
     remote: { allow: bool((s.remote || {}).allow, was), pad: bool((s.remote || {}).pad, false) },
+    // ReZume tab (shared/rezume.js): off until turned on; what goes, which ways, where it shows
+    rezume: require('../shared/rezume.js').normalize(s.rezume),
     // Camera tab (shared/camshare.js): this computer's camera to the other one, off until turned
     // on; device: which camera (a deviceId), '' = the default one; virtual: the running camera's
     // picture also goes to the virtual camera (shared/vcam.js), off until turned on; rotate: its
@@ -168,6 +170,7 @@ function normalize(s) {
       wallpaper: bool(ph.wallpaper, true),
       input: ph.input === 'phone' ? 'phone' : 'adb', // the mouse and keyboard through adb, or the phone's Accessibility service
       inputPicked: bool(ph.inputPicked, false), // not picked: automatic (phone-bridge.js inputMode)
+      panel: bool(ph.panel, true), // the phone windows' controls in the title bar (its panel button hides them)
     },
     // Bluetooth for devices not on this network (blepipe.js, netlink.js): with phones (ble), with computers (blePc);
     // bleWifiOff: none at all while the session is on the same Wi-Fi (blepolicy.js wifiQuiet)
@@ -187,9 +190,15 @@ function normalize(s) {
     // General and Display show what's missing (a firewall that changes with the network, a helper
     // that restarts, a phone connecting don't bring the screen back).
     setup: { skipped: Array.isArray(setup.skipped) ? setup.skipped.filter((x) => typeof x === 'string').slice(0, 10) : [], done: bool(setup.done, Array.isArray(setup.skipped) && setup.skipped.length > 0) },
-    ui: { tab: OLD_TABS[ui.tab] || (TABS.includes(ui.tab) ? ui.tab : 'overview') },
+    // overview: what Overview shows (General › Overview); chats: Messages' chat apps.
+    ui: { tab: OLD_TABS[ui.tab] || (TABS.includes(ui.tab) ? ui.tab : 'overview'), overview: overviewParts(ui.overview), chats: bool(ui.chats, false) },
     windows: s.windows && typeof s.windows === 'object' ? s.windows : {},
   };
+}
+
+function overviewParts(o) {
+  const v = o && typeof o === 'object' ? o : {};
+  return { media: bool(v.media, true), qs: bool(v.qs, true), notifs: bool(v.notifs, true), apps: bool(v.apps, true), features: bool(v.features, true) };
 }
 
 // pair.sync values per paired device: booleans only, at most 20 devices.

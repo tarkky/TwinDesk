@@ -201,7 +201,7 @@ class Kvm {
   }
 
   get connected() {
-    return this.link.status.state === 'connected';
+    return this.link.status.state === 'connected' && this.link.authed; // 'closed' comes before the state changes
   }
 
   // Drags across the edge go out when our switch and our "send" are on and the other side takes them.

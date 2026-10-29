@@ -106,7 +106,8 @@ UI.tab({
     // Below the phone's card: how the mouse and keyboard reach it (automatic until one is picked).
     const viaRow = UI.row('Mouse and keyboard', '', [via.el]);
     const viaCard = UI.card('', [viaRow]);
-    body.append(notConnected, hero, viaCard, adbCard, appsCard, winCard, optsCard);
+    const rezume = UI.rezumeCard ? UI.rezumeCard() : { el: UI.el('div', { hidden: true }), update() {} }; // the phone's ReZume (shared/ui-rezume.js; not in Multi-device)
+    body.append(notConnected, hero, rezume.el, viaCard, adbCard, appsCard, winCard, optsCard);
 
     let appsKey = '';
     let winKey = '';
@@ -116,6 +117,7 @@ UI.tab({
     };
 
     function render(s) {
+      rezume.update(s);
       media.update(s);
       const ph = s.phone || {};
       const c = ph.connected;

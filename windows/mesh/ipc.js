@@ -50,6 +50,9 @@ function setupIpc(ctx) {
     if (port >= 1 && port <= 65535) link.startPairing({ address: m[1], port, macName: m[1] });
   });
   handle('refreshFound', () => discovery.refresh());
+  handle('deviceDo', (c) => c && typeof c === 'object' && ctx.devctl() && ctx.devctl().do(c)); // Overview: ring, lock, quick settings… (shared/devctl.js)
+  // A chat's answer (Messages' chat apps: shared/chats.js) or a notification's.
+  handle('notifReply', (r) => r && typeof r === 'object' && (r.chat ? !!(ctx.chats && ctx.chats() && ctx.chats().reply(String(r.chat), r.text)) : ctx.notifs && ctx.notifs.reply && ctx.notifs.reply(String(r.id || ''), r.text))); // a phone chat's Reply, typed here
   handle('copyText', (text) => typeof text === 'string' && text.length < 1000 && clipboard.writeText(text));
   handle('confirmCode', () => link.confirmCode());
   handle('cancelPair', () => { ctx.cancelPhoneInvite(); link.cancelPair(); });
@@ -122,7 +125,9 @@ function setupIpc(ctx) {
   handle('setClipboard', (partial) => change('clipboard', partial, () => clip.applySettings()));
   handle('copyHistory', (index) => clip.copyHistory(Number(index)));
   handle('clearHistory', () => clip.clearHistory());
-  handle('setTab', (tab) => change('ui', { tab })); // invalid names fall back in normalize()
+  handle('setTab', (tab) => change('ui', { tab }));
+  handle('setChats', (on) => { change('ui', { chats: on === true }); if (ctx.chats && ctx.chats()) ctx.chats().sync(); }); // Messages: WhatsApp, Telegram and Instagram there too
+  handle('setOverview', (o) => o && typeof o === 'object' && change('ui', { overview: { ...settings.ui.overview, ...o } })); // General › Overview // invalid names fall back in normalize()
   handle('setMulti', (on) => require('../multi').set(on === true)); // Multi-device off: TwinDesk restarts one to one
   handle('setAudio', (partial) => change('audio', partial, () => sound.apply()));
   handle('setTerminal', (partial) => {

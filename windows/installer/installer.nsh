@@ -79,5 +79,10 @@
   ; Explorer › Send to › "<peer> (TwinDesk)" (sendto.js).
   Delete "$APPDATA\Microsoft\Windows\SendTo\* (TwinDesk).lnk"
   Delete "$APPDATA\Microsoft\Windows\SendTo\* (MacShare).lnk"
+  ; Explorer's right-click › TwinDesk (explorer.js) and the twindesk: links (a toast's Copy)
+  DeleteRegKey HKCU "Software\Classes\*\shell\TwinDesk"
+  DeleteRegKey HKCU "Software\Classes\Directory\shell\TwinDesk"
+  DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\TwinDesk"
+  DeleteRegKey HKCU "Software\Classes\twindesk"
   SetShellVarContext all
 !macroend

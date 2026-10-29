@@ -56,15 +56,30 @@ UI.tab({
     const btRow = UI.row('Bluetooth', 'For a phone or computer that isn’t on this network', [btPill, UI.button('Open', () => api.openBluetoothSettings(), 'small')]);
 
     const media = UI.mediaControlsRow(); // a phone's media controls on the Phone page (shared/ui-nowplaying.js)
+    // Appearance: the phone's wallpaper (settings.phone.wallpaper, was on the Phone page).
+    const wallSw = UI.switch((v) => api.setPhone({ wallpaper: v }), { label: 'Show the phone’s wallpaper' });
+    const wallRow = UI.row('Show the phone’s wallpaper', 'On its tile and Overview. TwinDesk on the phone reads it once wireless debugging is set up', [wallSw]);
+    // Overview: what it shows (settings.ui.overview).
+    const parts = [['media', 'Now playing', 'What plays on the phone, with its controls'], ['qs', 'Quick actions', 'Wi-Fi, Bluetooth, torch, Do not disturb and more, with volume and ringer'],
+      ['notifs', 'Latest notifications', 'The newest few, with Copy for one-time codes'], ['apps', 'Most used apps', 'The phone’s most used apps this week'], ['features', 'Feature switches', 'Every feature’s two switches, at the bottom']];
+    const partSw = {};
+    const partRows = parts.map(([k, label, hint]) => {
+      partSw[k] = UI.switch((v) => api.setOverview && api.setOverview({ [k]: v }), { label });
+      return UI.row(label, hint, [partSw[k]]);
+    });
     body.append(
-      UI.card('App', [
+      UI.card('Startup', [
         UI.row('Open at login', 'Starts in the tray', [startup]),
-        UI.row('Show a popup when switching', 'When the mouse and keyboard move between computers', [hudSw]),
-        media.el,
         recvRow,
       ]),
+      UI.card('Appearance', [
+        UI.row('Show a popup when switching', 'When the mouse and keyboard move between devices', [hudSw]),
+        wallRow,
+        media.el,
+      ]),
+      UI.card('Overview', partRows),
+      UI.card('Network and Bluetooth', [bleRow, blePcRow, bleWifiRow, wakeRow, keepRow]),
       UI.card('Permissions', [fwRow, btRow, steadyRow]),
-      UI.card('Network and sharing', [wakeRow, bleRow, blePcRow, bleWifiRow, keepRow]),
       UI.card('This computer', [deviceRow, sessRow, inRow, helperRow]),
       UI.card('Quit', [
         UI.row('Quit TwinDesk', 'Stops sharing until you open it again', [UI.button('Quit', () => api.quit(), 'small')]),
@@ -73,6 +88,9 @@ UI.tab({
 
     return (s) => {
       media.update(s);
+      wallSw.set(!s.phone || !s.phone.settings || s.phone.settings.wallpaper !== false);
+      const ov = (s.ui && s.ui.overview) || {};
+      for (const k of Object.keys(partSw)) partSw[k].set(ov[k] !== false);
       startup.set(s.startup);
       hudSw.set(s.app.hud);
       const f = s.files || {};

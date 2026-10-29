@@ -1,16 +1,75 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
-// Overview tab: this PC's address and Connect by address on top, the
-// computers found nearby (always visible), the two computers, one switch per feature and
-// direction, and what is paired.
+// Connection page (was Overview): this PC's address and Connect by address, pairing a phone with a
+// QR code, the computers and phones found nearby, the link itself (connect, take over, Wi-Fi
+// Direct, a phone's hotspot), the phone's wireless debugging and what is paired. The start page
+// until something is connected; then Overview (shared/ui-device.js) shows the device, with the
+// feature switches below (UI.featureCards, here).
 'use strict';
 
+// Every feature's two switches, one card per direction; a row opens its page.
+// macOnly: 'linux' = off only with a Linux peer (nothing uses it now: Linux has every row).
+// phone: false = hidden while a phone is the peer; true only = shown only with a phone.
+UI.featureCards = () => {
+  const { el, api } = UI;
+  const row = (label, tab, get, set, macOnly, { phone = true, only = false } = {}) => {
+    const sw = UI.switch(set || (() => {}), { label, disabled: !set });
+    const r = UI.row(label, '', [sw, el('span', { class: 'chev', text: '›' })], { onClick: () => UI.go(tab) });
+    r.update = (s) => {
+      const limited = !macOnly || !s.peer ? '' : macOnly === 'linux' ? (s.peer.os === 'linux' ? 'Not on Linux yet' : '') : UI.peer(s).limited;
+      let on = false;
+      try { on = !limited && !!get(s); } catch (e) { /* its state isn't there (an older side) */ }
+      sw.set(on);
+      sw.disable(!set || !!limited);
+      r.setHint(limited);
+      r.hidden = (!phone && UI.isPhone(s)) || (only && !UI.isPhone(s));
+    };
+    return r;
+  };
+  const notPhone = { phone: false };
+  const phoneOnly = { only: true };
+  const hub = (what) => (v) => api.hub({ do: 'set', what, on: v });
+  const rez = (k) => (v) => api.setReZume(v ? { on: true, [k]: true } : { [k]: false });
+  const m2p = [
+    row('Screen', 'mac-pc', (s) => s.stream.state === 'on', null, undefined, notPhone),
+    row('Phone screen', 'mirror', (s) => (s.phone.bridge || {}).windows && s.phone.bridge.windows.length > 0, null, undefined, phoneOnly),
+    row('Sound', 'audio', (s) => s.audio.receive, (v) => api.setAudio({ receive: v })),
+    row('Mouse and keyboard', 'cursor', (s) => s.kvm.beDriven, (v) => api.setKvm({ beDriven: v })),
+    row('Clipboard', 'clipboard', (s) => s.clipboard.receive, (v) => api.setClipboard({ receive: v })),
+    row('Notifications', 'notifications', (s) => s.notifs.receive, (v) => api.setNotifs({ receive: v })),
+    row('Calls', 'calls', (s) => s.hub.calls, hub('calls'), undefined, phoneOnly),
+    row('Messages', 'messages', (s) => s.hub.messages, hub('messages'), undefined, phoneOnly),
+    row('Photos', 'media', (s) => s.hub.media, hub('media'), undefined, phoneOnly),
+    row('Phone Files', 'pfiles', (s) => s.hub.files, hub('files'), undefined, phoneOnly),
+    row('Camera', 'camera', (s) => s.camera.on, (v) => api.camera({ do: 'on', on: v }), undefined, phoneOnly),
+    row('Shared folder', 'files', (s) => s.files.mountMac, (v) => api.setFiles({ mountMac: v })),
+    row('Terminal', 'terminal', (s) => s.terminal.allowMac, (v) => api.setTerminal({ allowMac: v }), undefined, notPhone),
+    row('Apps', 'apps', (s) => s.apps.open > 0, null, undefined, notPhone),
+    row('ReZume', 'rezume', (s) => s.rezume.on && s.rezume.receive, rez('receive')),
+  ];
+  const p2m = [
+    row('Screen', 'pc-mac', (s) => s.pcScreen.mode !== 'off', (v) => api.setPcScreenMode(v ? 'mirror' : 'off')),
+    row('Sound', 'audio', (s) => s.audio.send, (v) => api.setAudio({ send: v })),
+    row('Mouse and keyboard', 'cursor', (s) => s.kvm.driveOther, (v) => api.setKvm({ driveOther: v })),
+    row('Clipboard', 'clipboard', (s) => s.clipboard.send, (v) => api.setClipboard({ send: v })),
+    row('Notifications', 'notifications', (s) => s.notifs.send, (v) => api.setNotifs({ send: v })),
+    row('Remote', 'remote', (s) => s.remote.allow, (v) => api.setRemote({ allow: v }), undefined, phoneOnly),
+    row('Shared folder', 'files', (s) => s.files.shareOn, (v) => api.setShareOn(v)),
+    row('Terminal', 'terminal', (s) => s.terminal.enabled, (v) => api.setTerminal({ enabled: v }), undefined, notPhone),
+    row('Apps', 'apps', (s) => s.pcApps.allow, (v) => api.setPcApps({ allow: v }), undefined, notPhone),
+    row('ReZume', 'rezume', (s) => s.rezume.on && s.rezume.send, rez('send')),
+  ];
+  const pair = UI.dirCards({ rows: m2p }, { rows: p2m });
+  return { el: pair.el, update: (s) => { for (const r of m2p.concat(p2m)) r.update(s); } };
+};
+
 UI.tab({
-  id: 'overview',
-  order: 0,
-  title: 'Overview',
-  heading: 'TwinDesk',
+  id: 'connection',
+  order: 90,
+  title: 'Connection',
+  heading: 'Connection',
+  icon: 'link',
   desc: '',
-  color: 'linear-gradient(#8e8e93, #636366)',
+  color: 'linear-gradient(#5ac8fa, #007aff)',
   badge: (s) => (s.link.state === 'identity_changed' || (s.discovery && !s.discovery.on) || s.found.some((d) => d.invited) ? 'warn' : ''),
   build(body) {
     const { el, api } = UI;
@@ -58,44 +117,6 @@ UI.tab({
       el('div', { class: 'hero-actions' }, [wifiBtn, hotspotBtn]),
     ]);
 
-    // One switch per feature and direction, labels only; the row opens the tab.
-    // macOnly: 'linux' = off only with a Linux peer (nothing uses it now: Linux has every row).
-    // phone: false = hidden while a phone is the peer.
-    const row = (label, tab, get, set, macOnly, { phone = true } = {}) => {
-      const sw = UI.switch(set || (() => {}), { label, disabled: !set });
-      const r = UI.row(label, '', [sw, el('span', { class: 'chev', text: '›' })], { onClick: () => UI.go(tab) });
-      r.update = (s) => {
-        const limited = !macOnly || !s.peer ? '' : macOnly === 'linux' ? (s.peer.os === 'linux' ? 'Not on Linux yet' : '') : UI.peer(s).limited;
-        sw.set(!limited && get(s));
-        sw.disable(!set || !!limited);
-        r.setHint(limited);
-        r.hidden = !phone && UI.isPhone(s);
-      };
-      return r;
-    };
-    const notPhone = { phone: false };
-    const m2p = [
-      row('Screen', 'mac-pc', (s) => s.stream.state === 'on', null, undefined, notPhone),
-      row('Sound', 'audio', (s) => s.audio.receive, (v) => api.setAudio({ receive: v })),
-      row('Mouse and keyboard', 'cursor', (s) => s.kvm.beDriven, (v) => api.setKvm({ beDriven: v })),
-      row('Clipboard', 'clipboard', (s) => s.clipboard.receive, (v) => api.setClipboard({ receive: v })),
-      row('Notifications', 'notifications', (s) => s.notifs.receive, (v) => api.setNotifs({ receive: v })),
-      row('Shared folder', 'files', (s) => s.files.mountMac, (v) => api.setFiles({ mountMac: v })),
-      row('Terminal', 'terminal', (s) => s.terminal.allowMac, (v) => api.setTerminal({ allowMac: v }), undefined, notPhone),
-      row('Apps', 'apps', (s) => s.apps.open > 0, null, undefined, notPhone),
-    ];
-    const p2m = [
-      row('Screen', 'pc-mac', (s) => s.pcScreen.mode !== 'off', (v) => api.setPcScreenMode(v ? 'mirror' : 'off')),
-      row('Sound', 'audio', (s) => s.audio.send, (v) => api.setAudio({ send: v })),
-      row('Mouse and keyboard', 'cursor', (s) => s.kvm.driveOther, (v) => api.setKvm({ driveOther: v })),
-      row('Clipboard', 'clipboard', (s) => s.clipboard.send, (v) => api.setClipboard({ send: v })),
-      row('Notifications', 'notifications', (s) => s.notifs.send, (v) => api.setNotifs({ send: v })),
-      row('Shared folder', 'files', (s) => s.files.shareOn, (v) => api.setShareOn(v)),
-      row('Terminal', 'terminal', (s) => s.terminal.enabled, (v) => api.setTerminal({ enabled: v }), undefined, notPhone),
-      row('Apps', 'apps', (s) => s.pcApps.allow, (v) => api.setPcApps({ allow: v }), undefined, notPhone),
-    ];
-    const pair = UI.dirCards({ rows: m2p }, { rows: p2m });
-
     // ---- this PC + connect by address (always visible) ----
     const addrVal = el('span', { class: 'value addr' });
     const copyBtn = UI.button('Copy', () => UI.state && api.copyText(UI.state.addresses[0] || ''), 'small');
@@ -126,24 +147,17 @@ UI.tab({
       setTimeout(() => { refresh.disabled = false; refresh.textContent = 'Refresh'; }, 1500);
     }, 'small');
 
-    // ---- a connected phone's wireless debugging, until it works (the Phone page has it too) ----
-    const ADB = { needsPair: ['bad', 'Pair once'], waitingWifi: ['bad', 'Off'], connecting: ['muted', 'Looking…'], missing: ['bad', 'Missing'], error: ['bad', 'Problem'] };
-    const adbPill = el('span', { class: 'pill bad' });
-    const adbRow = UI.row('Wireless debugging', '', [adbPill, UI.button('Try Again', () => api.phoneRetry(), 'small')]);
-    const adbCode = el('input', { type: 'text', placeholder: '123456', maxLength: 7, inputMode: 'numeric', autocomplete: 'off', spellcheck: false, attrs: { 'aria-label': 'Pairing code' } });
-    const adbWhere = el('input', { type: 'text', placeholder: 'Address:port (optional)', autocomplete: 'off', spellcheck: false, attrs: { 'aria-label': 'Pairing address' } });
-    const adbPair = UI.button('Pair', () => api.phonePair({ code: adbCode.value.replace(/\D/g, ''), where: adbWhere.value }), 'small primary'); // "123 456", "123-456" too
-    adbCode.onkeydown = adbWhere.onkeydown = (e) => { if (e.key === 'Enter') adbPair.click(); };
-    const adbPairRow = UI.row('Pairing code', 'Or type it on the phone, in TwinDesk’s notification', [adbCode, adbWhere, adbPair]);
-    const adbCard = UI.card('Phone screen, mouse and keyboard', [adbRow, adbPairRow]);
+    // ---- a connected phone's wireless debugging (shared/ui-adb.js) and pairing by QR code (shared/ui-qrpair.js) ----
+    const adb = UI.adbCard();
+    const qrPair = UI.qrPairCard ? UI.qrPairCard() : null;
 
     const pairedList = el('div');
     body.append(
       UI.card('', [addrRow, ipRow]),
       UI.card('Found nearby', [discRow, foundList, ...bleRows], { actions: [refresh] }),
+      ...(qrPair ? [qrPair.el] : []),
       hero,
-      adbCard,
-      pair.el,
+      adb.el,
       UI.card('Paired', [pairedList]),
     );
 
@@ -254,21 +268,9 @@ UI.tab({
       wifiBtn.hidden = !connected || !netCancel.hidden || !(wifiOn || ble);
       hotspotBtn.hidden = !connected || !netCancel.hidden || wifiOn || !ble || !UI.isPhone(s);
 
-      for (const r of m2p.concat(p2m)) r.update(s);
 
-      // the phone's wireless debugging: only while it needs something
-      const ph = s.phone || {};
-      const br = (ph.connected && ph.bridge) || { state: 'off' };
-      const pairable = br.state === 'needsPair' || !!br.canPair;
-      adbCard.hidden = !ph.connected || !(pairable || ['waitingWifi', 'missing', 'error'].includes(br.state));
-      if (!adbCard.hidden) {
-        const [cls, label] = ADB[br.state] || ADB.error;
-        adbPill.className = `pill ${cls}`;
-        adbPill.textContent = label;
-        adbRow.setHint(br.message || '');
-        adbPairRow.hidden = !pairable;
-        if (UI.adbBle(s, adbCard, adbRow, adbPill)) adbPairRow.hidden = true;
-      }
+      adb.update(s);
+      if (qrPair) qrPair.update(s);
 
       // this PC
       addrVal.textContent = s.addresses.length ? s.addresses[0] : 'No network'; // The one the other computer can reach

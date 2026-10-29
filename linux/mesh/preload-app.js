@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('macshare', {
   connectAddress: call('connectAddress'),
   refreshFound: call('refreshFound'),
   copyText: call('copyText'),
+  deviceDo: call('deviceDo'), // Overview: the selected device's controls
+  setOverview: call('setOverview'), // General › Overview: what it shows
+  setChats: call('setChats'), // Messages: chat apps in one inbox
+  notifReply: call('notifReply'), // answer a phone chat's notification
   skipSetup: call('skipSetup'),
   confirmCode: call('confirmCode'),
   cancelPair: call('cancelPair'),

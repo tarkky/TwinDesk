@@ -38,6 +38,10 @@ const Sender = require('./sender');
 const Vdd = require('./vdd');
 const Hud = require('./hud');
 const Notifs = require('./notifs');
+const { Explorer } = require('./explorer');
+const { DevCtl } = require('../shared/devctl.js');
+const { DevLocal } = require('../shared/devlocal.js');
+const { startAdbQr } = require('../shared/adbqr.js');
 const FileClip = require('./fclip');
 const Wake = require('./wake');
 const SendTo = require('./sendto');
@@ -76,11 +80,36 @@ if (!app.requestSingleInstanceLock()) {
   Menu.setApplicationMenu(null); // its accelerators would steal keys meant for the Mac
   app.setAppUserModelId(AUMID); // toasts need it; the installer's shortcut carries the same id
   // A pinned Mac app starts "TwinDesk.exe --mac-app=<id>": open it, else show the window.
+  // twindesk: links (a toast's Copy, Explorer's TwinDesk menu) come to this copy of TwinDesk.
+  if (app.isPackaged) app.setAsDefaultProtocolClient('twindesk');
+  else app.setAsDefaultProtocolClient('twindesk', process.execPath, [path.resolve(process.argv[1] || '.')]);
   app.on('second-instance', (_e, argv) => {
+    if (openLink(argv)) return;
     if (sendTo && sendTo.handle(argv)) return; // Explorer › Send to
     if (!openMacAppArg(argv) && !openPhoneAppArg(argv)) showMain();
   });
   app.whenReady().then(start);
+}
+
+// twindesk:copy?code=… (a one-time code's Copy on a toast), twindesk:open?app=… (the toast itself:
+// the app on the phone), twindesk:go?tab=… (a page). True: it was one of them.
+function openLink(argv) {
+  if (explorer && explorer.handle(argv)) return true; // Explorer's TwinDesk › Import / Capture from phone
+  const a = (argv || []).find((x) => /^twindesk:/i.test(String(x)));
+  if (!a) return false;
+  let u;
+  try { u = new URL(a); } catch (_) { return true; }
+  const q = u.searchParams;
+  const what = u.pathname.replace(/^\/+/, '');
+  if (what === 'copy' && /^\d{3,10}$/.test(q.get('code') || '')) {
+    require('electron').clipboard.writeText(q.get('code'));
+    if (hud) hud.show('clip', 'Code copied');
+  } else if (what === 'open' && notifs && notifs.onClick && q.get('app')) {
+    notifs.onClick({ app: q.get('app').slice(0, 200), appName: (q.get('name') || '').slice(0, 100) });
+  } else if (what === 'go' && q.get('tab')) {
+    goTab(q.get('tab').slice(0, 30));
+  }
+  return true;
 }
 
 let mainWin = null;
@@ -100,6 +129,8 @@ let camShare = null; // Camera tab: the cameras of the two computers (shared/cam
 let vcam = null; // Camera: the running camera's picture, to the tab and the virtual camera (shared/vcam.js, vcam.js)
 let nowPlaying = null; // what plays on the phone, for the Overview's media controls (shared/nowplaying.js)
 let btAudio = null; // the phone's sound here over Bluetooth (shared/btaudio.js)
+let rezume = null; // ReZume (shared/rezume.js), only once it's turned on
+let rezumeShelf = null; // … its notification and taskbar button (shared/rezume-shelf.js)
 let helper = null;
 let terminal = null; // only while Terminal is on (loadTerminal)
 let phoneServer = null; // the phones' session (PhoneLink), for features loaded later
@@ -118,6 +149,9 @@ let sendTo = null;
 let pairSync = null;
 let fileRecv = null;
 let notifs = null;
+let explorer = null; // Explorer's right-click › TwinDesk (explorer.js)
+let devctl = null; // Overview's controls of the other device, and this PC's for it (shared/devctl.js)
+let chats = null; // Messages' chat apps from a phone, kept per phone (shared/chats.js)
 let fileClip = null;
 let sshd = null;
 let kvm = null;
@@ -194,6 +228,13 @@ function start() {
     pushState();
   });
   clip = new Clip(link, () => settings.clipboard, pushState, { popup: (kind, text) => hud && hud.show(kind, text), peerName });
+  devctl = new DevCtl({ link, local: new DevLocal(), adb: () => {
+    const br = phone && phone.bridge;
+    return br && br.state === 'ready' && br.serial ? { adb: br.adb, serial: br.serial } : null;
+  } });
+  devctl.on('change', pushState);
+  const { Chats } = require('../shared/chats.js');
+  chats = new Chats({ link, dir: app.getPath('userData'), want: () => settings.ui.chats === true, onChange: pushState });
   loadCamera(); // only while it's on
   screen = new Screen({
     link,
@@ -303,6 +344,7 @@ function start() {
   });
   fileRecv.onBatch = (b) => {
     liveDone('recv', b.files ? 'Received ' + plural(b.files, 'file') : 'Nothing arrived', b.files ? 'From ' + peerName() : '');
+    if (rezume && rezume.received(b)) return; // a document taken here: it opens
     if (b.kind === 'paste') fileClip.pasted(b);
     else if (b.files) hud.show('driven', 'Received ' + b.files + ' file' + (b.files === 1 ? '' : 's') + ' from ' + peerName());
   };
@@ -327,12 +369,14 @@ function start() {
     },
   });
   updates.start();
-  const ipc = setupIpc({ link, discovery, screen, clip, kvm, sshd, fileDrop, smb, apps, sound, pcScreen, pcApps, peerApps, vdd, notifs, fileClip, wake, updates, settings, save: saveSettings, push: pushState, buildState,
+  const ipc = setupIpc({ devctl: () => devctl, chats: () => chats, explorer: () => explorer, qrPair: qrPairView, adbQr: adbQrDo, link, discovery, screen, clip, kvm, sshd, fileDrop, smb, apps, sound, pcScreen, pcApps, peerApps, vdd, notifs, fileClip, wake, updates, settings, save: saveSettings, push: pushState, buildState,
+    get rezume() { return rezume; }, loadReZume,
     get phone() { return phone; }, get phoneViews() { return phoneViews; }, get camShare() { return camShare; }, get vcam() { return vcam; }, get phoneRemote() { return phoneRemote; }, get nowPlaying() { return nowPlaying; }, get btAudio() { return btAudio; }, get phoneDrive() { return phoneDrive; }, get terminal() { return terminal; }, loadRemote, setCamera, loadNowPlaying, loadBtAudio, loadTerminal, connectPhoneDev, cancelPhoneInvite, hub: loadHub,
     get net() { return net; }, applyNet, joinHotspot,
     checkFirewall, fixFirewall, setStartup, onApp: updateTray });
   pairSync = new PairSync({ link, settings, save: saveSettings, set: ipc.set }); // Two-way switches per pair
   nativeTheme.on('updated', () => { checkTaskbar(); pushState(); });
+  loadReZume(); // only while it's on
   link.start();
 
   link.on('welcome', () => { // a pinned Mac app started while the Mac wasn't connected
@@ -341,7 +385,7 @@ function start() {
   });
   createTray();
   if (!startHidden) createMainWindow(); // in the tray: made when it's first opened
-  if (!sendTo.handle(process.argv) && !openMacAppArg(process.argv)) openPhoneAppArg(process.argv);
+  if (!openLink(process.argv) && !sendTo.handle(process.argv) && !openMacAppArg(process.argv)) openPhoneAppArg(process.argv);
   setTimeout(checkFirewall, 3000);
   if (process.argv.includes('--test-monitor')) screen.open(true); // dev: ?test=1 pattern
 }
@@ -392,7 +436,7 @@ function startPhone(server, pairing) {
   phone.bridge.on('save', saveSettings);
   // A phone on a USB cable: pairing, the session, screen and sound through it (no Wi-Fi needed).
   wired = new Wired({ adb: phone.bridge.adb, raw: server, peer: pl, getId: () => device.id, getName: () => device.name });
-  pairing.isWired = (nonce) => wired.knows(nonce);
+  pairing.isWired = (nonce) => wired.knows(nonce) || qrKnows(nonce); // the cable, or Connection's QR code (Allow only)
   wired.on('change', pushState);
   phone.bridge.wired = wired;
   phone.wired = wired;
@@ -435,6 +479,11 @@ function startPhone(server, pairing) {
   };
   // A phone notification clicked here: its app in a window.
   notifs.onClick = (m) => pl.current && pl.current.os === P.OS.ANDROID && phoneViews.openNotified(m.app, m.appName);
+  explorer = new Explorer({
+    phoneOn: () => !!(pl.current && pl.current.os === P.OS.ANDROID), send: (m) => pl.sendToClient(m), on: (t, fn) => pl.on('t:' + t, fn),
+    goTab, popup: (kind, text, sub) => hud && hud.show(kind, text, sub), onChange: pushState,
+  });
+  explorer.install();
   phoneViews.on('focus', () => kvm.applyConfig());
   kvm.local = phone.bridge; // driving a phone goes through adb
   kvm.blockEdge = () => phoneViews.focused; // moving inside the phone window never crosses
@@ -526,6 +575,62 @@ function loadRemote() {
     loadPad: () => require('./gamepad'), save: saveSettings }); // Real gamepad: loaded when turned on
   phoneRemote.refresh(); // its page may be open already
   return phoneRemote;
+}
+
+// ReZume: what's in use here goes on on the other device, and theirs here (shared/rezume.js).
+// Loaded the first time it's turned on: until then nothing is looked at.
+function loadReZume() {
+  if (rezume || !settings.rezume.on) return rezume;
+  const { ReZume } = require('../shared/rezume.js');
+  const { ReZumeShelf } = require('../shared/rezume-shelf.js');
+  const act = require('./activity').create({ helper });
+  rezume = new ReZume({
+    link: {
+      on: (t, fn) => link.on(t, fn),
+      send: (m) => link.send(m),
+      peer: () => (link.status.state === 'connected' && link.current ? { os: link.current.os, name: peerName() } : null),
+      welcome: (fn) => link.on('welcome', fn),
+      closed: (fn) => link.on('closed', fn),
+    },
+    cfg: () => settings.rezume,
+    detect: () => act.detect(),
+    appIcon: (exe) => (path.isAbsolute(exe) ? act.appIcon(exe) : ''),
+    open: { url: (u) => shell.openExternal(u), file: (p) => shell.openPath(p), phoneApp: (pkg) => openPhoneApp(pkg) },
+    sendFile: (p, batch) => !!fileDrop.sendBatch([p], 'rezume', batch),
+    expectFile: (batch) => fileRecv.expectBatch(batch, receivedDir(settings, app.getPath('downloads')), 0, true),
+    adb: () => phoneAdb(phone && phone.bridge),
+    phoneApps: () => (phone && phone.apps) || [],
+  });
+  rezume.on('change', pushState);
+  rezume.on('opened', (o) => hud && hud.show('home', (o.how === 'sent' ? 'Sent to {name}: ' : 'From {name}: ') + o.title));
+  rezumeShelf = new ReZumeShelf({ rezume, cfg: () => settings.rezume, peerName, appIcon: path.join(__dirname, 'assets', 'icon.png'), appId: 'org.macshare.windows.rezume' });
+  rezume.apply();
+  return rezume;
+}
+
+// The phone through wireless debugging, for ReZume: its app in front, and a tab opened there at once.
+function phoneAdb(b) {
+  if (!b || b.state !== 'ready' || !b.serial) return null;
+  return {
+    ready: true,
+    front: async () => {
+      const r = await b.adb.shell(b.serial, 'dumpsys activity activities | grep -m 1 -E "topResumedActivity|mResumedActivity"', { timeout: 4000 });
+      const m = /\s([\w.]+)\/[\w.$]+/.exec(r.out || '');
+      return m ? m[1] : '';
+    },
+    openUrl: (u) => b.adb.shell(b.serial, `am start -a android.intent.action.VIEW -d '${String(u).replace(/'/g, "'\\''")}'`, { timeout: 6000 }),
+  };
+}
+
+// The tray's ReZume items: Continue the other side's, Send ours there.
+function rezumeItems() {
+  const h = rezume && settings.rezume.tray ? rezume.view : null;
+  if (!h || !h.connected) return [];
+  const cut = (t) => (t.length > 48 ? t.slice(0, 47) + '…' : t);
+  const items = [];
+  if (h.incoming) items.push({ label: 'Continue ' + cut(h.incoming.title || h.incoming.name || h.incoming.appName) + ' from ' + peerName(), click: () => rezume.take() });
+  if (h.last && h.send) items.push({ label: 'Send ' + cut(h.last.title) + ' to ' + peerName(), click: () => rezume.push() });
+  return items;
 }
 
 // What the Remote tab shows while Remote isn't loaded.
@@ -912,6 +1017,7 @@ function buildState() {
     remote: phoneRemote ? phoneRemote.view : phoneServer ? REMOTE_OFF : null,
     phoneMedia: nowPlaying ? nowPlaying.view : null,
     btAudio: btAudio ? btAudio.view : null,
+    rezume: rezume ? rezume.view : { ...settings.rezume, connected: false }, // ReZume tab (shared/rezume.js)
     ui: settings.ui,
     app: settings.app,
     version: app.getVersion(),
@@ -923,18 +1029,58 @@ function buildState() {
     pcApps: pcApps.view(),
     macApps: settings.macApps,
     terminal: { ...settings.terminal, ...(terminal ? terminal.view() : { status: 'off', message: '', command: 'ssh twindesk' }), installedKey: undefined, server: sshd.view() },
-    files: { ...settings.files, ...fileDrop.view(), received: receivedDir(settings, app.getPath('downloads')), smb: smb.view(), incoming: fileRecv.view(), drag: kvm.dragRecv.view(), macDrags: kvm.peerDrags, clip: fileClip.view() },
+    files: { ...settings.files, importTo: explorer ? explorer.view : null, ...fileDrop.view(), received: receivedDir(settings, app.getPath('downloads')), smb: smb.view(), incoming: fileRecv.view(), drag: kvm.dragRecv.view(), macDrags: kvm.peerDrags, clip: fileClip.view() },
     notifs: { ...settings.notifs, ...notifs.view() },
+    chats: chats ? chats.view() : null, // Messages' WhatsApp, Instagram… conversations
     apps: link.peerOs !== P.OS.MAC ? peerApps.view() : apps.view(), // A PC's (or Linux computer's) apps come through peerapps.js
     startup: getStartup(),
     setup: { missing: miss, show: setupShows(miss) },
-    phone: phone ? { ...phone.view, settings: settings.phone } : null,
+    phone: phone ? { ...phone.view, settings: settings.phone, ...phoneCtl() } : null,
+    adbQr: adbQrState, // wireless debugging's pairing QR code (shared/ui-adbqr.js)
+    peerCtl: link.peerOs !== P.OS.ANDROID && devctl ? devctl.view : null, // a computer's controls on Overview
     mount: { ...(phoneDrive ? phoneDrive.view : {}), on: settings.mount.on },
     // Calls, Messages and Photos: the settings alone until the hub is loaded (setupHub).
     hub: hub ? hub.view : { ...settings.hub, connected: false },
     net: { ...(net ? net.view : {}), ...hotspotView(), location: !!wifi && wifi.refusedLocation, ble: settings.net.ble, blePc: settings.net.blePc, bleWifiOff: settings.net.bleWifiOff, bleOff, radio: bleHost ? bleHost.state : bleGuest ? bleGuest.state : 'off', transport: link.current ? link.current.transport : '' },
   };
 }
+
+// A phone's controls on Overview (dev.state): its quick settings, volume and ringer, most used apps.
+function phoneCtl() {
+  const v = devctl && link.peerOs === P.OS.ANDROID ? devctl.view : null;
+  return v ? { ctl: v, qs: v.qs || null, top: v.top || [] } : { ctl: null, qs: null, top: [] };
+}
+
+// Connection › Pair a phone with a QR code (shared/ui-qrpair.js): this PC's id, name, addresses and
+// port, and a nonce that pairs with Allow only, as the USB cable does; a new one every 10 minutes.
+// Nearby and the code stay as they were.
+let qrPair = null;
+function qrPairView() {
+  if (!qrPair || Date.now() > qrPair.until) qrPair = { nonce: crypto.randomBytes(8).toString('hex'), until: Date.now() + 10 * 60000 };
+  const port = hostServer && hostServer.port;
+  const addrs = ownAddresses().filter((a) => isIPv4(a)).slice(0, 4);
+  if (!port || !addrs.length) return { url: '', why: !addrs.length ? 'No network' : 'Starting…' };
+  const q = new URLSearchParams({ id: device.id, n: device.name, a: addrs.join(','), p: String(port), k: qrPair.nonce });
+  return { url: 'twindesk://pair?' + q.toString(), until: qrPair.until };
+}
+// Connection › Wireless debugging › Pair with a QR code (shared/adbqr.js): on while shown.
+let adbQr = null;
+let adbQrState = null; // {text} | {done: 'paired' | 'timeout' | 'failed: …'}
+function adbQrDo(on) {
+  if (adbQr) { adbQr.stop(); adbQr = null; }
+  adbQrState = null;
+  if (on && phone && phone.bridge && phone.bridge.adb.available) {
+    adbQr = startAdbQr({
+      adb: phone.bridge.adb,
+      onPaired: () => phone.bridge.pairedNow(),
+      onEnd: (why) => { adbQr = null; adbQrState = { done: why }; pushState(); },
+    });
+    adbQrState = { text: adbQr.text };
+  }
+  pushState();
+  return adbQrState;
+}
+const qrKnows = (nonce) => !!qrPair && typeof nonce === 'string' && nonce === qrPair.nonce && Date.now() < qrPair.until;
 
 // This PC's addresses for the Overview: Wi-Fi and Ethernet first, VPN/WSL/VM adapters last
 // (Copy takes the first one).
@@ -1109,7 +1255,7 @@ function updateTray(s = buildState()) {
   const host = s.paired && s.paired.macName;
   const again = !connected && host && (s.link.state === 'stopped' || !!s.link.busy);
   const key = JSON.stringify([name, rtt, again, away, kvm.linked, kvm.paused, kvm.locked, kvm.mode, settings.keys.lockKeys, sharing, watching, k.driveOther, k.beDriven, settings.clipboard.enabled,
-    settings.audio.send, settings.app.hud, k.keyboard, settings.files.edgeDrag, settings.files.shortcuts, settings.files.copyKeys, found.map((d) => [d.id, d.name, d.os]), s.updates && s.updates.available && s.updates.latest]);
+    settings.audio.send, settings.app.hud, k.keyboard, settings.files.edgeDrag, settings.files.shortcuts, settings.files.copyKeys, rezumeItems().map((i) => i.label), found.map((d) => [d.id, d.name, d.os]), s.updates && s.updates.available && s.updates.latest]);
   if (key === trayKey) return;
   trayKey = key;
   const other = name || 'Other Computer';
@@ -1150,6 +1296,7 @@ function updateTray(s = buildState()) {
     again: again ? { label: (s.link.busy ? 'Take Over ' : 'Connect to ') + host, click: () => link.connect(true) } : null,
     disconnect: connected ? { label: 'Disconnect ' + name, click: () => link.disconnect() } : null,
     update: s.updates && s.updates.available ? { label: 'Download TwinDesk ' + s.updates.latest + '…', click: showUpdateWindow } : null,
+    rezume: rezumeItems(),
     open: showMain,
     log: () => require('../shared/applog.js').open(),
     quit: () => app.quit(),
@@ -1165,7 +1312,11 @@ app.on('before-quit', () => {
   if (peerApps) peerApps.shutdown();
   if (fileClip) fileClip.shutdown();
   if (phoneViews) phoneViews.shutdown();
+  if (rezumeShelf) rezumeShelf.shutdown();
+  if (rezume) rezume.shutdown();
   if (wired) wired.stop();
+  if (devctl) devctl.stop();
+  if (chats) chats.stop();
   if (phoneDrive) phoneDrive.shutdown();
   if (phone) phone.bridge.adb.killServer();
   if (hub && hub.audio) hub.audio.stop(); // the phone's calls go back to it

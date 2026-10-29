@@ -100,6 +100,8 @@ let hub = null; // hub.js: every paired device (pooled features use its bus and 
 let links = null; // links.js: our guest links, one per host
 let mesh = null; // shared/mesh.js: the device registry and roster
 let link = null; // hub.facade: the SELECTED device, for every one-to-one feature
+let devctl = null; // Overview's controls of the selected device (shared/devctl.js)
+let chats = null; // Messages' chat apps from a phone, kept per phone (shared/chats.js)
 let settings = null;
 let device = null;
 let screen = null;
@@ -175,6 +177,16 @@ function start() {
   mesh = new Mesh({ selfId: device.id });
   hub = new Hub({ device, links, mesh });
   link = hub.facade;
+  // Overview's controls of the selected device (a computer or a phone), and this computer's for it.
+  const { DevCtl } = require('../../shared/devctl.js');
+  const { DevLocal } = require('../../shared/devlocal.js');
+  devctl = new DevCtl({ link, local: new DevLocal(), adb: () => {
+    const br = phone && phone.bridge;
+    return br && br.state === 'ready' && br.serial ? { adb: br.adb, serial: br.serial } : null;
+  } });
+  devctl.on('change', pushState);
+  const { Chats } = require('../../shared/chats.js');
+  chats = new Chats({ link, dir: app.getPath('userData'), want: () => settings.ui.chats === true, onChange: pushState });
   hub.on('change', () => {
     discovery.wantProbes = link.snapshot().link.state !== 'connected'; // probe every 10 s only while not connected
     pushState();
@@ -315,7 +327,7 @@ function start() {
     },
   });
   updates.start();
-  const ipc = setupIpc({ hub, link, discovery, screen, clip, kvm, layoutSync, fileDrop, smb, fileClip, vdd, sound, pcScreen, notifs, wake, terminal, sshd, apps, pcApps, peerApps, updates, settings, save: saveSettings, push: pushState, buildState,
+  const ipc = setupIpc({ devctl: () => devctl, chats: () => chats, hub, link, discovery, screen, clip, kvm, layoutSync, fileDrop, smb, fileClip, vdd, sound, pcScreen, notifs, wake, terminal, sshd, apps, pcApps, peerApps, updates, settings, save: saveSettings, push: pushState, buildState,
     get phone() { return phone; }, get phoneViews() { return phone ? phone.views : null; }, get phoneDrive() { return phoneDrive; }, connectPhoneDev, cancelPhoneInvite, phoneHub: loadHub,
     applyMesh: () => autoJoin && autoJoin.schedule(),
     get net() { return net; }, get wifi() { return wifi; }, applyNet, joinHotspot, openBluetoothSettings,
@@ -856,6 +868,16 @@ function setupShows(miss) {
   return miss.includes('session') || (!settings.setup.done && !fw.checking && miss.some((x) => !settings.setup.skipped.includes(x)));
 }
 
+// The selected device is a phone: its controls go with state.phone (as one to one).
+function selectedIsPhone() {
+  const p = peerView();
+  return !!(p && p.os === P.OS.ANDROID);
+}
+function meshPhoneCtl() {
+  const v = devctl && selectedIsPhone() ? devctl.view : null;
+  return v ? { ctl: v, qs: v.qs || null, top: v.top || [] } : { ctl: null, qs: null, top: [] };
+}
+
 function buildState() {
   const miss = missing();
   const snap = link.snapshot();
@@ -897,9 +919,11 @@ function buildState() {
     pcApps: pcApps.view(),
     macApps: settings.macApps,
     notifs: { ...settings.notifs, ...notifs.view() },
+    chats: chats ? chats.view() : null, // Messages' WhatsApp, Instagram… conversations
     startup: autostart.get(),
     setup: { missing: miss, show: setupShows(miss) },
-    phone: phone ? { ...phone.view, settings: settings.phone } : null,
+    phone: phone ? { ...phone.view, settings: settings.phone, ...meshPhoneCtl() } : null,
+    peerCtl: devctl && !selectedIsPhone() ? devctl.view : null, // a computer's controls on Overview
     mount: { ...(phoneDrive ? phoneDrive.view : {}), on: settings.mount.on },
     // Calls, Messages and Photos: the settings alone until the hub is loaded (setupHub).
     hub: phoneHub ? phoneHub.view : { ...settings.hub, connected: false },
@@ -1104,7 +1128,7 @@ function updateTray(s) {
       link.startPairing({ address: d.address, port: d.port, macName: d.name, id: d.id });
       showMain();
     } })),
-    byAddress: () => goTab('overview'),
+    byAddress: () => goTab('connection'),
     lookAgain: () => discovery.probe(),
     update: s.updates && s.updates.available ? { label: 'Download TwinDesk ' + s.updates.latest + '…', click: showUpdateWindow } : null,
     open: showMain,
@@ -1125,6 +1149,8 @@ app.on('before-quit', () => {
   if (notifs) notifs.shutdown();
   if (phone) phone.shutdown();
   if (wired) wired.stop();
+  if (devctl) devctl.stop();
+  if (chats) chats.stop();
   if (phoneDrive) phoneDrive.shutdown();
   if (phone && phone.bridge) phone.bridge.adb.killServer();
   if (phoneHub && phoneHub.audio) phoneHub.audio.stop(); // the phone's calls go back to it

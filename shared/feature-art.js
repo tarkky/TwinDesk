@@ -328,12 +328,25 @@
         + `<circle class="fa-c2" cx="318" cy="92" r="0" opacity="0.8"><animate attributeName="r" dur="4.5s" ${rep} values="0;0;14;14" keyTimes="0;0.4;0.5;1"/>${fade(4.5, '0;0;0.8;0;0', '0;0.4;0.41;0.5;1')}</circle>`
         + `<g>${along(4.5, '214,132;318,92;318,92;238,118;214,132', t)}<path class="fa-ptr" d="${POINTER}"/></g>`;
     },
+    // A page open on the phone goes across onto the computer, where it carries on in a window.
+    rezume: (id) => {
+      const flow = 'M140 108Q190 66 238 96';
+      return '<ellipse class="fa-bg" cx="206" cy="122" rx="174" ry="100"/>'
+        + phone(52, 40, 88, 164) + '<rect class="fa-paper fa-out" x="64" y="56" width="64" height="92" rx="9"/>'
+        + `<rect fill="url(#fa-g-${id})" x="70" y="64" width="52" height="30" rx="5"/>`
+        + '<rect class="fa-c1" x="70" y="102" width="52" height="6" rx="3"/><rect class="fa-c1" x="70" y="114" width="36" height="6" rx="3"/>'
+        + `<path class="fa-dash" d="${flow}"/>`
+        + `<rect fill="url(#fa-g-${id})" x="-11" y="-7" width="22" height="14" rx="3"><animateMotion dur="2.4s" ${rep} path="${flow}"/>${fade(2.4, '0;1;1;0', '0;0.15;0.85;1')}</rect>`
+        + monitor(222, 40, 150, 100) + win(236, 52, 122, 76)
+        + `<rect fill="url(#fa-g-${id})" x="246" y="66" width="102" height="30" rx="5">${fade(2.4, '0.35;0.35;1;1', '0;0.7;0.85;1')}</rect>`
+        + '<rect class="fa-c1" x="246" y="102" width="70" height="6" rx="3"/><rect class="fa-c1" x="246" y="112" width="50" height="6" rx="3"/>';
+    },
   };
   // Tab ids -> scene: the Mac's screen tabs and the PC apps' are called differently.
   const SCENE = {
     cursor: 'cursor', keyboard: 'keyboard', clipboard: 'clipboard', notifications: 'notifications', audio: 'audio', apps: 'apps',
     share: 'share', receive: 'view', 'mac-pc': 'view', 'pc-mac': 'mirror', files: 'files', terminal: 'terminal', mount: 'mount',
-    calls: 'calls', messages: 'messages', media: 'media', pfiles: 'pfiles', camera: 'camera', remote: 'remote',
+    calls: 'calls', messages: 'messages', media: 'media', pfiles: 'pfiles', camera: 'camera', remote: 'remote', rezume: 'rezume',
   };
 
   // The feature's name and what it does, the same for every device.
@@ -357,6 +370,7 @@
     pfiles: ['Phone files', 'Browse the phone’s storage and copy files to and from it, no cable needed.'],
     camera: ['Camera sharing', 'The other device’s camera here: see its picture, or pick it as a camera in any app.'],
     remote: ['Phone as a remote', 'Use the phone as this computer’s touchpad, keyboard or gamepad.'],
+    rezume: ['ReZume', 'Like Handoff on Apple devices: go on here with the page, document or phone app you were using on the other device, and the other way round.'],
   };
 
   const has = (id) => id in SCENE;

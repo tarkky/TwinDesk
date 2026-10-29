@@ -8,9 +8,11 @@
 UI.tab({
   id: 'files',
   order: 50,
-  title: 'Files',
+  title: 'File Sharing',
+  icon: 'globe',
+  heading: 'File Sharing',
   color: 'linear-gradient(#64d2ff, #0a84ff)',
-  desc: 'Drag files between your computers, or share a folder.',
+  desc: 'Send files and folders between your devices, or share a folder.',
   badge: (s) => (s.files.dropToMac || s.files.acceptFromMac ? 'on' : ''),
   build(body) {
     const { el, api } = UI;

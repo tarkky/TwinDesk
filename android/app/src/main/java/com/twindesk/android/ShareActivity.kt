@@ -17,9 +17,17 @@ class ShareActivity : Activity() {
         super.onCreate(savedInstanceState)
         val core = Core.get(this)
         val copy = intent.component?.className?.endsWith("CopyToComputer") == true
+        val open = intent.component?.className?.endsWith("OpenOnComputer") == true
         val host = core.host
         if (host == null) {
             toast("Not connected. Open TwinDesk to connect to your computer.")
+            return finish()
+        }
+        // ReZume's "Open on computer": the link opens there now.
+        if (open) {
+            val text = listOfNotNull(intent.getStringExtra(Intent.EXTRA_TEXT), intent.dataString).joinToString(" ")
+            val why = core.rezume.pushUrl(text)
+            toast(why ?: "Opening on ${host.name}")
             return finish()
         }
         val uris = mutableListOf<Uri>()
@@ -84,6 +92,23 @@ class ClipActivity : Activity() {
         Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show()
         finish()
     }
+}
+
+// ReZume's notification tapped: the computer's tab opens here, or its document comes (Rezume.kt).
+// See-through and gone at once: Android lets an activity in front open things.
+class RezumeActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val r = Core.get(this).rezume
+        val o = r.incoming
+        if (o != null && o.id == intent.getStringExtra("id")) {
+            r.take(o, this)
+            if (o.kind == "doc") toast("Getting ${o.name}…")
+        } else toast("That isn’t offered any more")
+        finish()
+    }
+
+    private fun toast(t: String) = Toast.makeText(applicationContext, t, Toast.LENGTH_SHORT).show()
 }
 
 // The home screen shortcut "Wireless debugging": on at once if the Mac granted it, else the setting.

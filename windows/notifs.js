@@ -7,6 +7,9 @@ const { Notification, nativeImage } = require('electron');
 const path = require('path');
 const P = require('../shared/protocol.js');
 const { IconsIn } = require('../shared/notificon.js');
+const { otpOf } = require('../shared/otp.js');
+
+const xmlEsc = (t) => String(t).replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]));
 
 const T = P.T;
 const str = (v, n = 500) => (typeof v === 'string' ? v.slice(0, n) : '');
@@ -121,6 +124,7 @@ class Notifs {
       subtitle: str(m.subtitle, 200),
       body: str(m.body, 1000),
       at: Math.round(Number(m.at)) || Date.now(),
+      reply: m.reply === true, // a phone chat's: answered with reply() (notif.reply)
     };
     if (item.app && typeof m.icon === 'string' && m.icon.startsWith('data:image/') && m.icon.length < 200000) {
       this.historyIcons.delete(item.app);
@@ -131,11 +135,18 @@ class Notifs {
 
     if (Notification.isSupported()) {
       this.echoes.push({ title, body: str(m.body).slice(0, 80), until: Date.now() + 30000 });
-      const n = new Notification({
+      const icon = this.iconsIn.for(m);
+      const body = [[appName, peer].filter(Boolean).join(' · '), str(m.subtitle, 200), str(m.body)].filter(Boolean).join('\n');
+      // A one-time code: a Copy button on the toast (twindesk:copy, main.js openLink); the toast
+      // itself opens the app as before (twindesk:open).
+      const code = otpOf([title, str(m.body)].join(' '));
+      const n = code ? new Notification({
         title,
-        icon: this.iconsIn.for(m),
-        body: [[appName, peer].filter(Boolean).join(' · '), str(m.subtitle, 200), str(m.body)].filter(Boolean).join('\n'),
-      });
+        icon,
+        toastXml: '<toast launch="' + xmlEsc('twindesk:open?app=' + encodeURIComponent(item.app) + '&name=' + encodeURIComponent(appName)) + '" activationType="protocol">'
+          + '<visual><binding template="ToastGeneric"><text>' + xmlEsc(title) + '</text><text>' + xmlEsc(body) + '</text></binding></visual>'
+          + '<actions><action content="' + xmlEsc('Copy ' + code) + '" activationType="protocol" arguments="twindesk:copy?code=' + code + '"/></actions></toast>',
+      }) : new Notification({ title, icon, body });
       this.live.add(n);
       const drop = () => this.live.delete(n);
       n.on('close', drop);
@@ -145,6 +156,16 @@ class Notifs {
     }
     this.shown++;
     this.onChange();
+  }
+
+  // An answer to a phone's notification (a chat's Reply), typed here: the phone sends it with the app.
+  reply(id, text) {
+    const item = (this.history || []).find((h) => h.id === id);
+    if (!item || !item.reply || typeof text !== 'string' || !text.trim()) return false;
+    this.link.send({ t: 'notif.reply', id: str(id, 200), text: text.slice(0, 5000) });
+    item.replies = [...(item.replies || []), { text: text.slice(0, 5000), at: Date.now() }].slice(-20); // shown under it here
+    this.onChange();
+    return true;
   }
 
   clearHistory() {

@@ -10,9 +10,17 @@
   const views = new Map(); // id -> { def, page, navBtn, stateEl, master, render }
   let current = null;
 
+  // The sidebar's order and groups (the same as the PC's and Linux's): the device and Connection,
+  // the phone's own things, screens, input, sharing, media; Multi-device, General and About below a
+  // line. A tab not named here keeps its own order and group.
+  const GROUP = { overview: 0, connection: 0, messages: 1, calls: 1, media: 1, papps: 1, mirror: 2, receive: 2, share: 2, apps: 2, cursor: 3, keyboard: 3, remote: 3, clipboard: 4, notifications: 4, files: 4, pfiles: 4, mount: 4, audio: 5, camera: 5, rezume: 5, terminal: 5 };
+  const ORDER = { overview: 0, connection: 1, messages: 5, calls: 6, media: 7, papps: 8, mirror: 10, receive: 11, share: 12, apps: 13, cursor: 20, keyboard: 21, remote: 22, clipboard: 40, notifications: 41, files: 42, pfiles: 43, mount: 44, audio: 60, camera: 61, rezume: 62, terminal: 63, multi: 95, general: 100, about: 110 };
+  const ALIAS = { phone: 'overview', display: 'share' }; // older names (saved, the tray, a popup)
+  const orderOf = (d) => ORDER[d.id] ?? d.order ?? 50;
   let lastGroup = null;
   let gap = null; // the gap before the current group (hidden with the group: renderSidebar)
-  for (const def of UI.tabs.slice().sort((a, b) => (a.order ?? 50) - (b.order ?? 50))) {
+  for (const def of UI.tabs.slice().sort((a, b) => orderOf(a) - orderOf(b))) {
+    if (def.id in GROUP) def.group = GROUP[def.id];
     if (def.navHidden) { // reached another way (the phone tile)
       views.set(def.id, { def, ...buildPage(def), navBtn: el('button'), stateEl: el('span') });
       continue;
@@ -67,7 +75,12 @@
     const body = el('div', { class: 'page-body' });
     page.append(body);
     pages.append(page);
-    const render = def.build(body, page) || (() => {});
+    let render = () => {};
+    try {
+      render = def.build(body, page) || render;
+    } catch (e) { // one tab that fails to build doesn't take the rest of the sidebar with it
+      console.error('build ' + def.id + ':', e);
+    }
     return { page, body, master, render, wifiNote, art };
   }
 
@@ -77,8 +90,13 @@
   // Something to work with: the other computer, or a phone.
   const linked = (s) => !!(s && (s.client || (s.phone && s.phone.connected)));
 
+  // Where to go when a page isn't there (hidden, or nothing connected): the device, else Connection.
+  const home = (s) => (linked(s) ? 'overview' : 'connection');
+
   function show(id, user) {
-    const v = views.get(id) || views.get('overview');
+    id = ALIAS[id] || id;
+    let v = views.get(id) || views.get(home(UI.state));
+    if (UI.state && v.def.hidden && v.def.hidden(UI.state)) v = views.get(home(UI.state)) || v;
     if (current === v) return;
     if (current) {
       current.page.hidden = true;
@@ -90,7 +108,7 @@
     v.navBtn.classList.add('active');
     v.navBtn.setAttribute('aria-selected', 'true');
     $('content').scrollTop = 0;
-    for (const t of $('phones').children) t.classList.toggle('active', v.def.id === 'phone' && t.dataset.connected === '1');
+    for (const t of $('phones').children) t.classList.toggle('active', v.def.id === 'overview' && t.dataset.connected === '1');
     if (user) api.setTab(v.def.id);
     if (UI.state) renderPage(v, UI.state);
   }
@@ -133,12 +151,13 @@
     for (const v of views.values()) {
       const hide = !!(v.def.hidden && v.def.hidden(s));
       if (v.navBtn.parentElement) v.navBtn.parentElement.hidden = hide;
-      if (hide && current === v) show(s.phone && s.phone.connected ? 'phone' : 'overview', false);
+      if (hide && current === v) show(home(s), false);
     }
     // A group with every tab hidden takes its gap with it.
     for (const v of views.values()) if (v.gap) v.gap.hidden = [...views.values()].every((x) => x.gap !== v.gap || !x.navBtn.parentElement || x.navBtn.parentElement.hidden);
     for (const v of views.values()) {
-      const b = v.def.badge ? v.def.badge(s) : v.def.phase ? `P${v.def.phase}` : '';
+      let b = v.def.badge ? v.def.badge(s) : v.def.phase ? `P${v.def.phase}` : '';
+      if (b === 'on' && !linked(s)) b = 'warn'; // on, but nothing connected: it waits (yellow), it isn't working
       v.stateEl.className = `state${b === 'on' ? ' on' : b === 'warn' ? ' warn' : ''}`;
       v.stateEl.textContent = b === 'on' || b === 'warn' ? '' : b || '';
     }
@@ -178,8 +197,8 @@
         d.connected ? el('span', { class: 'dot good' }) : ph.connecting && ph.connecting.id === d.id ? el('span', { class: 'spin', attrs: { 'aria-hidden': 'true' } }) : null,
       ]);
       b.dataset.connected = d.connected ? '1' : '';
-      b.classList.toggle('active', d.connected && current && current.def.id === 'phone');
-      b.onclick = () => (d.connected ? show('phone', true) : api.connectPhone(d.id));
+      b.classList.toggle('active', d.connected && current && current.def.id === 'overview');
+      b.onclick = () => (d.connected ? show('overview', true) : api.connectPhone(d.id));
       return b;
     }));
   }
@@ -269,8 +288,13 @@
   $('net-pass').onkeydown = $('net-ssid').onkeydown = (e) => { if (e.key === 'Enter') $('net-join').click(); };
   $('net-cancel').onclick = () => api.netCancel();
 
+  let wasLinked = null;
   function render(s) {
     UI.state = s;
+    // Something just connected while Connection is open: its Overview.
+    const now = linked(s);
+    if (wasLinked === false && now && current && current.def.id === 'connection' && !s.pairing) show('overview', false);
+    wasLinked = now;
     document.body.classList.toggle('no-peer', !linked(s)); // switches of what needs a device can't be changed (shared/feature-art.js)
     UI.names(s);
     if (UI.setup.render(s)) {
@@ -287,7 +311,7 @@
   $('pair-deny').onclick = () => (bannerMode === 'guest' ? api.cancelGuestPair() : api.pairRespond(false));
   PairPop.attach($('banner'), $('pair-allow')); // the popup over the window, Allow there presses this one
   window.addEventListener('macshare-go', (e) => show(e.detail, true));
-  if (api.onGo) api.onGo((tab) => typeof tab === 'string' && views.has(tab) && show(tab, true));
+  if (api.onGo) api.onGo((tab) => typeof tab === 'string' && views.has(ALIAS[tab] || tab) && show(tab, true));
 
   // ↑/↓ move between tabs while the sidebar has focus.
   nav.addEventListener('keydown', (e) => {
@@ -305,8 +329,8 @@
 
   api.onState(render);
   api.getState().then((s) => {
-    const saved = s.ui && s.ui.tab;
-    show(saved === 'display' ? 'share' : saved || 'overview', false); // 'display' = before the split
+    UI.state = s;
+    show((s.ui && s.ui.tab) || home(s), false); // 'display' (before the split) goes to Share screen: ALIAS
     render(s);
   });
 })();

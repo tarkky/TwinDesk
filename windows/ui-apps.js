@@ -28,12 +28,14 @@ UI.tab({
       { on: { get: (s) => s.pcApps.allow, set: (v) => api.setPcApps({ allow: v }) }, label: 'Open {me}’s apps on {name}', hint: 'Pick them over there', rows: [pcState] },
     );
     const listCard = UI.card('Mac apps', [UI.row('Search', '', [filter]), grid, status], { actions: [refresh] });
-    body.append(pair.el, note, listCard);
+    const rezume = UI.rezumeCard ? UI.rezumeCard() : { el: UI.el('div', { hidden: true }), update() {} }; // the other computer's ReZume (shared/ui-rezume.js; not in Multi-device)
+    body.append(pair.el, rezume.el, note, listCard);
     filter.oninput = () => { key = ''; if (UI.state) render(UI.state); };
 
     let key = '';
     let asked = false;
     function render(s) {
+      rezume.update(s);
       const a = s.apps;
       const connected = s.link.state === 'connected';
       pair.update(s); // the two direction switches follow the settings

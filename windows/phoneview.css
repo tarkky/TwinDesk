@@ -40,3 +40,11 @@ body[data-controls="bottom"] #stage { bottom: 40px; }
 #status { position: absolute; color: var(--muted); text-align: center; padding: 0 24px; }
 body.drop #stage { outline: 3px solid #0a84ff; outline-offset: -3px; }
 body.sound #bar, body.sound #panel, body.sound #navbar, body.netsound #bar, body.netsound #panel, body.netsound #navbar { display: none !important; }
+/* The panel button, first in the title bar: the controls on (lit) or off (only the title). */
+#panelBtn { margin-right: 6px; flex: none; }
+#bar { justify-content: flex-start; }
+#bar .tools { margin-left: auto; }
+#fullBtn { flex: none; margin-left: 2px; }
+/* Fullscreen: only the picture, as large as it fits, black around it. */
+body.full #bar, body.full #panel, body.full #navbar { display: none !important; }
+body.full #stage { top: 0; right: 0; bottom: 0; }

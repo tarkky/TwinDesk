@@ -10,9 +10,9 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..');
 const LAZY = {
-  'windows/main.js': ['nowplaying', 'btaudio', 'terminal', 'gamepad', 'camshare', 'vcam', 'phone-remote'],
-  'linux/main.js': ['nowplaying', 'btaudio', 'a2dp', 'terminal', 'gamepad', 'camshare', 'vcam', 'phone-remote'],
-  'mac/main.js': ['nowplaying', 'camshare', 'vcam', 'phone-remote'],
+  'windows/main.js': ['nowplaying', 'btaudio', 'terminal', 'gamepad', 'camshare', 'vcam', 'phone-remote', 'rezume', 'rezume-shelf', 'activity'],
+  'linux/main.js': ['nowplaying', 'btaudio', 'a2dp', 'terminal', 'gamepad', 'camshare', 'vcam', 'phone-remote', 'rezume', 'rezume-shelf', 'activity'],
+  'mac/main.js': ['nowplaying', 'camshare', 'vcam', 'phone-remote', 'rezume', 'rezume-shelf', 'activity'],
 };
 
 for (const [file, mods] of Object.entries(LAZY)) {

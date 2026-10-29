@@ -1,6 +1,8 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
-// General tab: start with Windows, the switching popup, firewall self-check (+ Fix), wake from the
-// network, Bluetooth for devices not on this network, helper, the virtual display driver (Extend), this PC.
+// General tab, in sections: Startup (start with Windows, received files), Appearance (the switching
+// popup, the phone's wallpaper, media controls), Overview (what it shows), Network and Bluetooth,
+// Permissions (firewall self-check + Fix, Bluetooth, Location) and This computer (its name, the
+// helper, the virtual display driver for Extend).
 'use strict';
 
 UI.tab({
@@ -49,20 +51,39 @@ UI.tab({
     const deviceName = el('span', { class: 'value' });
     const deviceRow = UI.row('Computer name', 'How other computers see this one', [deviceName]);
 
+    // Appearance: the phone's wallpaper behind it here (settings.phone.wallpaper, was on the Phone page).
+    const wallSw = UI.switch((v) => api.setPhone({ wallpaper: v }), { label: 'Show the phone’s wallpaper' });
+    const wallRow = UI.row('Show the phone’s wallpaper', 'On its tile and Overview. TwinDesk on the phone reads it once wireless debugging is set up', [wallSw]);
+    // Overview: what it shows (settings.ui.overview).
+    const parts = [['media', 'Now playing', 'What plays on the phone, with its controls'], ['qs', 'Quick actions', 'Wi-Fi, Bluetooth, torch, Do not disturb and more, with volume and ringer'],
+      ['notifs', 'Latest notifications', 'The newest few, with Copy for one-time codes'], ['apps', 'Most used apps', 'The phone’s most used apps this week'], ['features', 'Feature switches', 'Every feature’s two switches, at the bottom']];
+    const partSw = {};
+    const partRows = parts.map(([k, label, hint]) => {
+      partSw[k] = UI.switch((v) => api.setOverview && api.setOverview({ [k]: v }), { label });
+      return UI.row(label, hint, [partSw[k]]);
+    });
+
     body.append(
-      UI.card('App', [
-        UI.row('Start with Windows', '', [startup]),
-        UI.row('Show a popup when switching', 'When the mouse and keyboard move between computers', [hudSw]),
-        media.el,
+      UI.card('Startup', [
+        UI.row('Start with Windows', 'TwinDesk waits in the tray', [startup]),
         recvRow,
       ]),
+      UI.card('Appearance', [
+        UI.row('Show a popup when switching', 'When the mouse and keyboard move between devices', [hudSw]),
+        wallRow,
+        media.el,
+      ]),
+      UI.card('Overview', partRows),
+      UI.card('Network and Bluetooth', [bleRow, blePcRow, bleWifiRow, wakeRow, sendToRow]),
       UI.card('Permissions', [fwRow, btRow, locRow]),
-      UI.card('Network and sharing', [wakeRow, sendToRow, bleRow, blePcRow, bleWifiRow]),
       UI.card('This computer', [deviceRow, helperRow, vddRow]),
     );
 
     return (s) => {
       media.update(s);
+      wallSw.set(!s.phone || !s.phone.settings || s.phone.settings.wallpaper !== false);
+      const ov = (s.ui && s.ui.overview) || {};
+      for (const k of Object.keys(partSw)) partSw[k].set(ov[k] !== false);
       startup.set(s.startup);
       hudSw.set(s.app.hud);
       const f = s.files || {};

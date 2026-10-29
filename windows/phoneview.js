@@ -322,8 +322,10 @@ class PhoneViews extends EventEmitter {
   // Where the window's controls sit (Phone page › Settings › Window controls): 'top' (the title
   // bar, the default), 'side' (a panel down the right) or 'bottom' (Back, Home and Recents in a
   // bar under the picture, the rest in the title bar).
+  // 'none': the panel button in the title bar hid them (settings.phone.panel, kept for every window).
   _controls() {
     const ph = this.getSettings().phone;
+    if (ph && ph.panel === false) return 'none';
     return ph && ['side', 'top', 'bottom'].includes(ph.controls) ? ph.controls : 'top';
   }
 
@@ -465,6 +467,20 @@ class PhoneViews extends EventEmitter {
       return this._send(v, 'phoneview:opts', { pinned: on });
     }
     if (m.t === 'nav' && m.key === 'rotate' && v.kind === 'app') return this._rotateApp(v);
+    // Fullscreen (its title-bar button, F11): only the picture, black around it; F11 again leaves.
+    if (m.t === 'full') {
+      const on = !v.win.isFullScreen();
+      v.win.setFullScreen(on);
+      return this._send(v, 'phoneview:opts', { full: on });
+    }
+    // The title bar's panel button: the controls shown or hidden in every phone window, remembered.
+    if (m.t === 'panel') {
+      const ph = this.getSettings().phone;
+      ph.panel = ph.panel === false;
+      this.bridge.emit('save');
+      this.applyControls();
+      return this.emit('change');
+    }
     if (m.t === 'toggle' && (m.what === 'enterSends' || m.what === 'arrowSwipe')) {
       const ph = this.getSettings().phone;
       ph[m.what] = m.what === 'enterSends' ? ph.enterSends === false : ph.arrowSwipe !== true;

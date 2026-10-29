@@ -160,10 +160,20 @@ class Notifs {
 
   // Desktop notifications have no subtitle: the first line is "<appName> · <peer>".
   _show(m) {
-    if (!this.cfg.receive || !Notification.isSupported()) return;
+    if (!this.cfg.receive) return;
     const peer = this.peerName();
     const appName = str(m.appName, 100);
     const title = str(m.title, 200) || appName || peer;
+    // The recent ones, for Overview and Messages' chat apps (as Windows keeps them).
+    const item = { id: str(m.id, 200) || String(Date.now()), app: str(m.app, 200), appName, title, subtitle: str(m.subtitle, 200), body: str(m.body, 1000), at: Math.round(Number(m.at)) || Date.now(), reply: m.reply === true };
+    if (!this.historyIcons) this.historyIcons = new Map();
+    if (item.app && typeof m.icon === 'string' && m.icon.startsWith('data:image/') && m.icon.length < 200000) {
+      this.historyIcons.delete(item.app);
+      this.historyIcons.set(item.app, m.icon);
+      if (this.historyIcons.size > 60) this.historyIcons.delete(this.historyIcons.keys().next().value);
+    }
+    this.history = [item, ...(this.history || []).filter((x) => x.id !== item.id)].slice(0, 50);
+    if (!Notification.isSupported()) return void this.onChange();
     this.echoes.push({ title, body: str(m.body).slice(0, 80), until: Date.now() + 30000 });
     const n = new Notification({
       title,
@@ -180,6 +190,21 @@ class Notifs {
     this.onChange();
   }
 
+  // An answer to a phone's notification (a chat's Reply), typed here: the phone sends it with the app.
+  reply(id, text) {
+    const item = (this.history || []).find((h) => h.id === id);
+    if (!item || !item.reply || typeof text !== 'string' || !text.trim()) return false;
+    this.link.send({ t: 'notif.reply', id: str(id, 200), text: text.slice(0, 5000) });
+    item.replies = [...(item.replies || []), { text: text.slice(0, 5000), at: Date.now() }].slice(-20);
+    this.onChange();
+    return true;
+  }
+
+  clearHistory() {
+    this.history = [];
+    this.onChange();
+  }
+
   shutdown() {
     if (this.mon) this.mon.stdin.end();
     this.mon = null;
@@ -192,6 +217,9 @@ class Notifs {
       sent: this.sent,
       shown: this.shown,
       apps: [...this.apps.values()].sort((a, b) => b.at - a.at).slice(0, 40),
+      history: this.history || [],
+      historyIcons: Object.fromEntries([...new Set((this.history || []).map((h) => h.app))]
+        .filter((a) => this.historyIcons && this.historyIcons.has(a)).map((a) => [a, this.historyIcons.get(a)])),
     };
   }
 }

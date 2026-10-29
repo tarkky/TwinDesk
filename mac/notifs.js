@@ -100,15 +100,29 @@ class Notifs extends EventEmitter {
   }
 
   _show(m) {
-    if (!this.cfg.receive || !Notification.isSupported()) return;
+    if (!this.cfg.receive) return;
     const peer = this.server.current ? this.server.current.name : '';
     const appName = str(m.appName, 100);
+    // The recent ones, for Overview and Messages' chat apps (as the PC keeps them).
+    const item = { id: str(m.id, 200) || String(Date.now()), app: str(m.app, 200), appName, title: str(m.title, 200) || appName || peer, subtitle: str(m.subtitle, 200), body: str(m.body, 1000), at: Math.round(Number(m.at)) || Date.now(), reply: m.reply === true };
+    if (!this.historyIcons) this.historyIcons = new Map();
+    if (item.app && typeof m.icon === 'string' && m.icon.startsWith('data:image/') && m.icon.length < 200000) {
+      this.historyIcons.delete(item.app);
+      this.historyIcons.set(item.app, m.icon);
+      if (this.historyIcons.size > 60) this.historyIcons.delete(this.historyIcons.keys().next().value);
+    }
+    this.history = [item, ...(this.history || []).filter((x) => x.id !== item.id)].slice(0, 50);
+    if (!Notification.isSupported()) return void this.emit('change');
+    // A one-time code: a Copy button on the notification.
+    const code = require('../shared/otp.js').otpOf([item.title, item.body].join(' '));
     const n = new Notification({
-      title: str(m.title, 200) || appName || peer,
+      title: item.title,
       subtitle: [appName, peer].filter(Boolean).join(' · '),
       body: [str(m.subtitle, 200), str(m.body)].filter(Boolean).join('\n'),
       icon: this.iconsIn.for(m),
+      actions: code ? [{ type: 'button', text: 'Copy ' + code }] : [],
     });
+    if (code) n.on('action', () => require('electron').clipboard.writeText(code));
     this.live.push(n);
     const drop = () => { this.live = this.live.filter((x) => x !== n); };
     n.on('close', drop);
@@ -119,6 +133,16 @@ class Notifs extends EventEmitter {
     this.emit('change');
   }
 
+  // An answer to a phone's notification (a chat's Reply), typed here: the phone sends it with the app.
+  reply(id, text) {
+    const item = (this.history || []).find((h) => h.id === id);
+    if (!item || !item.reply || typeof text !== 'string' || !text.trim()) return false;
+    this.server.sendToClient({ t: 'notif.reply', id: str(id, 200), text: text.slice(0, 5000) });
+    item.replies = [...(item.replies || []), { text: text.slice(0, 5000), at: Date.now() }].slice(-20);
+    this.emit('change');
+    return true;
+  }
+
   get view() {
     return {
       access: this.access,
@@ -126,6 +150,9 @@ class Notifs extends EventEmitter {
       sent: this.sent,
       shown: this.shown,
       apps: [...this.apps.values()].sort((a, b) => b.at - a.at).slice(0, 40),
+      history: this.history || [],
+      historyIcons: Object.fromEntries([...new Set((this.history || []).map((h) => h.app))]
+        .filter((a) => this.historyIcons && this.historyIcons.has(a)).map((a) => [a, this.historyIcons.get(a)])),
     };
   }
 }

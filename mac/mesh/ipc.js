@@ -18,7 +18,7 @@ const SETTINGS_URLS = {
   location: 'x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices',
   extensions: 'x-apple.systempreferences:com.apple.ExtensionsPreferences?Sharing',
 };
-const TABS = ['phone', 'overview', 'calls', 'messages', 'media', 'pfiles', 'share', 'receive', 'cursor', 'keyboard', 'clipboard', 'notifications', 'files', 'mount', 'terminal', 'audio', 'apps', 'multi', 'general', 'about'];
+const TABS = ['phone', 'overview', 'connection', 'mirror', 'papps', 'calls', 'messages', 'media', 'pfiles', 'share', 'receive', 'cursor', 'keyboard', 'clipboard', 'notifications', 'files', 'mount', 'terminal', 'audio', 'apps', 'multi', 'general', 'about'];
 
 const bool = (v) => !!v;
 const clamp = (lo, hi, dflt) => (v) => {
@@ -525,6 +525,31 @@ function setupIpc(ctx) {
     // Calls, Messages and Photos (shared/phonehub.js, loaded the first time it's used).
     hub(r) {
       ctx.phoneHub().act(r);
+    },
+    // Overview: the selected device's controls (shared/devctl.js).
+    deviceDo(c) {
+      if (c && typeof c === 'object' && ctx.devctl && ctx.devctl()) ctx.devctl().do(c);
+    },
+    // General › Overview: what Overview shows.
+    setOverview(o) {
+      if (!o || typeof o !== 'object') return;
+      const cur = settings.ui.overview || {};
+      for (const k of ['media', 'qs', 'notifs', 'apps', 'features']) if (typeof o[k] === 'boolean') cur[k] = o[k];
+      settings.ui.overview = cur;
+      store.saveSettings(settings);
+      ctx.pushState();
+    },
+    // Messages: WhatsApp, Telegram and Instagram there too.
+    setChats(on) {
+      settings.ui.chats = on === true;
+      store.saveSettings(settings);
+      if ((ctx.chats && ctx.chats())) (ctx.chats && ctx.chats()).sync();
+      ctx.pushState();
+    },
+    // A phone chat's notification answered here (its own Reply).
+    notifReply(r) {
+      if (r && typeof r === 'object' && r.chat) return void ((ctx.chats && ctx.chats()) && (ctx.chats && ctx.chats()).reply(String(r.chat), r.text)); // a chat app's conversation (shared/chats.js)
+      if (r && typeof r === 'object' && ctx.notifs && ctx.notifs.reply) ctx.notifs.reply(String(r.id || ''), r.text);
     },
     setTab(tab) {
       if (!TABS.includes(tab)) return;

@@ -52,6 +52,7 @@ UI.tab({
       }));
       if (!apps.length) grid.append(el('div', { class: 'app-empty', text: p.listing ? `Loading ${UI.peer(UI.state).name}’s apps…` : q ? 'No app matches' : 'No apps yet. Press Refresh.' }));
     }
+    const rezume = UI.rezumeCard ? UI.rezumeCard() : { el: UI.el('div', { hidden: true }), update() {} }; // the other computer's ReZume (shared/ui-rezume.js; not in Multi-device)
     body.append(
       UI.pair(
         UI.dir('m2w', [
@@ -60,9 +61,11 @@ UI.tab({
         ]),
         UI.dir('w2m', [pcRow, pcUsage]),
       ),
+      rezume.el,
       gridCard,
     );
     return (s) => {
+      rezume.update(s);
       const a = s.apps;
       if (!a) return;
       offerSw.set(a.offer);

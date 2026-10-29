@@ -395,6 +395,9 @@ namespace MacShare
                             }
                         }, true);
                         return;
+                    case "frontActivity": // ReZume: the window in front, its address or document (Activity.cs)
+                        Async(c, delegate (Dictionary<string, object> r) { Activity.Front(r); });
+                        return;
                     case "pasteFiles": // files received for a paste into an app: onto the clipboard, then Ctrl+V there
                         List<string> pastePaths = Strings(c, "paths");
                         long pasteWin = (long)Json.Num(c, "hwnd", 0);

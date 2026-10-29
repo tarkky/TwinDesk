@@ -8,12 +8,13 @@
 (function (root) {
   // Sections that only make sense for one kind of device. Ids of all three apps (the Mac calls
   // Receive screen 'receive' and Share screen 'share', the PC and Linux 'mac-pc' and 'pc-mac').
-  const PHONE_ONLY = ['calls', 'messages', 'media', 'pfiles', 'mount', 'phone', 'remote'];
+  const PHONE_ONLY = ['calls', 'messages', 'media', 'pfiles', 'mount', 'phone', 'remote', 'mirror', 'papps'];
   const COMPUTER_ONLY = ['mac-pc', 'receive', 'apps', 'terminal'];
   // Global sections: the same whichever device is selected.
-  const GLOBAL = ['overview', 'general', 'about', 'clipboard', 'notifications', 'setup'];
+  // Overview is the selected device's own page (shared/ui-device.js); Connection is everyone's.
+  const GLOBAL = ['connection', 'general', 'about', 'clipboard', 'notifications', 'setup'];
   // Where a device's own sections begin (the first one the app has).
-  const FIRST = { phone: ['phone', 'calls'], computer: ['mac-pc', 'receive', 'pc-mac', 'share', 'cursor', 'files'], none: ['overview'] };
+  const FIRST = { phone: ['overview', 'phone', 'calls'], computer: ['overview', 'mac-pc', 'receive', 'pc-mac', 'share', 'cursor', 'files'], none: ['connection', 'overview'] };
 
   const kindOf = (os) => (os === 'android' ? 'phone' : 'computer');
 
@@ -28,7 +29,7 @@
 
   function firstSection(kind, available) {
     const list = FIRST[kind] || FIRST.none;
-    return list.find((id) => available.includes(id)) || (available.includes('overview') ? 'overview' : available[0] || 'overview');
+    return list.find((id) => available.includes(id)) || (available.includes('connection') ? 'connection' : available.includes('overview') ? 'overview' : available[0] || 'overview');
   }
 
   // Section to show after a device was clicked: the open one when it is device-specific and exists for

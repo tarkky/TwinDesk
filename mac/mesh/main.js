@@ -89,6 +89,8 @@ let startHidden = process.argv.includes('--hidden');
 // peer: the SELECTED device for the one-to-one features; phonePeer: the phone, wherever it is selected.
 let autoJoin, settings, id, server, pairing, discovery, links, hub, mesh, layoutSync, peer, phonePeer, svc, actions, pairSync, updates;
 let phoneHub = null; // Calls, Messages and Photos (loadHub); svc.hub is not used: the mesh's hub is `hub`
+let devctl = null; // Overview's controls of the selected device (shared/devctl.js)
+let chats = null; // Messages' chat apps from a phone, kept per phone (shared/chats.js)
 
 const state = {
   macName: '',
@@ -233,6 +235,7 @@ function publishState() {
     if (svc) state.terminal = { ...settings.terminal, ...svc.terminal.view, toPc: svc.sshClient.view };
     if (svc) state.files = { ...settings.files, ...svc.drop.view, ...svc.fileSend.view, clip: svc.fileClip.view };
     if (svc) state.notifs = { ...settings.notifs, ...svc.notifs.view };
+    state.chats = chats ? chats.view() : null; // Messages' WhatsApp, Instagram… conversations
     if (svc) {
       const { secret, ...smb } = settings.smb; // never send the share password to the window
       state.smb = { ...smb, ...svc.smb.view };
@@ -241,7 +244,10 @@ function publishState() {
       state.papps = { ...settings.papps, ...svc.pcApps.view };
     }
     if (svc) state.wake = svc.wake.view;
-    if (svc && svc.phone) state.phone = { ...svc.phone.view, settings: settings.phone };
+    const ctlView = devctl ? devctl.view : null;
+    const onPhone = !!(state.client && state.client.os === 'android');
+    if (svc && svc.phone) state.phone = { ...svc.phone.view, settings: settings.phone, ctl: onPhone ? ctlView : null, qs: onPhone && ctlView ? ctlView.qs || null : null, top: onPhone && ctlView ? ctlView.top || [] : [] };
+    state.peerCtl = !onPhone ? ctlView : null; // a computer's controls on Overview
     if (svc && svc.net) {
       const c = peer && peer.current;
       const hs = c && settings.net.hotspots[c.deviceId];
@@ -449,7 +455,7 @@ function updateTray() {
     drag: { checked: settings.files.dragEdge !== false, set: (on) => actions.setFiles({ dragEdge: on }) },
     shortcuts: { label: `Copy and Paste Files (${CL.keysLabel(settings.files.copyKeys, 'mac')}, ${CL.keysLabel(settings.files.pasteKeys, 'mac')})`, checked: settings.files.shortcuts !== false, set: (on) => actions.setFiles({ shortcuts: on }) },
     found: found.map((d) => ({ label: `${d.name} (${d.os === 'mac' ? 'Mac' : d.os === 'linux' ? 'Linux' : 'PC'})`, click: () => actions.pairWith(d.id) })),
-    byAddress: () => { actions.setTab('overview'); showWindow(); },
+    byAddress: () => { actions.setTab('connection'); showWindow(); },
     lookAgain: () => actions.refreshDiscovery(),
     update: updates && updates.status.available ? { label: `TwinDesk ${updates.status.latest} available…`, click: showUpdateWindow } : null,
     open: showWindow,
@@ -540,6 +546,29 @@ app.whenReady().then(() => {
   });
   peer.on('closed', pushState);
   peer.on('rtt', pushState);
+  // Overview's controls of the selected device, and this Mac's for it (shared/devctl.js).
+  {
+    const { DevCtl } = require('../../shared/devctl.js');
+    const { DevLocal } = require('../../shared/devlocal.js');
+    devctl = new DevCtl({
+      link: {
+        on: (ev, fn) => (ev === 'welcome' ? peer.on('client', fn) : ev === 'closed' ? peer.on('closed', fn) : peer.on('t:' + ev, fn)),
+        send: (m) => peer.sendToClient(m),
+      },
+      local: new DevLocal(),
+      adb: () => {
+        const br = svc && svc.phone && svc.phone.bridge;
+        return br && br.state === 'ready' && br.serial ? { adb: br.adb, serial: br.serial } : null;
+      },
+    });
+    devctl.on('change', pushState);
+    const { Chats } = require('../../shared/chats.js');
+    chats = new Chats({ link: {
+        on: (ev, fn) => (ev === 'welcome' ? peer.on('client', fn) : ev === 'closed' ? peer.on('closed', fn) : peer.on('t:' + ev, fn)),
+        send: (m) => peer.sendToClient(m),
+        get current() { return peer.current; },
+      }, dir: app.getPath('userData'), want: () => settings.ui.chats === true, onChange: pushState });
+  }
   hub.start();
 
   svc = startServices({ server: peer, getSettings: () => settings, pushState, onHelperReady: refreshPermissions,
@@ -616,7 +645,7 @@ app.whenReady().then(() => {
     },
   });
   updates.start();
-  actions = setupIpc({ state, settings, pushState, server: peer, pairing, discovery, link: links, ...svc, hub, layoutSync, autoJoin, phoneHub: loadHub, login, refreshPermissions, updates });
+  actions = setupIpc({ devctl: () => devctl, chats: () => chats, state, settings, pushState, server: peer, pairing, discovery, link: links, ...svc, hub, layoutSync, autoJoin, phoneHub: loadHub, login, refreshPermissions, updates });
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'trayTemplate.png'))); // "Template": macOS tints it
   hud = new Hud(() => settings);
   svc.kvm.on('where', (mode) => {

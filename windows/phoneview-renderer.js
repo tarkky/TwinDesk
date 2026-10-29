@@ -429,14 +429,22 @@
     };
   }
   const els = (list) => list.map((c) => c.el);
+  // The panel button: every phone window's controls on or off (phoneview.js keeps it).
+  const panelBtn = document.getElementById('panelBtn');
+  const fullBtn = document.getElementById('fullBtn');
+  fullBtn.onclick = () => { api.send({ t: 'full' }); canvas.focus(); };
+  window.addEventListener('keydown', (e) => { if (e.key === 'F11') { e.preventDefault(); e.stopPropagation(); api.send({ t: 'full' }); } }, true);
+  panelBtn.onclick = () => { api.send({ t: 'panel' }); canvas.focus(); };
   function layout(mode) {
-    mode = ['side', 'top', 'bottom'].includes(mode) ? mode : 'top';
+    mode = ['side', 'top', 'bottom', 'none'].includes(mode) ? mode : 'top';
+    panelBtn.classList.toggle('on', mode !== 'none');
     document.body.dataset.controls = mode;
     const panel = document.getElementById('panel');
     const navbar = document.getElementById('navbar');
     const tools = document.querySelector('#bar .tools');
     for (const box of [panel, navbar, tools]) box.replaceChildren();
     const nav = els(CONTROLS.filter((c) => c.nav));
+    if (mode === 'none') return; // only the title: a clean window
     if (mode === 'side') {
       const gap = document.createElement('div');
       gap.className = 'gap';
@@ -450,6 +458,7 @@
   api.on('opts', (m) => {
     if (!m) return;
     if (m.controls) layout(m.controls);
+    if (typeof m.full === 'boolean') { document.body.classList.toggle('full', m.full); fit(); }
     for (const c of CONTROLS) if (c.toggle && typeof m[OPT[c.k]] === 'boolean') c.el.classList.toggle('on', m[OPT[c.k]]);
   });
 

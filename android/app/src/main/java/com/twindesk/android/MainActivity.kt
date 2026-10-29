@@ -125,26 +125,32 @@ private fun grad(a: Long, b: Long) = listOf(Color(a), Color(b))
 
 // The pages, with the Mac's tile colours and groups.
 private enum class Tab(val title: String, val icon: ImageVector, val colors: List<Color>, val group: String) {
+    // Overview: the computer itself, only while connected; Connection: pairing, Nearby, the link.
     Overview("Overview", Ico.overview, grad(0xFF8E8E93, 0xFF636366), ""),
+    Connection("Connection", Ico.link, grad(0xFF5AC8FA, 0xFF0A84FF), ""),
     // On the computer, from this phone (Hub.kt): their settings here.
     Calls("Calls", Ico.call, grad(0xFF5EE07A, 0xFF30B94D), "Phone"),
     Messages("Messages", Ico.message, grad(0xFF5EE07A, 0xFF30B94D), "Phone"),
     Photos("Photos", Ico.photo, grad(0xFFFFD60A, 0xFFFF9F0A), "Phone"),
     FileAccess("File access", Ico.folder, grad(0xFF64D2FF, 0xFF0A84FF), "Phone"),
     Screen("Screen", Ico.display, grad(0xFF5AC8FA, 0xFF0A84FF), "Display"),
-    Cursor("Cursor", Ico.cursor, grad(0xFFFFB340, 0xFFFF9500), "Input"),
+    Cursor("Mouse", Ico.cursor, grad(0xFFFFB340, 0xFFFF9500), "Input"),
     Keyboard("Keyboard", Ico.keyboard, grad(0xFFD1D1D6, 0xFF8E8E93), "Input"),
     Remote("Remote", Ico.remote, grad(0xFFBF5AF2, 0xFF8944AB), "Input"),
     Clipboard("Clipboard", Ico.clipboard, grad(0xFF64D2FF, 0xFF30B0C7), "Share"),
     Notifications("Notifications", Ico.bell, grad(0xFFFF6961, 0xFFFF3B30), "Share"),
     Files("Files", Ico.files, grad(0xFF64D2FF, 0xFF0A84FF), "Share"),
+    Rezume("ReZume", Ico.rezume, grad(0xFF64D2FF, 0xFF0A84FF), "Share"),
     Sound("Sound", Ico.audio, grad(0xFFFF6482, 0xFFFF2D55), "More"),
     Camera("Camera", Ico.camera, grad(0xFFBF5AF2, 0xFF8944AB), "More"),
     General("General", Ico.general, grad(0xFFAEAEB2, 0xFF636366), "bottom"),
     About("About", Ico.about, grad(0xFF64D2FF, 0xFF0A84FF), "bottom"),
 }
 
-private val BOTTOM = listOf(Tab.Overview, Tab.Screen, Tab.Cursor, Tab.Files)
+// The bottom bar: Overview first while connected, Connection second; before that Connection first.
+private fun bottom(core: Core) = if (core.host != null) listOf(Tab.Overview, Tab.Connection, Tab.Screen, Tab.Files) else listOf(Tab.Connection, Tab.Screen, Tab.Cursor, Tab.Files)
+// Overview only while connected (elsewhere, Connection shows).
+private fun shown(core: Core, t: Tab) = t != Tab.Overview || core.host != null
 
 // The sidebar's green dot: the page's feature is on.
 private fun isOn(core: Core, t: Tab): Boolean = when (t) {
@@ -156,6 +162,7 @@ private fun isOn(core: Core, t: Tab): Boolean = when (t) {
     Tab.Notifications -> core.sync.get("notifs", "in") || core.sync.get("notifs", "out")
     Tab.Sound -> core.sync.get("audio", "in") || core.sync.get("audio", "out")
     Tab.Camera -> core.adb.camera.on
+    Tab.Rezume -> core.rezume.on
     Tab.Calls -> core.hub.callsOn
     Tab.Messages -> core.hub.messagesOn
     Tab.Photos -> core.hub.mediaOn
@@ -174,7 +181,14 @@ private fun wifiOnly(core: Core, t: Tab) = (t == Tab.Sound || t == Tab.Photos) &
 fun App(core: Core, resumed: Int) {
     val v by core.version.collectAsState()
     @Suppress("UNUSED_EXPRESSION") v; @Suppress("UNUSED_EXPRESSION") resumed // re-read Core on every bump
-    var tab by rememberSaveable { mutableStateOf(Tab.Overview) }
+    var tab by rememberSaveable { mutableStateOf(Tab.Connection) }
+    // Connected: its Overview (from Connection); not connected: Connection in its place.
+    val connected = core.host != null
+    var wasConnected by rememberSaveable { mutableStateOf(false) }
+    if (connected && !wasConnected && tab == Tab.Connection) tab = Tab.Overview
+    wasConnected = connected
+    if (!connected && tab == Tab.Overview) tab = Tab.Connection
+    val BOTTOM = bottom(core)
     var more by rememberSaveable { mutableStateOf(false) }
     val wide = LocalConfiguration.current.screenWidthDp >= 600
     // Wireless debugging went off (MIUI / HyperOS): ask once per time it happens.
@@ -243,13 +257,13 @@ fun App(core: Core, resumed: Int) {
         } else {
             Column(Modifier.safeDrawingPadding()) {
                 TopIdentity(core, v)
-                if (more) MoreList(core, v, Modifier.weight(1f)) { tab = it; more = false }
+                if (more) MoreList(core, v, BOTTOM, Modifier.weight(1f)) { tab = it; more = false }
                 else Page(core, v, tab, Modifier.weight(1f))
                 NavigationBar(containerColor = pal.card) {
                     val item = @Composable { label: String, icon: ImageVector, colors: List<Color>, selected: Boolean, go: () -> Unit ->
                         NavigationBarItem(
                             selected = selected, onClick = go,
-                            icon = { Box(Modifier.alpha(if (selected) 1f else 0.72f)) { Tile(icon, colors, 28) } },
+                            icon = { Tile(icon, colors, 28) }, // in their colours, selected or not
                             label = { Text(label, maxLines = 1, fontSize = 11.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
                             colors = NavigationBarItemDefaults.colors(selectedTextColor = pal.accent, indicatorColor = pal.accentSoft, unselectedTextColor = pal.muted),
                         )
@@ -293,7 +307,7 @@ private fun Sidebar(core: Core, v: Int, tab: Tab, go: (Tab) -> Unit) {
     Column(Modifier.width(250.dp).fillMaxHeight().background(pal.sidebar).verticalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 14.dp)) {
         Box(Modifier.padding(start = 4.dp, bottom = 18.dp)) { Identity(core, v, 54) }
         var group: String? = null
-        for (t in Tab.entries) {
+        for (t in Tab.entries.filter { shown(core, it) }) {
             if (t.group == "bottom" && group != "bottom") Box(Modifier.padding(horizontal = 8.dp, vertical = 8.dp).fillMaxWidth().height(1.dp).background(pal.line))
             else if (group != null && t.group != group) Spacer(Modifier.height(10.dp))
             group = t.group
@@ -309,12 +323,12 @@ private fun TopIdentity(core: Core, v: Int) {
 }
 
 @Composable
-private fun MoreList(core: Core, v: Int, modifier: Modifier, go: (Tab) -> Unit) {
+private fun MoreList(core: Core, v: Int, BOTTOM: List<Tab>, modifier: Modifier, go: (Tab) -> Unit) {
     @Suppress("UNUSED_EXPRESSION") v // redraw on every Core change (Compose skips unread parameters)
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp)) {
         PageHead("More", "")
         MacCard {
-            Tab.entries.filter { it !in BOTTOM }.forEachIndexed { i, t ->
+            Tab.entries.filter { it !in BOTTOM && shown(core, it) }.forEachIndexed { i, t ->
                 Column {
                     if (i > 0) Box(Modifier.padding(start = 58.dp).fillMaxWidth().height(1.dp).background(pal.line))
                     Row(Modifier.fillMaxWidth().clickable { go(t) }.padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -336,7 +350,8 @@ private fun Page(core: Core, v: Int, tab: Tab, modifier: Modifier) {
     Column(modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 20.dp)) {
         Column(Modifier.widthIn(max = 820.dp)) {
             when (tab) {
-                Tab.Overview -> OverviewPage(core, v)
+                Tab.Overview -> OverviewPage(core, v, connection = false)
+                Tab.Connection -> OverviewPage(core, v, connection = true)
                 Tab.Calls -> CallsPage(core, v)
                 Tab.Messages -> MessagesPage(core, v)
                 Tab.Photos -> PhotosPage(core, v)
@@ -348,6 +363,7 @@ private fun Page(core: Core, v: Int, tab: Tab, modifier: Modifier) {
                 Tab.Clipboard -> ClipboardPage(core, v)
                 Tab.Notifications -> NotificationsPage(core, v)
                 Tab.Files -> FilesPage(core, v)
+                Tab.Rezume -> RezumePage(core, v)
                 Tab.Sound -> SoundPage(core, v)
                 Tab.Camera -> CameraPage(core, v)
                 Tab.General -> GeneralPage(core, v)
@@ -373,23 +389,26 @@ private fun NotConnected(core: Core, v: Int) {
 // ---- Overview ----
 
 @Composable
-private fun OverviewPage(core: Core, v: Int) {
+// One page, two halves: Connection (pairing, the link, Nearby, Switch to, Bluetooth, Scan QR code)
+// and Overview (the link, the computer's controls, every feature's switches; only while connected).
+private fun OverviewPage(core: Core, v: Int, connection: Boolean) {
     @Suppress("UNUSED_EXPRESSION") v // redraw on every Core change (Compose skips unread parameters)
     val link = core.link
     val host = core.host
     val me = core.store.deviceName
     val ip = remember(v) { core.adb.address() } // this phone's Wi-Fi address, for pairing by address on the computer
-    if (LocalConfiguration.current.screenWidthDp >= 600) PageHead("TwinDesk", listOf(me, ip).filter { it.isNotEmpty() }.joinToString(" · "))
-    else PageHead(me, listOf("This device", ip).filter { it.isNotEmpty() }.joinToString(" · "))
+    if (!connection && host != null) PageHead(host.name, listOfNotNull("Connected", core.net.via, link.rttMs?.let { "$it ms" }).joinToString(" · "))
+    else if (LocalConfiguration.current.screenWidthDp >= 600) PageHead("Connection", listOf(me, ip).filter { it.isNotEmpty() }.joinToString(" · "))
+    else PageHead("Connection", listOf(me, ip).filter { it.isNotEmpty() }.joinToString(" · "))
 
-    core.invite?.let { inv ->
+    if (connection) core.invite?.let { inv ->
         Note("${inv.name} wants to pair with this device.")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 16.dp)) {
             Primary("Pair") { core.pair(inv) }
             Secondary("Not now") { core.dismissInvite() }
         }
     }
-    link.pair?.let { p ->
+    if (connection) link.pair?.let { p ->
         MacCard("Pairing with ${p.name}") {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 when (p.phase) {
@@ -485,8 +504,11 @@ private fun OverviewPage(core: Core, v: Int) {
     }
 
 
+    // The computer's own controls (dev.state, DevCtl.kt): ring, lock, sleep, Bluetooth, Do not disturb, volume.
+    if (!connection && host != null) ComputerCard(core, host.name)
+
     // The other paired computers, while connected: Switch (Take over when nearby) lets this one go and connects that one.
-    if (host != null) {
+    if (connection && host != null) {
         val others = core.hosts().filter { it.id != host.id }
         if (others.isNotEmpty()) MacCard("Switch to") {
             others.forEachIndexed { i, h ->
@@ -499,7 +521,7 @@ private fun OverviewPage(core: Core, v: Int) {
         MacCard { BleSwitch(core, "Allow Nearby devices on the General page", first = true) }
     }
 
-    if (host != null) {
+    if (!connection && host != null) {
         val wide = LocalConfiguration.current.screenWidthDp >= 840
         val m2p = @Composable { mod: Modifier ->
             MacCard(modifier = mod) {
@@ -550,7 +572,10 @@ private fun OverviewPage(core: Core, v: Int) {
 
     if (host == null) MacCard("Nearby") {
         val hosts = core.hosts()
-        var first = true
+        // The computer's QR code (Connection there): an extra way, next to these.
+        val act = LocalContext.current
+        MacRow("Scan a QR code", "Connection › Pair a phone with a QR code, on the computer", true) { Secondary("Scan") { scanQr(act) } }
+        var first = false
         for (h in hosts) {
             val near = core.isNear(h.id)
             MacRow(h.name, if (link.state == "connecting" && link.host?.id == h.id) "Connecting…" else if (near && !core.discovery.found.containsKey(h.id)) "Nearby over Bluetooth · paired" else if (near) "Nearby · paired" else "Paired · not nearby", first) {
@@ -578,6 +603,52 @@ private fun OverviewPage(core: Core, v: Int) {
             }
         }
     }
+}
+
+// The connected computer's controls, when it has them (an older TwinDesk says nothing: no card).
+@Composable
+private fun ComputerCard(core: Core, name: String) {
+    val c = core.dev.computer ?: return
+    val can = c.optJSONObject("can") ?: return
+    if (can.length() == 0) return
+    MacCard(name) {
+        val ringing = c.optBoolean("ringing")
+        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (can.optBoolean("ring")) OutlinedButton(onClick = { core.dev.ask(if (ringing) "ringStop" else "ring") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) {
+                Text(if (ringing) "Stop" else "Ring", color = if (ringing) pal.bad else pal.text, maxLines = 1)
+            }
+            if (can.optBoolean("lock")) OutlinedButton(onClick = { core.dev.ask("lock") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) { Text("Lock", color = pal.text, maxLines = 1) }
+            if (can.optBoolean("sleep")) OutlinedButton(onClick = { core.dev.ask("sleep") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) { Text("Sleep", color = pal.text, maxLines = 1) }
+        }
+        var first = true
+        if (can.optBoolean("bluetooth") && c.has("bluetooth")) { SwitchRow("Bluetooth", "On $name", c.optBoolean("bluetooth"), first = first) { core.dev.ask("bluetooth", "on" to it) }; first = false }
+        if (can.optBoolean("dnd") && c.has("dnd")) { SwitchRow("Do not disturb", "On $name", c.optBoolean("dnd"), first = first) { core.dev.ask("dnd", "on" to it) }; first = false }
+        if (can.optBoolean("volume") && c.has("volume")) {
+            if (!first) Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(1.dp).background(pal.line))
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text("Volume", color = pal.text, fontSize = 15.sp)
+                MacSlider(c.optDouble("volume").toFloat(), 0f..1f, 0, { "${(it * 100).toInt()}%" }) { core.dev.ask("volume", "level" to it.toDouble()) }
+            }
+        }
+    }
+}
+
+// TwinDesk's own Scan QR code: Google's code scanner where the phone has it (no camera permission
+// here), else the camera app (it opens twindesk:// links too: QrActivity).
+fun scanQr(ctx: android.content.Context) {
+    val ok = runCatching {
+        val opts = com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(com.google.mlkit.vision.barcode.common.Barcode.FORMAT_QR_CODE).build()
+        com.google.mlkit.vision.codescanner.GmsBarcodeScanning.getClient(ctx, opts).startScan()
+            .addOnSuccessListener { b -> if (!QrActivity.open(ctx, b.rawValue.orEmpty())) android.widget.Toast.makeText(ctx, "That isn’t a TwinDesk pairing code", android.widget.Toast.LENGTH_SHORT).show() }
+            .addOnFailureListener { openCamera(ctx) }
+    }.isSuccess
+    if (!ok) openCamera(ctx)
+}
+
+private fun openCamera(ctx: android.content.Context) {
+    android.widget.Toast.makeText(ctx, "Scan it with the camera app: it opens TwinDesk", android.widget.Toast.LENGTH_LONG).show()
+    runCatching { ctx.startActivity(Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
 // Bluetooth with computers (Overview and General, as on the computers): for one that isn't on this
@@ -1044,6 +1115,55 @@ private fun KeyboardPage(core: Core, v: Int) {
 }
 
 // ---- Remote ----
+
+// ReZume (Rezume.kt): the computer's tab or document here, this phone's tab or app there.
+@Composable
+private fun RezumePage(core: Core, v: Int) {
+    @Suppress("UNUSED_EXPRESSION") v // redraw on every Core change (Compose skips unread parameters)
+    val r = core.rezume
+    val ctx = LocalContext.current
+    val name = them(core)
+    PageHead("ReZume", "Like Handoff on Apple devices: go on with what you were doing. $name’s page or document here, and this phone’s page or app on $name.", r.on) { r.set("on", it) }
+    if (!r.on) return Note("Off: nothing here is read or sent. Turned on, the page or app in front goes to $name, and $name’s comes here.")
+    if (core.host == null) return NotConnected(core, v)
+    val o = r.incoming
+    if (o != null) MacCard("Continue from $name") {
+        MacRow(o.title, if (o.kind == "web") (android.net.Uri.parse(o.url).host ?: o.url) else o.name, first = true) {
+            Primary("Open") { r.take(o, ctx) }
+            Spacer(Modifier.width(8.dp))
+            Secondary("Dismiss") { r.dismiss() }
+        }
+    }
+    val p = r.peer
+    Note(when {
+        p == null -> "$name has no ReZume yet: update TwinDesk there."
+        !p.optBoolean("on") -> "ReZume is off on $name: turn it on there too."
+        InputService.running == null && core.adb.wifiDebugging -> "Ready. $name sees this phone’s apps through wireless debugging; for its pages too, turn on TwinDesk’s Accessibility."
+        InputService.running == null -> "$name’s pages and documents come here. For this phone’s to go there, turn on TwinDesk’s Accessibility (or wireless debugging, for apps)."
+        r.offered.isNotEmpty() -> "Offered to $name: ${r.offered}"
+        else -> "Ready."
+    }, if (p == null || !p.optBoolean("on")) "warn" else "info")
+    if (r.message.isNotEmpty()) Note(r.message)
+    if (InputService.running == null) MacCard {
+        MacRow("Accessibility", "Says which app is in front and reads a browser’s address bar, nothing else", first = true) {
+            Secondary("Open settings") { ctx.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }
+    }
+    MacCard("What goes") {
+        SwitchRow("Web pages", "The tab in front in Chrome, Firefox, Edge, Samsung Internet, Brave, Opera, Vivaldi or DuckDuckGo, and $name’s here", r.opt("web"), first = true) { r.set("web", it) }
+        SwitchRow("Documents", "$name’s document in front comes here and opens", r.opt("docs")) { r.set("docs", it) }
+        SwitchRow("Apps", "The app in front here opens on $name in a window of its own (wireless debugging)", r.opt("apps")) { r.set("apps", it) }
+    }
+    MacCard("Which ways") {
+        SwitchRow("Offer what’s in use here", "$name can go on with it", r.opt("send"), first = true) { r.set("send", it) }
+        SwitchRow("Take $name’s", "What’s in use there shows here", r.opt("receive")) { r.set("receive", it) }
+        SwitchRow("Open what’s sent at once", "Send to on $name opens it here without asking (needs Display over other apps; else a notification)", r.opt("push")) { r.set("push", it) }
+    }
+    MacCard("Where $name’s shows") {
+        SwitchRow("Notification", "A quiet one, replaced by the next. Off: only on this page", r.opt("notify"), first = true) { r.set("notify", it) }
+    }
+    Note("Share a link to “Open on computer” to open it on $name now.")
+}
 
 @Composable
 private fun RemotePage(core: Core, v: Int) {

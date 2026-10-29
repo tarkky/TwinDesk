@@ -7,7 +7,7 @@ UI.tab({
   id: 'cursor',
   group: 'Input',
   order: 20,
-  title: 'Cursor',
+  title: 'Mouse',
   desc: 'Move the pointer off the edge of the screen to go to the other computer.',
   color: 'linear-gradient(#ffb340, #ff9500)',
   // One switch: cursor sharing, the same one the hotkey's double-tap and the other

@@ -192,7 +192,7 @@ class Kvm {
   }
 
   get connected() {
-    return this.link.status.state === 'connected';
+    return this.link.status.state === 'connected' && this.link.authed; // 'closed' comes before the state changes
   }
 
   // Tell the helper where the edge is and whether to watch it.

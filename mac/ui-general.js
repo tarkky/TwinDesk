@@ -54,23 +54,42 @@ UI.tab({
       [UI.button('Extensions…', () => api.openSettings('extensions'), 'small')]);
 
     const media = UI.mediaControlsRow(); // a phone's media controls on the Phone page (shared/ui-nowplaying.js)
+    // Appearance: the phone's wallpaper (settings.phone.wallpaper, was on the Phone page).
+    const wallSw = UI.switch((v) => api.setPhone({ wallpaper: v }), { label: 'Show the phone’s wallpaper' });
+    const wallRow = UI.row('Show the phone’s wallpaper', 'On its tile and Overview. TwinDesk on the phone reads it once wireless debugging is set up', [wallSw]);
+    // Overview: what it shows (settings.ui.overview).
+    const parts = [['media', 'Now playing', 'What plays on the phone, with its controls'], ['qs', 'Quick actions', 'Wi-Fi, Bluetooth, torch, Do not disturb and more, with volume and ringer'],
+      ['notifs', 'Latest notifications', 'The newest few, with Copy for one-time codes'], ['apps', 'Most used apps', 'The phone’s most used apps this week'], ['features', 'Feature switches', 'Every feature’s two switches, at the bottom']];
+    const partSw = {};
+    const partRows = parts.map(([k, label, hint]) => {
+      partSw[k] = UI.switch((v) => api.setOverview({ [k]: v }), { label });
+      return UI.row(label, hint, [partSw[k]]);
+    });
+
     body.append(
+      UI.card('Startup', [
+        UI.row('Open at login', '', [loginSw]),
+        UI.row('Keep the display awake', 'While connected', [awakeSw]),
+      ]),
+      UI.card('Appearance', [
+        UI.row('Show a popup when switching', 'When the mouse and keyboard move between devices', [hudSw]),
+        wallRow,
+        media.el,
+      ]),
+      UI.card('Overview', partRows),
+      UI.card('Network and Bluetooth', [bleRow, blePcRow, bleWifiRow, wakeRow, shareRow]),
       UI.card('Permissions', [
         ...perms.map((x) => x.row),
         UI.row('Changed a permission?', 'Restart to apply it', [UI.button('Restart', () => api.relaunch(), 'small')]),
       ]),
-      UI.card('App', [
-        UI.row('Open at login', '', [loginSw]),
-        UI.row('Keep the display awake', 'While connected', [awakeSw]),
-        UI.row('Show a popup when switching', 'When the mouse and keyboard move between computers', [hudSw]),
-        media.el,
-      ]),
-      UI.card('Network and sharing', [bleRow, blePcRow, bleWifiRow, wakeRow, shareRow]),
       UI.card('This computer', [deviceRow, helperRow]),
     );
 
     return (s) => {
       media.update(s);
+      wallSw.set(!s.phone || !s.phone.settings || s.phone.settings.wallpaper !== false);
+      const ov = (s.ui && s.ui.overview) || {};
+      for (const k of Object.keys(partSw)) partSw[k].set(ov[k] !== false);
       for (const { p, pill } of perms) {
         const v = p.state ? p.state(s) : s.permissions[p.kind];
         const ok = p.kind === 'screen' ? v === 'granted' : v === true;

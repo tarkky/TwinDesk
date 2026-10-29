@@ -75,7 +75,9 @@ class Core private constructor(val ctx: Context) : Link.Events {
     val sound = PhoneSound(this) // this phone's sound there without wireless debugging
     val shots = Screenshots(this) // screenshots both ways, onto the other clipboard
     val nowPlaying = NowPlaying(this) // what plays here, for the computer's media controls
-    private val features: List<Feature> = listOf(net, sync, clip, notifs, files, fclip, info, apps, wake, adb, pointer, input, drive, screen, macSound, shortcuts, kvm, remote, hub, share, sound, shots, nowPlaying)
+    val rezume = Rezume(this) // ReZume: go on with what's in use on the other device (off until turned on)
+    val dev = DevCtl(this) // this phone's controls on the computer's Overview, the computer's on the Computer page
+    private val features: List<Feature> = listOf(net, sync, clip, notifs, files, fclip, info, apps, wake, adb, pointer, input, drive, screen, macSound, shortcuts, kvm, remote, hub, share, sound, shots, nowPlaying, rezume, dev)
 
     val host: Host? get() = if (link.connected) link.host else null
 
@@ -211,6 +213,30 @@ class Core private constructor(val ctx: Context) : Link.Events {
         link.connect(h, port)
     }
     @Volatile private var wiredNonce = ""
+
+    // The computer's pairing QR code, scanned here (QrActivity): the first of its addresses that
+    // answers, then pairing with its nonce (only Allow there, as on the cable), or a computer already
+    // paired connects at that address. false: none of them answers from this network.
+    fun connectQr(id: String, addrs: List<String>, port: Int, nonce: String, name: String): Boolean {
+        val address = addrs.firstOrNull { a ->
+            runCatching { java.net.Socket().use { s -> s.connect(java.net.InetSocketAddress(a, port), 800) }; true }.getOrDefault(false)
+        } ?: return false
+        val h = store.hosts().find { it.id == id }
+        resumeUntil = 0
+        if (h != null) {
+            Log.i("TwinDesk", "QR: connecting to ${h.name} at $address")
+            h.address = address
+            h.port = port
+            store.putHost(h)
+            connect(h)
+            return true
+        }
+        Log.i("TwinDesk", "QR: pairing with ${name.ifEmpty { id }} at $address")
+        invite?.let { discovery.clearInvite(it.id) }
+        invite = null
+        link.startPairing(address, port, name.ifEmpty { "Computer" }, nonce)
+        return true
+    }
 
     fun disconnect() {
         resumeUntil = 0

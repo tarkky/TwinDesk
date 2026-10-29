@@ -16,6 +16,12 @@ contextBridge.exposeInMainWorld('macshare', {
   connectAddress: call('connectAddress'),
   refreshFound: call('refreshFound'),
   copyText: call('copyText'),
+  deviceDo: call('deviceDo'), // Overview: the other device's controls
+  setOverview: call('setOverview'), // General › Overview: what it shows
+  setChats: call('setChats'), // Messages: chat apps in one inbox
+  qrPair: call('qrPair'), // Connection: pair a phone with a QR code
+  adbQr: call('adbQr'), // wireless debugging: pair with a QR code (on / off)
+  notifReply: call('notifReply'), // answer a phone chat's notification
   skipSetup: call('skipSetup'),
   confirmCode: call('confirmCode'),
   cancelPair: call('cancelPair'),
@@ -54,6 +60,8 @@ contextBridge.exposeInMainWorld('macshare', {
   phoneBtPick: call('phoneBtPick'),
   setTerminal: call('setTerminal'),
   setRemote: call('setRemote'), // Remote tab (shared/phone-remote.js)
+  setReZume: call('setReZume'), // ReZume tab (shared/rezume.js)
+  rezumeDo: call('rezumeDo'), // … Open, Dismiss, Send to
   openTerminal: call('openTerminal'),
   setupSshd: call('setupSshd'),
   setFiles: call('setFiles'),

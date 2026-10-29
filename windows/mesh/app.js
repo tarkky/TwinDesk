@@ -12,12 +12,15 @@
   const views = new Map(); // id -> { def, page, navBtn, stateEl, master, render }
   let current = null;
 
-  // Sidebar groups: no headings, one icon column, a small gap
-  // between groups; General sits below a line.
-  const GROUP = { overview: 0, calls: 0.5, messages: 0.5, media: 0.5, 'mac-pc': 1, 'pc-mac': 1, cursor: 2, keyboard: 2, clipboard: 3, notifications: 3, files: 3, terminal: 4, audio: 4, apps: 4 };
+  // Sidebar groups: no headings, one icon column, a small gap between groups: the device and
+  // Connection, the phone's own things, screens, input, sharing, media; General below a line.
+  // ORDER places each tab (the tab files' own order is the fallback), as in ../app.js.
+  const GROUP = { overview: 0, connection: 0, messages: 1, calls: 1, media: 1, papps: 1, mirror: 2, 'mac-pc': 2, 'pc-mac': 2, apps: 2, cursor: 3, keyboard: 3, remote: 3, clipboard: 4, notifications: 4, files: 4, pfiles: 4, mount: 4, audio: 5, camera: 5, rezume: 5, terminal: 5 };
+  const ORDER = { overview: 0, connection: 1, messages: 5, calls: 6, media: 7, papps: 8, mirror: 10, 'mac-pc': 11, 'pc-mac': 12, apps: 13, cursor: 20, keyboard: 21, remote: 22, clipboard: 40, notifications: 41, files: 42, pfiles: 43, mount: 44, audio: 60, camera: 61, rezume: 62, terminal: 63, multi: 95, general: 100, about: 110 };
+  const orderOf = (d) => ORDER[d.id] ?? d.order ?? 50;
   let lastGroup;
   let gap = null; // the gap before the current group (hidden with the group: renderSidebar)
-  for (const def of UI.tabs.slice().sort((a, b) => (a.order ?? 50) - (b.order ?? 50))) {
+  for (const def of UI.tabs.slice().sort((a, b) => orderOf(a) - orderOf(b))) {
     if (def.navHidden) { // reached another way (the phone tile)
       views.set(def.id, { def, ...buildPage(def), navBtn: el('button'), stateEl: el('span') });
       continue;
@@ -70,7 +73,12 @@
     const body = el('div', { class: 'page-body' }, limitNote ? [limitNote] : []);
     page.append(body);
     pages.append(page);
-    const render = def.build(body, page) || (() => {});
+    let render = () => {};
+    try {
+      render = def.build(body, page) || render;
+    } catch (e) { // one tab that fails to build doesn't take the rest of the sidebar with it
+      console.error('build ' + def.id + ':', e);
+    }
     return { page, body, master, render, headText, limitNote, wifiNote, devTag, art };
   }
 
@@ -81,7 +89,7 @@
   const linked = (s) => !!(s && ((s.link && s.link.state === 'connected') || (s.phone && s.phone.connected)));
 
   function show(id, user) {
-    const v = views.get(id) || views.get('overview');
+    const v = views.get(id === 'phone' ? 'overview' : id) || views.get('connection'); // 'phone': the old Phone page
     if (current === v) return;
     if (current) {
       current.page.hidden = true;
@@ -156,7 +164,8 @@
     // A group with every tab hidden takes its gap with it.
     for (const v of views.values()) if (v.gap) v.gap.hidden = [...views.values()].every((x) => x.gap !== v.gap || !x.navBtn.parentElement || x.navBtn.parentElement.hidden);
     for (const v of views.values()) {
-      const b = v.def.badge ? v.def.badge(s) : v.def.phase ? 'P' + v.def.phase : '';
+      let b = v.def.badge ? v.def.badge(s) : v.def.phase ? 'P' + v.def.phase : '';
+      if (b === 'on' && !linked(s)) b = 'warn'; // on, but nothing connected: it waits (yellow), it isn't working
       v.stateEl.className = 'state' + (b === 'on' ? ' on' : b === 'warn' ? ' warn' : '');
       v.stateEl.textContent = b === 'on' || b === 'warn' ? '' : b || '';
     }
@@ -370,7 +379,7 @@
 
   api.onState(render);
   api.getState().then((s) => {
-    show((s.ui && s.ui.tab) === 'phone' && !(s.phone && s.phone.connected) ? 'overview' : (s.ui && s.ui.tab) || 'overview', false);
+    show((s.ui && s.ui.tab) === 'phone' && !(s.phone && s.phone.connected) ? 'connection' : (s.ui && s.ui.tab) || 'connection', false);
     render(s);
   });
 })();

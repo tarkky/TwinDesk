@@ -120,7 +120,7 @@ assert.strictEqual(M.selectedKind(peers), 'phone');
 assert.strictEqual(M.selectedKind(peers.map((x) => ({ ...x, selected: x.id === 'm' }))), 'computer');
 assert.strictEqual(M.selectedKind(peers.map((x) => ({ ...x, selected: x.id === 'w' }))), 'none', 'selected but not connected');
 assert.strictEqual(M.selectedKind([]), 'none');
-for (const id of ['calls', 'messages', 'media', 'pfiles', 'mount', 'phone']) {
+for (const id of ['calls', 'messages', 'media', 'pfiles', 'mount', 'phone', 'mirror', 'papps']) {
   assert.ok(M.sectionVisible(id, 'phone'), id + ' for a phone');
   assert.ok(!M.sectionVisible(id, 'computer'), id + ' not for a computer');
 }
@@ -128,19 +128,21 @@ for (const id of ['mac-pc', 'receive', 'apps', 'terminal']) {
   assert.ok(!M.sectionVisible(id, 'phone'), id + ' not for a phone');
   assert.ok(M.sectionVisible(id, 'computer'));
 }
-for (const id of ['overview', 'general', 'about', 'files', 'cursor']) assert.ok(M.sectionVisible(id, 'phone') && M.sectionVisible(id, 'computer'), id + ' for both');
-assert.ok(!M.isScoped('general') && !M.isScoped('overview') && M.isScoped('files') && M.isScoped('calls'));
+for (const id of ['overview', 'connection', 'general', 'about', 'files', 'cursor']) assert.ok(M.sectionVisible(id, 'phone') && M.sectionVisible(id, 'computer'), id + ' for both');
+// Overview is the selected device's page; Connection is everyone's.
+assert.ok(!M.isScoped('general') && !M.isScoped('connection') && M.isScoped('overview') && M.isScoped('files') && M.isScoped('calls'));
 
-// first section / target section
-const winIds = ['overview', 'calls', 'messages', 'media', 'mac-pc', 'pc-mac', 'cursor', 'files', 'phone', 'general'];
-assert.strictEqual(M.firstSection('phone', winIds), 'phone');
-assert.strictEqual(M.firstSection('computer', winIds), 'mac-pc');
-assert.strictEqual(M.firstSection('computer', ['overview', 'receive', 'share']), 'receive', 'the Mac names it receive');
-assert.strictEqual(M.firstSection('none', winIds), 'overview');
+// first section / target section: a device's Overview first
+const winIds = ['overview', 'connection', 'calls', 'messages', 'media', 'mac-pc', 'pc-mac', 'cursor', 'files', 'phone', 'general'];
+assert.strictEqual(M.firstSection('phone', winIds), 'overview');
+assert.strictEqual(M.firstSection('computer', winIds), 'overview');
+assert.strictEqual(M.firstSection('computer', ['connection', 'receive', 'share']), 'receive', 'the Mac names it receive');
+assert.strictEqual(M.firstSection('none', winIds), 'connection');
 assert.strictEqual(M.targetSection('files', 'phone', winIds), 'files', 'stays when it exists for the new kind');
-assert.strictEqual(M.targetSection('calls', 'computer', winIds), 'mac-pc', 'phone-only section: the computer\'s first');
-assert.strictEqual(M.targetSection('terminal', 'phone', winIds), 'phone', 'not available: the phone\'s first');
-assert.strictEqual(M.targetSection('overview', 'phone', winIds), 'phone', 'global: the device\'s first');
+assert.strictEqual(M.targetSection('calls', 'computer', winIds), 'overview', 'phone-only section: the computer’s first');
+assert.strictEqual(M.targetSection('terminal', 'phone', winIds), 'overview', 'not available: the phone’s first');
+assert.strictEqual(M.targetSection('connection', 'phone', winIds), 'overview', 'global: the device’s first');
+assert.strictEqual(M.targetSection('overview', 'computer', winIds), 'overview', 'a device’s Overview stays one');
 assert.strictEqual(M.targetSection(null, 'computer', ['general']), 'general', 'last resort: whatever exists');
 
 console.log('sidebar-model: all passed');

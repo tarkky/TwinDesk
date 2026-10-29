@@ -11,9 +11,15 @@
   const views = new Map(); // id -> { def, page, navBtn, stateEl, master, render }
   let current = null;
 
+  // The sidebar's order and groups (as ../ui-start.js): the device and Connection, the phone's own
+  // things, screens, input, sharing, media; General below a line.
+  const GROUP = { overview: 0, connection: 0, messages: 1, calls: 1, media: 1, papps: 1, mirror: 2, receive: 2, share: 2, apps: 2, cursor: 3, keyboard: 3, remote: 3, clipboard: 4, notifications: 4, files: 4, pfiles: 4, mount: 4, audio: 5, camera: 5, rezume: 5, terminal: 5 };
+  const ORDER = { overview: 0, connection: 1, messages: 5, calls: 6, media: 7, papps: 8, mirror: 10, receive: 11, share: 12, apps: 13, cursor: 20, keyboard: 21, remote: 22, clipboard: 40, notifications: 41, files: 42, pfiles: 43, mount: 44, audio: 60, camera: 61, rezume: 62, terminal: 63, multi: 95, general: 100, about: 110 };
+  const orderOf = (d) => ORDER[d.id] ?? d.order ?? 50;
   let lastGroup = null;
   let gap = null; // the gap before the current group (hidden with the group: renderSidebar)
-  for (const def of UI.tabs.slice().sort((a, b) => (a.order ?? 50) - (b.order ?? 50))) {
+  for (const def of UI.tabs.slice().sort((a, b) => orderOf(a) - orderOf(b))) {
+    if (def.id in GROUP) def.group = GROUP[def.id];
     if (def.navHidden) { // reached another way (the phone tile)
       views.set(def.id, { def, ...buildPage(def), navBtn: el('button'), stateEl: el('span') });
       continue;
@@ -69,7 +75,12 @@
     const body = el('div', { class: 'page-body' });
     page.append(body);
     pages.append(page);
-    const render = def.build(body, page) || (() => {});
+    let render = () => {};
+    try {
+      render = def.build(body, page) || render;
+    } catch (e) { // one tab that fails to build doesn't take the rest of the sidebar with it
+      console.error('build ' + def.id + ':', e);
+    }
     return { page, body, master, render, wifiNote, devTag, art };
   }
 
@@ -80,7 +91,7 @@
   const linked = (s) => !!(s && (s.client || (s.phone && s.phone.connected)));
 
   function show(id, user) {
-    const v = views.get(id) || views.get('overview');
+    const v = views.get(id === 'phone' ? 'overview' : id) || views.get('connection'); // 'phone': the old Phone page
     if (current === v) return;
     if (current) {
       current.page.hidden = true;
@@ -145,7 +156,8 @@
     // A group with every tab hidden takes its gap with it.
     for (const v of views.values()) if (v.gap) v.gap.hidden = [...views.values()].every((x) => x.gap !== v.gap || !x.navBtn.parentElement || x.navBtn.parentElement.hidden);
     for (const v of views.values()) {
-      const b = v.def.badge ? v.def.badge(s) : v.def.phase ? `P${v.def.phase}` : '';
+      let b = v.def.badge ? v.def.badge(s) : v.def.phase ? `P${v.def.phase}` : '';
+      if (b === 'on' && !linked(s)) b = 'warn'; // on, but nothing connected: it waits (yellow), it isn't working
       v.stateEl.className = `state${b === 'on' ? ' on' : b === 'warn' ? ' warn' : ''}`;
       v.stateEl.textContent = b === 'on' || b === 'warn' ? '' : b || '';
     }
@@ -389,7 +401,7 @@
   api.onState(render);
   api.getState().then((s) => {
     const saved = s.ui && s.ui.tab;
-    show(saved === 'display' ? 'share' : saved || 'overview', false); // 'display' = before the split
+    show(saved === 'display' ? 'share' : saved || 'connection', false); // 'display' = before the split
     render(s);
   });
 })();

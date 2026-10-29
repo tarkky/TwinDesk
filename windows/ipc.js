@@ -50,6 +50,12 @@ function setupIpc(ctx) {
     if (port >= 1 && port <= 65535) link.startPairing({ address: m[1], port, macName: m[1] });
   });
   handle('refreshFound', () => discovery.refresh());
+  // A chat's answer (Messages' chat apps: shared/chats.js) or a notification's.
+  handle('notifReply', (r) => r && typeof r === 'object' && (r.chat ? !!(ctx.chats && ctx.chats() && ctx.chats().reply(String(r.chat), r.text)) : notifs.reply(String(r.id || ''), r.text))); // a phone chat's Reply, typed here
+  handle('qrPair', () => ctx.qrPair());
+  handle('adbQr', (on) => ctx.adbQr(on === true)); // wireless debugging: pair with a QR code // Connection: the phone pairing QR code's link
+  handle('importCancel', () => ctx.explorer() && ctx.explorer().cancel()); // Phone Files: stop importing into Explorer's folder
+  handle('deviceDo', (c) => c && typeof c === 'object' && ctx.devctl() && ctx.devctl().do(c)); // Overview: ring, lock, quick settings… (shared/devctl.js)
   handle('copyText', (text) => typeof text === 'string' && text.length < 1000 && clipboard.writeText(text));
   handle('confirmCode', () => link.confirmCode());
   handle('cancelPair', () => { ctx.cancelPhoneInvite(); link.cancelPair(); });
@@ -97,7 +103,9 @@ function setupIpc(ctx) {
   handle('setClipboard', (partial) => change('clipboard', partial, () => clip.applySettings()));
   handle('copyHistory', (index) => clip.copyHistory(Number(index)));
   handle('clearHistory', () => clip.clearHistory());
-  handle('setTab', (tab) => change('ui', { tab })); // invalid names fall back in normalize()
+  handle('setTab', (tab) => change('ui', { tab }));
+  handle('setChats', (on) => { change('ui', { chats: on === true }); if (ctx.chats && ctx.chats()) ctx.chats().sync(); }); // Messages: WhatsApp, Telegram and Instagram there too
+  handle('setOverview', (o) => o && typeof o === 'object' && change('ui', { overview: { ...settings.ui.overview, ...o } })); // General › Overview // invalid names fall back in normalize()
   handle('setMulti', (on) => require('./multi').set(on === true)); // Multi-device: TwinDesk restarts
   handle('setAudio', (partial) => change('audio', partial, () => {
     sound.apply();
@@ -122,6 +130,15 @@ function setupIpc(ctx) {
     else if (m.do === 'virtual' && ctx.vcam) ctx.vcam.setOn(m.on === true);
     else if (m.do === 'vcamRemove' && ctx.vcam) ctx.vcam.remove();
     else if (m.do === 'rotate' && ctx.vcam) ctx.vcam.turn();
+  });
+  // ReZume tab (shared/rezume.js): loaded when it's first turned on.
+  handle('setReZume', (m) => change('rezume', m && typeof m === 'object' ? m : {}, () => (ctx.rezume ? ctx.rezume.apply() : ctx.loadReZume())));
+  handle('rezumeDo', (m) => {
+    const h = ctx.rezume;
+    if (!h || !m) return;
+    if (m.a === 'take') h.take();
+    else if (m.a === 'dismiss') h.dismiss();
+    else if (m.a === 'push') h.push();
   });
   // Remote tab: the phone's Remote page here (shared/phone-remote.js).
   handle('setRemote', (m) => {

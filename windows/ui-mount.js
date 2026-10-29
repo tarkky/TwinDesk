@@ -25,7 +25,7 @@ UI.tab({
     // Mount is ADB: with the phone's debugging off it can't, and says so (Phone Files needs none).
     const adbText = UI.el('div', { class: 'hub-top-text' });
     const adbNote = UI.el('div', { class: 'note warn hub-top', hidden: true }, [UI.el('div', { class: 'hub-top-body' }, [adbText]),
-      UI.el('div', { class: 'hub-top-actions' }, [UI.button('Phone Page', () => UI.go('phone'), 'small'), UI.button('Phone Files', () => UI.go('pfiles'), 'small primary')])]);
+      UI.el('div', { class: 'hub-top-actions' }, [UI.button('Wireless Debugging', () => UI.go('connection'), 'small'), UI.button('Phone Files', () => UI.go('pfiles'), 'small primary')])]);
     body.append(adbNote);
     body.append(UI.card('Drive', [offRow, driveRow]));
 
@@ -36,8 +36,8 @@ UI.tab({
       const adbOff = !!ph.connected && !ph.connected.usb && !d.mounted && (adb.wifi === false || (ph.bridge && ph.bridge.state === 'waitingWifi'));
       adbNote.hidden = !d.on || !adbOff;
       adbText.textContent = adb.devOptions === false
-        ? 'Mount works through ADB, and Developer options are off on the phone. Switch on Developer options and Wireless debugging (Phone page), or plug the phone in with USB debugging on. Phone Files works without ADB.'
-        : 'Mount works through ADB, and wireless debugging is off on the phone. Switch it on (Phone page), or plug the phone in with USB debugging on. Phone Files works without ADB.';
+        ? 'Mount works through ADB, and Developer options are off on the phone. Switch on Developer options and Wireless debugging (Connection), or plug the phone in with USB debugging on. Phone Files works without it.'
+        : 'Mount works through ADB, and wireless debugging is off on the phone. Switch it on (Connection), or plug the phone in with USB debugging on. Phone Files works without it.';
       offRow.hidden = !!d.on;
       driveRow.hidden = !d.on;
       mountBtn.hidden = !!d.mounted;

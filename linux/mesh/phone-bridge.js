@@ -419,6 +419,10 @@ class PhoneBridge extends EventEmitter {
       `cmd notification allow_listener ${APP_ID}/${APP_ID}.NotifListener`,
       `dumpsys deviceidle whitelist +${APP_ID}`,
       `appops set ${APP_ID} RUN_ANY_IN_BACKGROUND allow`,
+      // Overview's most used apps, auto-rotate and Do not disturb from the computer (DevCtl.kt).
+      `appops set ${APP_ID} GET_USAGE_STATS allow`,
+      `appops set ${APP_ID} WRITE_SETTINGS allow`,
+      `cmd notification allow_dnd ${APP_ID}`,
     ];
     if (this.getSettings().phone && this.getSettings().phone.wallpaper !== false) cmds.push(`appops set ${APP_ID} MANAGE_EXTERNAL_STORAGE allow`);
     for (const c of cmds) await this.adb.shell(serial, c, { timeout: 8000 });

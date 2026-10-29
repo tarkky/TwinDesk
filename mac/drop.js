@@ -121,7 +121,7 @@ class Drop extends EventEmitter {
   async _offer(m) {
     const refuse = (why) => this.server.sendToClient({ t: P.T.FILE_REFUSE, id: m.id, why });
     if (typeof m.id !== 'string' || this.active.has(m.id)) return;
-    if (m.drop === 'send' || m.drop === 'paste') return this._offerBatch(m, refuse);
+    if (m.drop === 'send' || m.drop === 'paste' || m.drop === 'rezume') return this._offerBatch(m, refuse); // rezume: a document taken here (shared/rezume.js)
     if (!this.cfg.acceptDrops) return refuse('not_allowed');
     const size = Number(m.size);
     if (!Number.isFinite(size) || size < 0 || size > P.FILE_MAX_BYTES) return refuse('too_big');
@@ -160,7 +160,7 @@ class Drop extends EventEmitter {
     let b = this.batches.get(m.batch);
     if (!b) {
       const pasted = this.expected.get(m.batch);
-      if (m.drop === 'paste' && !pasted) return refuse('not_allowed'); // we never asked for it
+      if ((m.drop === 'paste' || m.drop === 'rezume') && !pasted) return refuse('not_allowed'); // we never asked for it
       if (m.drop === 'send' && !this.cfg.acceptDrops) return refuse('not_allowed');
       b = { kind: m.drop, dir: (pasted && pasted.dir) || this.cfg.folder || DOWNLOADS, app: !!(pasted && pasted.app), count, done: 0, ok: 0, tops: new Map(), placed: [] };
       this.batches.set(m.batch, b);

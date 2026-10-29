@@ -16,11 +16,13 @@ if not defined UM (
   exit /b 1
 )
 set FW=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319
+rem ReZume reads browsers' address bars with UI Automation (Activity.cs), WPF's assemblies in the Framework.
+set UIA=/r:"%FW%\WPF\UIAutomationClient.dll" /r:"%FW%\WPF\UIAutomationTypes.dll" /r:"%FW%\WPF\WindowsBase.dll"
 set WINRT=/r:"%UM%\Windows.winmd" /r:"%FW%\System.Runtime.WindowsRuntime.dll" /r:"%FW%\System.Runtime.dll" ^
   /r:"%FW%\System.Threading.Tasks.dll" /r:"%FW%\System.Runtime.InteropServices.WindowsRuntime.dll"
 if not exist "%BIN%" mkdir "%BIN%"
 "%CSC%" /nologo /optimize+ /platform:anycpu /target:exe /out:"%BIN%\macshare-winhelper.new.exe" ^
-  /r:System.Web.Extensions.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll %WINRT% "%~dp0src\*.cs" || exit /b 1
+  /r:System.Web.Extensions.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll %UIA% %WINRT% "%~dp0src\*.cs" || exit /b 1
 rem The previous build may still be running (old.exe): then park the current one under another name.
 del /q "%BIN%\macshare-winhelper.old*.exe" 2>nul
 set OLD=macshare-winhelper.old.exe
@@ -30,7 +32,7 @@ ren "%BIN%\macshare-winhelper.new.exe" macshare-winhelper.exe
 rem Multi-device's helper (docs/multi-device.md): the same sources with MULTI, several watched sides
 rem (CaptureMulti.cs); only windows/mesh starts it. Without MULTI the code above is the one-to-one helper's.
 "%CSC%" /nologo /optimize+ /platform:anycpu /target:exe /define:MULTI /out:"%BIN%\macshare-winhelper-multi.new.exe" ^
-  /r:System.Web.Extensions.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll %WINRT% "%~dp0src\*.cs" || exit /b 1
+  /r:System.Web.Extensions.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll %UIA% %WINRT% "%~dp0src\*.cs" || exit /b 1
 del /q "%BIN%\macshare-winhelper-multi.old*.exe" 2>nul
 set OLD=macshare-winhelper-multi.old.exe
 if exist "%BIN%\%OLD%" set OLD=macshare-winhelper-multi.old-%RANDOM%.exe

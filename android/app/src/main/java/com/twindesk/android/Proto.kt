@@ -88,6 +88,12 @@ object Proto {
         const val REMOTE_HELLO = "remote.hello"
         const val REMOTE_STATE = "remote.state"
         const val REMOTE_RELEASE = "remote.release"
+        // ReZume (Rezume.kt, shared/rezume.js)
+        const val RZ_POLICY = "rz.policy"
+        const val RZ_OFFER = "rz.offer"
+        const val RZ_CLEAR = "rz.clear"
+        const val RZ_TAKE = "rz.take"
+        const val RZ_DONE = "rz.done"
         const val PHONE_SEND = "phone.send"
         const val PHONE_ACTIVE_APP = "phone.activeApp"
         const val ADB_STATE = "adb.state"

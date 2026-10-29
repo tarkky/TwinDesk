@@ -283,6 +283,15 @@
     api.send({ t: 'key', code: e.code, down: e.type === 'keydown', repeat: e.repeat });
   };
   window.addEventListener('keydown', onKey);
+  // The title bar's panel and fullscreen buttons (phoneview.js keeps both; 'opts' says which is on).
+  const panelBtn = document.getElementById('panelBtn');
+  document.getElementById('fullBtn').onclick = () => { api.send({ t: 'full' }); canvas.focus(); };
+  panelBtn.onclick = () => { api.send({ t: 'panel' }); canvas.focus(); };
+  window.addEventListener('keydown', (e) => { if (e.key === 'F11') { e.preventDefault(); e.stopImmediatePropagation(); api.send({ t: 'full' }); } }, true);
+  api.on('opts', (m) => {
+    if (typeof m.panel === 'boolean') { document.body.classList.toggle('nopanel', !m.panel); panelBtn.classList.toggle('on', m.panel); }
+    if (typeof m.full === 'boolean') document.body.classList.toggle('full', m.full);
+  });
   window.addEventListener('keyup', onKey);
   window.addEventListener('blur', () => {
     for (const code of ['ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight']) api.send({ t: 'key', code, down: false });
