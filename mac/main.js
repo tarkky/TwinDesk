@@ -713,7 +713,7 @@ app.whenReady().then(() => {
   };
   svc.remote = () => svc.phoneRemote || null;
   peer.on(`t:${P.T.REMOTE_HELLO}`, () => !svc.phoneRemote && peer.current && peer.current.os === P.OS.ANDROID
-    && peer.sendToClient({ t: P.T.REMOTE_STATE, allowed: false, why: 'Remote is off on this computer: turn it on in TwinDesk’s Remote page there' }));
+    && peer.sendToClient({ t: P.T.REMOTE_STATE, allowed: false, off: true, why: 'Remote is off on this computer: turn it on in TwinDesk’s Remote page there' }));
   svc.loadRemote();
   // ReZume: what's in use here goes on on the other device, and theirs here (shared/rezume.js), its
   // offers in the Dock (a Dock icon of their app, dockstub.js), the menu bar and a notification.
@@ -772,6 +772,10 @@ app.whenReady().then(() => {
     apps: (dir, on) => (dir === 'out' ? actions.setApps({ offer: on }) : actions.setPcApps({ on })),
     audio: (dir, on) => actions.setAudio({ [dir === 'out' ? 'send' : 'receive']: on }),
     cursor: (dir, on) => actions.setKvm({ [dir === 'out' ? 'driveOther' : 'beDriven']: on }),
+    rezume: (dir, on) => actions.setRezume({ [dir === 'out' ? 'send' : 'receive']: on }),
+    remote: (dir, on) => actions.setRemote({ allow: on }),
+    terminal: (dir, on) => { actions.setTerminal({ [dir === 'out' ? 'allowPc' : 'connectPc']: on }); if (dir === 'in') svc.sshClient.applySettings(); }, // already set: setTerminal sees no change
+    files: (dir, on) => actions.setFiles({ acceptDrops: on }),
   };
   pairSync = new PairSync({ server: peer, getSettings: () => settings, saveSettings: () => store.saveSettings(settings),
     apply: (f, dir, on) => (f !== 'value' ? SYNC_ACTIONS[f](dir, on)

@@ -205,7 +205,7 @@ function normalize(s) {
 
 function overviewParts(o) {
   const v = o && typeof o === 'object' ? o : {};
-  return { media: bool(v.media, true), qs: bool(v.qs, true), notifs: bool(v.notifs, true), apps: bool(v.apps, true), features: bool(v.features, true) };
+  return { media: bool(v.media, true), qs: bool(v.qs, true), notifs: bool(v.notifs, true), apps: bool(v.apps, true), clipboard: bool(v.clipboard, true), files: bool(v.files, true) };
 }
 
 // pair.sync values per paired device: booleans only, at most 20 devices.

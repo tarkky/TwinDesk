@@ -62,10 +62,12 @@ class Rezume(core: Core) : Feature(core) {
     private val icons = HashMap<String, String>()
     private val dismissed = HashSet<String>()
 
-    fun set(k: String, v: Boolean) {
+    // sync: tell the computer (pair.sync), unless it's the computer's change being taken here.
+    fun set(k: String, v: Boolean, sync: Boolean = true) {
         core.store.setFlag("rezume.$k", v)
         if (k == "on") shareTarget(v)
         apply()
+        if (sync && (k == "on" || k == "send" || k == "receive")) core.sync.rezumeChanged()
     }
 
     // "Open on computer" in the share sheet only while ReZume is on.

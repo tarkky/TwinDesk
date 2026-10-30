@@ -2,65 +2,8 @@
 // Connection page (was Overview): this PC's address and Connect by address, pairing a phone with a
 // QR code, the computers and phones found nearby, the link itself (connect, take over, Wi-Fi
 // Direct, a phone's hotspot), the phone's wireless debugging and what is paired. The start page
-// until something is connected; then Overview (shared/ui-device.js) shows the device, with the
-// feature switches below (UI.featureCards, here).
+// until something is connected; then Overview (shared/ui-device.js) shows the device.
 'use strict';
-
-// Every feature's two switches, one card per direction; a row opens its page.
-// macOnly: 'linux' = off only with a Linux peer (nothing uses it now: Linux has every row).
-// phone: false = hidden while a phone is the peer; true only = shown only with a phone.
-UI.featureCards = () => {
-  const { el, api } = UI;
-  const row = (label, tab, get, set, macOnly, { phone = true, only = false } = {}) => {
-    const sw = UI.switch(set || (() => {}), { label, disabled: !set });
-    const r = UI.row(label, '', [sw, el('span', { class: 'chev', text: '›' })], { onClick: () => UI.go(tab) });
-    r.update = (s) => {
-      const limited = !macOnly || !s.peer ? '' : macOnly === 'linux' ? (s.peer.os === 'linux' ? 'Not on Linux yet' : '') : UI.peer(s).limited;
-      let on = false;
-      try { on = !limited && !!get(s); } catch (e) { /* its state isn't there (an older side) */ }
-      sw.set(on);
-      sw.disable(!set || !!limited);
-      r.setHint(limited);
-      r.hidden = (!phone && UI.isPhone(s)) || (only && !UI.isPhone(s));
-    };
-    return r;
-  };
-  const notPhone = { phone: false };
-  const phoneOnly = { only: true };
-  const hub = (what) => (v) => api.hub({ do: 'set', what, on: v });
-  const rez = (k) => (v) => api.setReZume(v ? { on: true, [k]: true } : { [k]: false });
-  const m2p = [
-    row('Screen', 'mac-pc', (s) => s.stream.state === 'on', null, undefined, notPhone),
-    row('Phone screen', 'mirror', (s) => (s.phone.bridge || {}).windows && s.phone.bridge.windows.length > 0, null, undefined, phoneOnly),
-    row('Sound', 'audio', (s) => s.audio.receive, (v) => api.setAudio({ receive: v })),
-    row('Mouse and keyboard', 'cursor', (s) => s.kvm.beDriven, (v) => api.setKvm({ beDriven: v })),
-    row('Clipboard', 'clipboard', (s) => s.clipboard.receive, (v) => api.setClipboard({ receive: v })),
-    row('Notifications', 'notifications', (s) => s.notifs.receive, (v) => api.setNotifs({ receive: v })),
-    row('Calls', 'calls', (s) => s.hub.calls, hub('calls'), undefined, phoneOnly),
-    row('Messages', 'messages', (s) => s.hub.messages, hub('messages'), undefined, phoneOnly),
-    row('Photos', 'media', (s) => s.hub.media, hub('media'), undefined, phoneOnly),
-    row('Phone Files', 'pfiles', (s) => s.hub.files, hub('files'), undefined, phoneOnly),
-    row('Camera', 'camera', (s) => s.camera.on, (v) => api.camera({ do: 'on', on: v }), undefined, phoneOnly),
-    row('Shared folder', 'files', (s) => s.files.mountMac, (v) => api.setFiles({ mountMac: v })),
-    row('Terminal', 'terminal', (s) => s.terminal.allowMac, (v) => api.setTerminal({ allowMac: v }), undefined, notPhone),
-    row('Apps', 'apps', (s) => s.apps.open > 0, null, undefined, notPhone),
-    row('ReZume', 'rezume', (s) => s.rezume.on && s.rezume.receive, rez('receive')),
-  ];
-  const p2m = [
-    row('Screen', 'pc-mac', (s) => s.pcScreen.mode !== 'off', (v) => api.setPcScreenMode(v ? 'mirror' : 'off')),
-    row('Sound', 'audio', (s) => s.audio.send, (v) => api.setAudio({ send: v })),
-    row('Mouse and keyboard', 'cursor', (s) => s.kvm.driveOther, (v) => api.setKvm({ driveOther: v })),
-    row('Clipboard', 'clipboard', (s) => s.clipboard.send, (v) => api.setClipboard({ send: v })),
-    row('Notifications', 'notifications', (s) => s.notifs.send, (v) => api.setNotifs({ send: v })),
-    row('Remote', 'remote', (s) => s.remote.allow, (v) => api.setRemote({ allow: v }), undefined, phoneOnly),
-    row('Shared folder', 'files', (s) => s.files.shareOn, (v) => api.setShareOn(v)),
-    row('Terminal', 'terminal', (s) => s.terminal.enabled, (v) => api.setTerminal({ enabled: v }), undefined, notPhone),
-    row('Apps', 'apps', (s) => s.pcApps.allow, (v) => api.setPcApps({ allow: v }), undefined, notPhone),
-    row('ReZume', 'rezume', (s) => s.rezume.on && s.rezume.send, rez('send')),
-  ];
-  const pair = UI.dirCards({ rows: m2p }, { rows: p2m });
-  return { el: pair.el, update: (s) => { for (const r of m2p.concat(p2m)) r.update(s); } };
-};
 
 UI.tab({
   id: 'connection',

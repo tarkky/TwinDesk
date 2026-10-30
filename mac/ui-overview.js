@@ -2,61 +2,8 @@
 // Connection page (was Overview): this Mac's address and Connect by address on top, the computers
 // and phones nearby, pairing a phone with a QR code, the link itself, the phone's wireless debugging
 // and everything paired. The start page until something is connected; then Overview
-// (shared/ui-device.js) shows the device, with the feature switches below (UI.featureCards, here).
+// (shared/ui-device.js) shows the device.
 'use strict';
-
-// Every feature's two switches, one card per direction; a row opens its page.
-UI.featureCards = () => {
-  const { el, api } = UI;
-  const sw = (label, tab, get, set, { phone = true, only = false } = {}) => {
-    const c = UI.switch(set, { label });
-    const row = UI.row(label, '', [c, el('span', { class: 'chev', text: '›' })], { onClick: () => UI.go(tab) });
-    return { c, row, get, phone, only }; // phone: false = hidden while a phone is the peer; only: shown only with one
-  };
-  const notPhone = { phone: false };
-  const m2w = [
-    sw('Screen', 'share', (s) => s.sharing && s.sharing.on, (v) => api.setSharing(v)),
-    sw('Sound', 'audio', (s) => s.audio && s.audio.send, (v) => api.setAudio({ send: v })),
-    sw('Mouse and keyboard', 'cursor', (s) => s.kvm && s.kvm.driveOther, (v) => api.setKvm({ driveOther: v })),
-    sw('Clipboard', 'clipboard', (s) => s.clipboard && s.clipboard.send, (v) => api.setClipboard({ send: v })),
-    sw('Notifications', 'notifications', (s) => s.notifs && s.notifs.send, (v) => api.setNotifs({ send: v })),
-    sw('Shared folder', 'files', (s) => s.smb && s.smb.sharing, (v) => api.setShareMac(v)),
-    sw('Terminal', 'terminal', (s) => s.terminal && s.terminal.connectPc, (v) => api.setTerminal({ connectPc: v }), notPhone),
-    sw('Apps', 'apps', (s) => s.apps && s.apps.offer, (v) => api.setApps({ offer: v }), notPhone),
-  ];
-  const w2m = [
-    sw('Screen', 'receive', (s) => s.receive && s.receive.open, (v) => (v ? api.showPcView() : api.closePcView()), notPhone),
-    sw('Sound', 'audio', (s) => s.audio && s.audio.receive, (v) => api.setAudio({ receive: v })),
-    sw('Mouse and keyboard', 'cursor', (s) => s.kvm && s.kvm.beDriven, (v) => api.setKvm({ beDriven: v })),
-    sw('Clipboard', 'clipboard', (s) => s.clipboard && s.clipboard.receive, (v) => api.setClipboard({ receive: v })),
-    sw('Notifications', 'notifications', (s) => s.notifs && s.notifs.receive, (v) => api.setNotifs({ receive: v })),
-    sw('Shared folder', 'files', (s) => s.smb && s.smb.connectPc, (v) => api.setSmb({ connectPc: v })),
-    sw('Terminal', 'terminal', (s) => s.terminal && s.terminal.allowPc, (v) => api.setTerminal({ allowPc: v }), notPhone),
-    sw('Apps', 'apps', (s) => s.papps && s.papps.on, (v) => api.setPcApps({ on: v }), notPhone),
-  ];
-  const hub = (what) => (v) => api.hub({ do: 'set', what, on: v });
-  const phoneOnly = { phone: true, only: true };
-  w2m.splice(5, 0,
-    sw('Calls', 'calls', (s) => s.hub && s.hub.calls, hub('calls'), phoneOnly),
-    sw('Messages', 'messages', (s) => s.hub && s.hub.messages, hub('messages'), phoneOnly),
-    sw('Photos', 'media', (s) => s.hub && s.hub.media, hub('media'), phoneOnly),
-    sw('Phone Files', 'pfiles', (s) => s.hub && s.hub.files, hub('files'), phoneOnly));
-  w2m.push(sw('ReZume', 'rezume', (s) => s.rezume && s.rezume.on && s.rezume.receive, (v) => api.setRezume(v ? { on: true, receive: true } : { receive: false })));
-  m2w.push(sw('ReZume', 'rezume', (s) => s.rezume && s.rezume.on && s.rezume.send, (v) => api.setRezume(v ? { on: true, send: true } : { send: false })));
-  const all = [...m2w, ...w2m];
-  return {
-    el: UI.pair(UI.dir('m2w', m2w.map((x) => x.row)), UI.dir('w2m', w2m.map((x) => x.row))),
-    update(s) {
-      const phone = UI.isPhone(s) || !!(s.phone && s.phone.connected);
-      for (const x of all) {
-        let on = false;
-        try { on = !!x.get(s); } catch (e) { /* not in this state */ }
-        x.c.set(on);
-        x.row.hidden = (x.phone === false && phone) || (x.only && !phone);
-      }
-    },
-  };
-};
 
 UI.tab({
   id: 'connection',

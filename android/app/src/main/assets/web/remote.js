@@ -18,6 +18,7 @@
   let opts = { mode: 'pad', name: 'the computer', me: 'this device', connected: true, os: '', ble: false, speed: 1, tap: true, smooth: true, pad: {}, controls: [], keys: [] };
   let allowed = null; // the computer's remote.state
   let why = ''; // …and why it doesn't take it now
+  let off = false; // …because its Remote is off: Turn on, here
   let real = false; // the computer takes the gamepad as a real one (remote.pad)
   let canText = false; // the computer types characters no key there types (remote.state text: remote.text)
   const asPad = () => opts.bt === true || real; // the gamepad as a real one, here or through Bluetooth
@@ -56,11 +57,13 @@
       : `${game ? (real ? 'Gamepad (real)' : 'Gamepad') : 'Touchpad'} · ${opts.name}`;
     const note = game && opts.bt ? ''
       : !opts.connected ? `Not connected to ${opts.name}. Connect from TwinDesk’s Overview.`
+      : allowed === false && off ? `Remote is off on ${opts.name}.`
       : allowed === false ? (why || `${opts.name} doesn’t take input from ${opts.me}. On ${opts.name}, turn on Remote in TwinDesk.`)
         : allowed === null && (opts.os === 'mac' || opts.os === 'linux') ? `${opts.name} doesn’t answer the remote: update TwinDesk there.`
           : '';
-    $('note').textContent = note;
+    $('note-text').textContent = note;
     $('note').hidden = !note;
+    $('note-on').hidden = !(note && allowed === false && off && opts.connected);
     // A real controller: what the computer sees it as.
     const sees = !game ? ''
       : opts.bt ? `${opts.btName || 'The computer'} sees ${opts.me} as “TwinDesk Gamepad”, a Bluetooth game controller`
@@ -102,6 +105,7 @@
     } else if (m.t === 'remote.state') {
       allowed = m.allowed === true;
       why = typeof m.why === 'string' ? m.why : '';
+      off = m.off === true;
       canText = m.text === true && !opts.bt;
       if (!allowed) releaseAll();
       if ((m.pad === true) !== real) { releaseAll(); real = m.pad === true; } // what's held goes the old way
@@ -110,6 +114,8 @@
   };
 
   $('b-close').onclick = () => { releaseAll(); TD.event('close'); };
+  // The computer's Remote switch, turned on from here: our out is its in (pair.sync, its pairsync.js).
+  $('note-on').onclick = () => send({ t: 'pair.sync', feature: 'remote', dir: 'out', on: true });
   // The touchpad held sideways (or upright again): the activity turns, the page follows.
   $('b-rotate').onclick = () => TD.event('rotate');
   document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });

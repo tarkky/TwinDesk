@@ -56,7 +56,8 @@ UI.tab({
     const wallRow = UI.row('Show the phone’s wallpaper', 'On its tile and Overview. TwinDesk on the phone reads it once wireless debugging is set up', [wallSw]);
     // Overview: what it shows (settings.ui.overview).
     const parts = [['media', 'Now playing', 'What plays on the phone, with its controls'], ['qs', 'Quick actions', 'Wi-Fi, Bluetooth, torch, Do not disturb and more, with volume and ringer'],
-      ['notifs', 'Latest notifications', 'The newest few, with Copy for one-time codes'], ['apps', 'Most used apps', 'The phone’s most used apps this week'], ['features', 'Feature switches', 'Every feature’s two switches, at the bottom']];
+      ['notifs', 'Latest notifications', 'The newest few, with Copy for one-time codes'], ['apps', 'Most used apps', 'The phone’s most used apps this week'],
+      ['clipboard', 'Clipboard', 'Its recent items, while Clipboard is on'], ['files', 'Send files', 'A drop zone that sends files to the device']];
     const partSw = {};
     const partRows = parts.map(([k, label, hint]) => {
       partSw[k] = UI.switch((v) => api.setOverview && api.setOverview({ [k]: v }), { label });

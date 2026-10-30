@@ -332,7 +332,7 @@ function start() {
     applyMesh: () => autoJoin && autoJoin.schedule(),
     get net() { return net; }, get wifi() { return wifi; }, applyNet, joinHotspot, openBluetoothSettings,
     checkFirewall, fixFirewall, fixInput, setStartup, onApp: () => updateTray(buildState()) });
-  pairSync = new PairSync({ link, settings, save: saveSettings, set: ipc.set }); // Two-way switches per pair
+  pairSync = new PairSync({ link, settings, save: saveSettings, set: ipc.set, only: ['clipboard', 'notifs', 'apps', 'audio', 'cursor', 'terminal', 'files'] }); // Two-way switches per pair (no ReZume or Remote here)
   nativeTheme.on('updated', pushState);
   link.start();
   link.on('welcome', () => { // a Mac app's launcher was used while the Mac wasn't connected

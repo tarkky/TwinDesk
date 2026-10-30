@@ -5,10 +5,11 @@
 //   quick settings (Wi-Fi, Bluetooth, data, hotspot, torch, Do not disturb, rotation, battery
 //   saver), its volume and ringer; the latest notifications (a one-time code gets Copy); its most
 //   used apps.
-//   A computer: both computers and the link; Ring, Lock, Sleep, its Bluetooth and Do not disturb;
-//   its recent notifications while Notifications is on.
-//   Both: ReZume's offer, then every feature's two switches (UI.featureCards, from the platform's
-//   Connection page script).
+//   A computer: both computers and the link; Ring, Lock, Sleep, its Bluetooth and Do not disturb.
+//   Both: ReZume's offer, then what each feature that's on has: its notifications on the left; on the
+//   right the clipboard's recent items, the most used apps and a drop zone that sends files. A column
+//   with nothing in it gives the other the whole width; with nothing on at all, none of it shows.
+//   The switches themselves are on each feature's page.
 // What the other side doesn't report (an older TwinDesk) is left out, not shown as off.
 'use strict';
 
@@ -136,20 +137,62 @@
       const pcVolRow = UI.row('Volume', '', [pcVol]);
       const pcCard = UI.card('Controls', [pcBtRow, pcDndRow, pcVolRow]);
 
-      // ---- latest notifications, most used apps ----
+      // ---- what's on: notifications on the left; clipboard, most used apps and send files on the right ----
       const notifList = el('div');
       const notifCard = UI.card('Latest notifications', [notifList], { actions: [UI.button('See all', () => UI.go('notifications'), 'small link')] });
+      const clipList = el('div', { class: 'history' });
+      const clipCard = UI.card('Clipboard', [clipList], { actions: [UI.button('See all', () => UI.go('clipboard'), 'small link')] });
       const appsGrid = el('div', { class: 'app-grid dv-apps' });
       const appsCard = UI.card('Most used', [appsGrid], { actions: [UI.button('All apps', () => UI.go('papps'), 'small link')] });
-      const lower = el('div', { class: 'dv-two' }, [notifCard, appsCard]);
+      const dropHint = el('div', { class: 'hint' });
+      const zone = el('div', { class: 'dropzone dv-drop' }, [el('div', {}, [el('div', { class: 'big', text: 'Drop files here' }), dropHint])]);
+      const dropCard = UI.card('Send files', [zone], { actions: [UI.button('Choose…', () => api.chooseSendFiles(), 'small link')] });
+      let canSend = false;
+      zone.ondragover = (e) => { e.preventDefault(); if (canSend) zone.classList.add('over'); };
+      zone.ondragleave = () => zone.classList.remove('over');
+      zone.ondrop = (e) => {
+        e.preventDefault();
+        zone.classList.remove('over');
+        // As an array: a FileList reaches the preload as a plain object, which can't be iterated.
+        if (canSend) api.sendFiles(api.pathsOf([...e.dataTransfer.files]));
+      };
+      const left = el('div', { class: 'dv-col' }, [notifCard]);
+      const right = el('div', { class: 'dv-col' }, [clipCard, appsCard, dropCard]);
+      // The cards that are on fill the two columns with no gaps: notifications first on the left, then each
+      // card in whichever column is shorter (a tie: the left). One card, or a narrow window: one column.
+      // Nodes move only when a card's column changes (moving one mid-drag would drop the drag).
+      const narrow = window.matchMedia('(max-width: 860px)');
+      const flow = () => {
+        const shown = [notifCard, clipCard, appsCard, dropCard].filter((c) => !c.hidden);
+        lower.hidden = !shown.length;
+        if (lower.hidden) return;
+        left.hidden = right.hidden = false; // a card in a hidden column measures 0
+        const one = shown.length < 2 || narrow.matches;
+        let hl = 0;
+        let hr = 0;
+        const plan = shown.map((c) => {
+          const col = one || hl <= hr ? left : right;
+          if (col === left) hl += c.offsetHeight; else hr += c.offsetHeight; // the columns are the same width
+          return [c, col];
+        });
+        for (const col of [left, right]) {
+          const want = plan.filter(([, x]) => x === col).map(([c]) => c);
+          const have = [...col.children].filter((c) => !c.hidden);
+          if (want.length !== have.length || want.some((c, i) => c !== have[i])) col.append(...want);
+        }
+        left.hidden = !plan.some(([, x]) => x === left);
+        right.hidden = !plan.some(([, x]) => x === right);
+        lower.classList.toggle('one', left.hidden || right.hidden);
+      };
+      narrow.addEventListener('change', flow);
+      const lower = el('div', { class: 'dv-two' }, [left, right]);
 
       const rezume = UI.rezumeCard ? UI.rezumeCard() : null;
-      const features = UI.featureCards ? UI.featureCards() : null;
-      const featTitle = el('div', { class: 'card-title', text: 'Features' });
 
-      body.append(notConnected, hero, mediaCard, qsCard, pcCard, lower, ...(rezume ? [rezume.el] : []), ...(features ? [featTitle, features.el] : []));
+      body.append(notConnected, hero, mediaCard, qsCard, pcCard, ...(rezume ? [rezume.el] : []), lower);
 
       let notifKey = '';
+      let clipKey = '';
       let appsKey = '';
       // A button's words, its icon kept.
       const label = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.nodeValue = t; else b.append(t); };
@@ -167,7 +210,6 @@
         const on = linked(s);
         notConnected.set(on ? '' : 'Nothing is connected. Connect a phone or computer on the Connection page.');
         for (const x of [hero, mediaCard, qsCard, pcCard, lower]) x.hidden = !on;
-        if (features) { features.el.hidden = featTitle.hidden = !on; }
         if (!on) return;
         const p = UI.peer(s);
         const info = ph.info || {};
@@ -228,9 +270,9 @@
         ]));
         facts.hidden = !facts.childElementCount;
 
-        // media
+        // media: while something plays there and Media controls is on
         if (media) media.update(s);
-        mediaCard.hidden = !media || media.el.hidden;
+        mediaCard.hidden = !media || media.el.hidden || (s.audio || {}).phoneMedia === false;
 
         // quick settings: only what the phone reports
         const qs = phone && ph.qs;
@@ -265,14 +307,16 @@
           if (ctl.volume != null) pcVol.set(Math.round(ctl.volume * 100));
         }
 
-        // latest notifications: a phone's, or a computer's while they're shown here
+        const ov = (s.ui && s.ui.overview) || {}; // General › Overview: what's left out
+
+        // latest notifications: while Notifications is on
         const nf = s.notifs || {};
-        const history = (nf.history || []).slice(0, 4);
-        notifCard.hidden = !history.length || (!phone && !nf.receive);
-        const nk = JSON.stringify([history.map((h) => [h.id, h.at]), Object.keys(nf.historyIcons || {}).length]);
+        const history = (nf.history || []).slice(0, 6);
+        notifCard.hidden = !nf.receive || ov.notifs === false;
+        const nk = JSON.stringify([history.map((h) => [h.id, h.at]), Object.keys(nf.historyIcons || {}).length, devName]);
         if (nk !== notifKey) {
           notifKey = nk;
-          notifList.replaceChildren(...history.map((item) => {
+          notifList.replaceChildren(...(history.length ? history.map((item) => {
             const text = [item.subtitle, item.body].filter(Boolean).join(' · ');
             const code = otpOf([item.title, item.body].join(' '));
             const copy = code ? UI.button('Copy ' + code, () => api.copyText(code), 'small') : null;
@@ -283,13 +327,37 @@
               r.classList.add('with-ico');
             }
             return r;
-          }));
+          }) : [UI.row('Nothing yet', 'New notifications from ' + devName + ' show here')]));
         }
+
+        // the clipboard's recent items: while Clipboard is on
+        const cb = s.clipboard || {};
+        const recent = (cb.history || []).slice(0, 4);
+        clipCard.hidden = !cb.enabled || ov.clipboard === false;
+        const ck = JSON.stringify([recent.map((h) => [h.at, h.dir, !!(h.image && h.image.copy)]), cb.historySize, devName, Math.floor(Date.now() / 15000)]);
+        if (!clipCard.hidden && ck !== clipKey) {
+          clipKey = ck;
+          clipList.replaceChildren(...(recent.length ? recent.map((h, i) => el('div', { class: 'hist-item' }, [
+            el('span', { class: 'hist-dir ' + h.dir, title: (h.dir === 'out' ? 'Sent to ' : 'From ') + devName }, [UI.icon(h.dir === 'out' ? 'up' : 'down')]),
+            h.image && h.image.thumb ? el('img', { class: 'hist-thumb', src: h.image.thumb, alt: '' }) : null,
+            el('div', { class: 'hist-text' }, [
+              el('div', { class: 'hist-preview', text: h.image ? (h.image.shot ? 'Screenshot' : 'Picture') + ' · ' + h.image.w + ' × ' + h.image.h : String(h.text || '').replace(/\s+/g, ' ').trim() || '(whitespace)' }),
+              el('div', { class: 'hint', text: (h.dir === 'out' ? 'To ' : 'From ') + devName + ' · ' + UI.ago(h.at) }),
+            ]),
+            !h.image || h.image.copy ? UI.button('Copy', () => api.copyHistory(i), 'small') : null,
+          ])) : [UI.row(cb.historySize === 0 ? 'Recent items are off' : 'Nothing yet', cb.historySize === 0 ? 'Turn them on in Clipboard' : 'What’s copied on either side shows here')]));
+        }
+
+        // send files: while sending files is on (the Mac has no switch for it: always)
+        const fl = s.files || {};
+        canSend = fl.dropToMac !== false;
+        dropCard.hidden = !canSend || ov.files === false;
+        dropHint.textContent = 'They go to ' + devName + '’s Downloads';
 
         // most used apps: the phone's own order (Usage access), else what was opened from here
         const apps = (UI.phoneAssets && UI.phoneAssets.apps) || [];
         const top = (phone && (ph.top || [])).map((id) => apps.find((a) => a.id === id)).filter(Boolean).slice(0, 8);
-        appsCard.hidden = !top.length;
+        appsCard.hidden = !top.length || ov.apps === false;
         const ak = JSON.stringify([top.map((a) => a.id), ready]);
         if (ak !== appsKey) {
           appsKey = ak;
@@ -299,18 +367,10 @@
             return b;
           }));
         }
-        lower.classList.toggle('one', notifCard.hidden || appsCard.hidden);
-        lower.hidden = notifCard.hidden && appsCard.hidden;
-
-        // General › Overview: what's left out
-        const ov = (s.ui && s.ui.overview) || {};
         if (ov.media === false) mediaCard.hidden = true;
         if (ov.qs === false) qsCard.hidden = true;
-        if (ov.notifs === false) notifCard.hidden = true;
-        if (ov.apps === false) appsCard.hidden = true;
-        lower.classList.toggle('one', notifCard.hidden || appsCard.hidden);
-        lower.hidden = notifCard.hidden && appsCard.hidden;
-        if (features) { features.el.hidden = featTitle.hidden = ov.features === false; features.update(s); }
+
+        flow();
         if (rezume) rezume.update(s, true);
       };
     },

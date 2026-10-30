@@ -13,6 +13,7 @@ class PairSync(core: Core) : Feature(core) {
         "notifs" to ("notifs.send" to "notifs.receive"),
         "audio" to ("audio.send" to "audio.receive"), // out: the phone's sound on the Mac (the Mac plays it over adb)
         "cursor" to ("cursor.out" to "cursor.in"), // in: the Mac's mouse and keyboard used here
+        "rezume" to ("rezume.send" to "rezume.receive"), // read and set through Rezume (its own on switch with them)
     )
 
     // Shared values, the same on both sides (the Mac's VALUES): stored as strings.
@@ -34,6 +35,7 @@ class PairSync(core: Core) : Feature(core) {
     }
 
     fun get(feature: String, dir: String): Boolean {
+        if (feature == "rezume") return core.rezume.on && core.rezume.opt(if (dir == "out") "send" else "receive")
         val (o, i) = keys.getValue(feature)
         return core.store.flag(if (dir == "out") o else i, core.store.was && feature != "audio" && !(feature == "cursor" && dir == "out"))
     }
@@ -49,6 +51,13 @@ class PairSync(core: Core) : Feature(core) {
         val (o, i) = keys[feature] ?: return
         val key = if (dir == "out") o else i
         if (get(feature, dir) == on) return
+        if (feature == "rezume") {
+            if (on && !core.rezume.on) core.rezume.set("on", true, sync = false)
+            core.rezume.set(if (dir == "out") "send" else "receive", on, sync = false)
+            sent["rezume.$dir"] = on
+            rezumeChanged() // its on switch may have turned the other way on too: the computer hears that
+            return
+        }
         core.store.setFlag(key, on)
         when (feature) {
             "clipboard" -> core.clip.sendPolicy()
@@ -87,6 +96,18 @@ class PairSync(core: Core) : Feature(core) {
         }
         remember()
         return true
+    }
+
+    // ReZume's switches were flipped here (its page): the computer follows what changed.
+    private val sent = HashMap<String, Boolean>()
+    fun rezumeChanged() {
+        for (dir in listOf("out", "in")) {
+            val on = get("rezume", dir)
+            if (sent["rezume.$dir"] == on) continue
+            sent["rezume.$dir"] = on
+            core.send(msg(Proto.T.PAIR_SYNC, "feature" to "rezume", "dir" to dir, "on" to on))
+        }
+        remember()
     }
 
     private fun remember() {

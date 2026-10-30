@@ -6,6 +6,10 @@
 // receiver flips them. On connect each side restores its values for that peer; then the host sends
 // all of them (`pair.sync {all}`) and the guest adopts them. Reference: mac/pairsync.js.
 //
+// A feature may have one direction only (Remote: the phone's Remote page moving this computer; the
+// phone has no switch of its own, its page sends `pair.sync` to turn it on here). `on` names the
+// section's own switch that a direction turns on with it (ReZume's).
+//
 // Call check() with every state push (main.js): it sends what changed here.
 'use strict';
 
@@ -20,6 +24,10 @@ const FEATURES = {
   apps: { out: ['pcApps', 'allow'], in: ['macApps', 'on'] },
   audio: { out: ['audio', 'send'], in: ['audio', 'receive'] },
   cursor: { out: ['kvm', 'driveOther'], in: ['kvm', 'beDriven'] },
+  rezume: { out: ['rezume', 'send'], in: ['rezume', 'receive'], on: 'on' },
+  remote: { in: ['remote', 'allow'] },
+  terminal: { out: ['terminal', 'allowMac'], in: ['terminal', 'enabled'] },
+  files: { out: ['files', 'dropToMac'], in: ['files', 'acceptFromMac'] },
 };
 // Shared values, the same on both computers (no direction): key → settings path + values.
 const VALUES = {
@@ -35,9 +43,10 @@ const VALUES = {
 
 class PairSync {
   // opts: link, settings (shared; .pairSync is kept here), save(), set(section, partial) (ipc.js:
-  // applies a setting with its side effects)
+  // applies a setting with its side effects), only (the features this app has, else all of them)
   constructor(opts) {
     Object.assign(this, opts);
+    this.features = Object.fromEntries(Object.entries(FEATURES).filter(([f]) => !opts.only || opts.only.includes(f)));
     this.last = null; // the values both computers agree on now
     this.peerId = '';
     if (!this.settings.pairSync || typeof this.settings.pairSync !== 'object') this.settings.pairSync = {};
@@ -58,12 +67,12 @@ class PairSync {
       if (m.all && typeof m.all === 'object') {
         const mine = { values: {} };
         for (const [k, d] of Object.entries(vals)) if (m.all.values && d.allowed.includes(m.all.values[k])) mine.values[k] = m.all.values[k];
-        for (const f of Object.keys(FEATURES)) {
+        for (const f of Object.keys(this.features)) {
           const v = m.all[f];
           if (v && typeof v === 'object') mine[f] = { out: v.in, in: v.out }; // their in = our out
         }
         this._adopt(mine);
-      } else if (FEATURES[m.feature] && (m.dir === 'out' || m.dir === 'in') && typeof m.on === 'boolean') {
+      } else if (this.features[m.feature] && (m.dir === 'out' || m.dir === 'in') && typeof m.on === 'boolean') {
         this._adopt({ [m.feature]: { [m.dir === 'out' ? 'in' : 'out']: m.on } });
       }
     });
@@ -75,11 +84,17 @@ class PairSync {
     return Object.fromEntries(Object.entries(VALUES).filter(([, d]) => phone || !d.phone));
   }
 
+  // A direction's value: undefined where this side has no such switch.
+  _get(d, dir) {
+    const p = d[dir];
+    const sec = p && this.settings[p[0]];
+    if (!sec || typeof sec !== 'object') return undefined;
+    return !!sec[p[1]] && (!d.on || !!sec[d.on]);
+  }
+
   values() {
     const out = {};
-    for (const [f, d] of Object.entries(FEATURES)) {
-      out[f] = { out: !!this.settings[d.out[0]][d.out[1]], in: !!this.settings[d.in[0]][d.in[1]] };
-    }
+    for (const [f, d] of Object.entries(this.features)) out[f] = { out: this._get(d, 'out'), in: this._get(d, 'in') };
     out.values = {};
     for (const [k, d] of Object.entries(this._values())) out.values[k] = this.settings[d.path[0]][d.path[1]];
     return out;
@@ -97,13 +112,14 @@ class PairSync {
       this.set(d.path[0], { [d.path[1]]: v });
     }
     for (const [f, v] of Object.entries(vals)) {
-      if (f === 'values' || !FEATURES[f] || !v) continue;
+      const d = this.features[f];
+      if (f === 'values' || !d || !v) continue;
       for (const dir of ['out', 'in']) {
-        if (typeof v[dir] !== 'boolean' || now[f][dir] === v[dir]) continue;
-        const [section, key] = FEATURES[f][dir];
+        if (typeof v[dir] !== 'boolean' || typeof now[f][dir] !== 'boolean' || now[f][dir] === v[dir]) continue;
+        const [section, key] = d[dir];
         now[f][dir] = v[dir];
         this.last = now; // before set(): its state push must not echo this change
-        this.set(section, { [key]: v[dir] });
+        this.set(section, { [key]: v[dir], ...(v[dir] && d.on ? { [d.on]: true } : {}) });
       }
     }
     this.last = now;
@@ -120,9 +136,9 @@ class PairSync {
     if (!this.last || this.link.status.state !== 'connected') return;
     const now = this.values();
     let changed = false;
-    for (const f of Object.keys(FEATURES)) {
+    for (const f of Object.keys(this.features)) {
       for (const dir of ['out', 'in']) {
-        if (now[f][dir] === this.last[f][dir]) continue;
+        if (typeof now[f][dir] !== 'boolean' || now[f][dir] === (this.last[f] || {})[dir]) continue;
         changed = true;
         this.link.send({ t: T.PAIR_SYNC, feature: f, dir, on: now[f][dir] });
       }

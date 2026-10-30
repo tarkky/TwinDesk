@@ -270,6 +270,10 @@ function setupIpc(ctx) {
     kvm: () => kvm.applyConfig(),
     pcApps: () => { pcApps.apply(); pcApps.input.release(); },
     macApps: () => peerApps.apply(),
+    rezume: () => (ctx.rezume ? ctx.rezume.apply() : ctx.loadReZume()),
+    remote: () => (ctx.phoneRemote ? ctx.phoneRemote.setAllow(settings.remote.allow) : ctx.loadRemote()),
+    terminal: () => { if (ctx.terminal) ctx.terminal.apply(); else ctx.loadTerminal(); sshd.apply(); },
+    files: () => { smb.applyMount(); kvm.applyConfig(); fileClip.apply(); },
   };
   return { set: (section, partial) => change(section, partial, AFTER[section]) };
 }

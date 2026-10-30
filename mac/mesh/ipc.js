@@ -534,7 +534,7 @@ function setupIpc(ctx) {
     setOverview(o) {
       if (!o || typeof o !== 'object') return;
       const cur = settings.ui.overview || {};
-      for (const k of ['media', 'qs', 'notifs', 'apps', 'features']) if (typeof o[k] === 'boolean') cur[k] = o[k];
+      for (const k of ['media', 'qs', 'notifs', 'apps', 'clipboard', 'files']) if (typeof o[k] === 'boolean') cur[k] = o[k];
       settings.ui.overview = cur;
       store.saveSettings(settings);
       ctx.pushState();

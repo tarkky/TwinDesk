@@ -253,6 +253,8 @@ function setupIpc(ctx) {
     kvm: () => kvm.applyConfig(),
     pcApps: () => { pcApps.apply(); pcApps.input.release(); },
     macApps: () => peerApps.apply(),
+    terminal: () => { terminal.apply(); sshd.apply(); },
+    files: () => { smb.applyMount(); kvm.applyConfig(); fileClip.apply(); },
   };
   return { set: (section, partial) => change(section, partial, AFTER[section]) };
 }

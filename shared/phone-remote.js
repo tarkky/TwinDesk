@@ -188,7 +188,7 @@ class PhoneRemote {
   _state() {
     if (!isPhone(this.server.current)) return;
     const why = this.why;
-    this.server.sendToClient({ t: T.REMOTE_STATE, allowed: !why, why, pad: !why && !!this.padProc, text: this.canType });
+    this.server.sendToClient({ t: T.REMOTE_STATE, allowed: !why, off: !this.allow, why, pad: !why && !!this.padProc, text: this.canType }); // off: the page offers Turn on (pair.sync)
   }
 
   // Whether the helper types text (an older one doesn't; nor does Linux on Wayland): the phone sends
