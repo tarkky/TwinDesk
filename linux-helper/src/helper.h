@@ -105,6 +105,7 @@ void xclip_files(double id);
 
 // ---- inject.c: XTest ----
 void inject_apply(const JObj *ev);
+void inject_move(double dx, double dy); // the input lane's moves (lane.c)
 void inject_move_to(int x, int y);
 void inject_release_all(void);
 void inject_button(int b, int down);
@@ -130,6 +131,7 @@ void wl_arrived(int side);
 void wl_return_zones(const char *text);
 void wl_arm_return(int on, int side, double resistance);
 void wl_inject(const JObj *ev);
+void wl_move_rel(double dx, double dy);
 void wl_move_to(int x, int y);
 void wl_button(int b, int down);
 void wl_pen_moved(int x, int y); // the pen put the pointer there (pen.c)
@@ -150,5 +152,14 @@ int ble_handle(const char *line); // 1: a ble*/blp* command, taken
 void ble_shutdown(void);
 
 double now_ms(void);
+
+// ---- lane.c: the input lane in the helper (native/tdfast; only with -DTDFAST) ----
+#ifdef TDFAST
+int lane_fd(void); // the main loop polls it: moves from the lane's thread
+void lane_drain(void (*inject)(double dx, double dy));
+void lane_handle(const JObj *c, const char **error, char *extra, size_t n, void (*inject)(double dx, double dy));
+int lane_move(double dx, double dy, JOut *k);
+const char *lane_fence(const char *k, char *buf, size_t n);
+#endif
 
 #endif

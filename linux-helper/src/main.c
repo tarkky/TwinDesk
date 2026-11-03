@@ -46,6 +46,14 @@ static void reply(const JObj *c, const char *error, const char *extra) {
   emit(jo_end(&o));
 }
 
+#ifdef TDFAST
+// A move from the lane (lane.c), on this thread like every injection: straight to the move.
+static void lane_inject(double dx, double dy) {
+  if (wl) wl_move_rel(dx, dy);
+  else inject_move(dx, dy);
+}
+#endif
+
 static void dispatch(const char *line) {
   capture_touch(); // any command resets the dead-man timer
   if (ble_handle(line)) return; // Bluetooth: ble.c's thread, both backends
@@ -64,6 +72,14 @@ static void dispatch(const char *line) {
     json_free(c);
     return;
   }
+#ifdef TDFAST
+  if (!strcmp(cmd, "lane")) { // both backends (lane.c)
+    lane_handle(c, &error, extra, sizeof extra, lane_inject);
+    reply(c, error, extra[0] ? extra : NULL);
+    json_free(c);
+    return;
+  }
+#endif
   if (wl) {
     wl_touch();
     if (!strcmp(cmd, "ping") || !strcmp(cmd, "keepalive")) {
@@ -251,10 +267,19 @@ static int run_wayland(void) {
   for (;;) {
     struct pollfd p[40];
     p[0] = (struct pollfd){ 0, POLLIN, 0 };
-    int n = 1 + wl_fds(p + 1, 39);
+    int n = 1 + wl_fds(p + 1, 38);
+#ifdef TDFAST
+    int lf = n;
+    p[n++] = (struct pollfd){ lane_fd(), POLLIN, 0 };
+#endif
     poll(p, (nfds_t)n, 20);
     if (p[0].revents & (POLLIN | POLLHUP | POLLERR)) read_stdin();
+#ifdef TDFAST
+    wl_read(p + 1, lf - 1);
+    lane_drain(lane_inject);
+#else
     wl_read(p + 1, n - 1);
+#endif
     wl_tick();
   }
 }
@@ -296,9 +321,15 @@ int main(void) {
       XNextEvent(dpy_in, &e);
       drop_xevent(&e);
     }
-    struct pollfd p[3] = { { 0, POLLIN, 0 }, { xfd, POLLIN, 0 }, { ConnectionNumber(dpy_in), POLLIN, 0 } };
-    poll(p, 3, 20);
+    struct pollfd p[4] = { { 0, POLLIN, 0 }, { xfd, POLLIN, 0 }, { ConnectionNumber(dpy_in), POLLIN, 0 }, { -1, POLLIN, 0 } };
+#ifdef TDFAST
+    p[3].fd = lane_fd();
+#endif
+    poll(p, 4, 20);
     if (p[0].revents & (POLLIN | POLLHUP | POLLERR)) read_stdin();
+#ifdef TDFAST
+    lane_drain(lane_inject);
+#endif
     capture_tick();
   }
 }

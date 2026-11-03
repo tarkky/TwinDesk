@@ -75,6 +75,13 @@ app.commandLine.appendSwitch('force-fieldtrials', 'WebRTC-ForceSendPlayoutDelay/
 // in (Electron would follow the new product name). A dev copy's --user-data-dir still wins.
 if (!app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', path.join(app.getPath('appData'), 'MacShare'));
 require('../shared/applog.js').start(app); // console.* and crashes into the log folder, both apps
+// Screen share codec (shared/screencodec.js, docs/perf-plan.md P5): H.265 available in WebRTC, so the
+// Encoder setting works on the next share. One enable-features switch for the app: Chromium keeps only the last one.
+{
+  const codec = require('../shared/screencodec.js');
+  const on = codec.features([]);
+  if (on) app.commandLine.appendSwitch('enable-features', on);
+}
 // Multi-device switched on (multi.js, docs/multi-device.md): mesh/main.js runs instead of everything below.
 if (require('./multi').on()) return void require('./mesh/main.js');
 if (!app.requestSingleInstanceLock()) {
@@ -258,6 +265,7 @@ function start() {
   sound = new Sound({ link, settings, onChange: pushState });
   smb = new Smb({ link, settings, save: saveSettings, onChange: pushState });
   helper = new Helper();
+  screen.helper = helper; // Wi-Fi low-latency mode while a screen is shown (Wlan.cs)
   clip.useHelper(helper); // its "clipboard" event: something was copied
   fileRecv = new FileRecv({ link, helper, settings, onChange: pushState });
   const dragRecv = new DragRecv({ link, helper, settings, isDriven: () => kvm && kvm.mode === 'driven', onChange: pushState });
@@ -356,6 +364,7 @@ function start() {
   };
   wake = new Wake({ link, settings, save: saveSettings, onChange: pushState, address: () => ownAddresses()[0] }); // Wake over the network
   const sender = new Sender(link); // every rtc2 video session we send (screen, app windows)
+  sender.codec = () => settings.pcScreen.codec; // Share screen › Encoder
   pcScreen = new PcScreen({ link, helper, sender, vdd, settings, inputAllowed: () => kvm.mode === 'home', onChange: pushState });
   pcApps = new PcApps({ link, helper, sender, settings, inputAllowed: () => kvm.mode === 'home', onChange: pushState });
   peerApps = new PeerApps({ link, settings, popup: (kind, text) => hud.show(kind, text), peerName, onChange: pushState });

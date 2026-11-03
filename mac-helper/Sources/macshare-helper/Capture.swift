@@ -227,11 +227,22 @@ final class Capture {
   }
 
   /// The sides where an injected move must stop at the edge rather than jump onto a display past it.
+  /// Read for every injected move: the same array until the side changes, never a new one per move.
+#if !MULTI
+  private var stopsSide: String?
+  private var stopsKnown = false
+  private var stopsList: [String] = []
+#endif
   var returnStops: [String] {
 #if MULTI
     return returnSides
 #else
-    return returnSide.map { [$0] } ?? []
+    if !stopsKnown || stopsSide != returnSide {
+      stopsKnown = true
+      stopsSide = returnSide
+      stopsList = returnSide.map { [$0] } ?? []
+    }
+    return stopsList
 #endif
   }
 
@@ -368,7 +379,13 @@ final class Capture {
   }
 
   private func ev(_ fields: [String: Any]) {
+#if TDFAST
+    var f = fields
+    NativeLane.shared.fence(&f) // a click, key, wheel or gesture: its event number and fence (Lane.swift)
+    emit(["event": "ev", "ev": f])
+#else
     emit(["event": "ev", "ev": fields])
+#endif
   }
 
   /// Returns true to swallow.
@@ -529,7 +546,11 @@ final class Capture {
               "dy": -e.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1)])
         }
       } else if dx != 0 || dy != 0 {
+#if TDFAST
+        if let m = NativeLane.shared.move(dx, dy) { ev(m) } // nil: it went on the input lane (Lane.swift)
+#else
         ev(["t": "k.mm", "dx": dx, "dy": dy])
+#endif
       }
       return true
     }

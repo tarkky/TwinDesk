@@ -76,12 +76,19 @@ app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 // Every sent video frame says "show me now" (RTP playout delay 0/0); FlexFEC repairs
 // lost packets without a resend round trip. Same trials as the Mac and the PC.
 app.commandLine.appendSwitch('force-fieldtrials', 'WebRTC-ForceSendPlayoutDelay/min_ms:0,max_ms:0/WebRTC-FlexFEC-03/Enabled/WebRTC-FlexFEC-03-Advertised/Enabled/');
-// Wayland (L6): screen capture through the desktop portal and PipeWire.
-app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
+// Wayland (L6): screen capture through the desktop portal and PipeWire: WebRTCPipeWireCapturer, in the
+// enable-features switch below (with the screen codec's).
 // Renamed MacShare → TwinDesk: settings, pairing and keys stay in the folder they've always been
 // in (Electron would follow the new product name). A dev copy's --user-data-dir still wins.
 if (!app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', path.join(app.getPath('appData'), 'MacShare'));
 require('../shared/applog.js').start(app); // console.* and crashes into the log folder, both apps
+// Screen share codec (shared/screencodec.js, docs/perf-plan.md P5): H.265 available in WebRTC, so the
+// Encoder setting works on the next share. One enable-features switch for the app: Chromium keeps only the last one.
+{
+  const codec = require('../shared/screencodec.js');
+  const on = codec.features(['WebRTCPipeWireCapturer']);
+  if (on) app.commandLine.appendSwitch('enable-features', on);
+}
 require('../shared/gpufallback.js').start(app); // a Wayland GPU crash loop: start again through XWayland
 // Multi-device switched on (multi.js, docs/multi-device.md): mesh/main.js runs instead of everything below.
 if (require('./multi').on()) return void require('./mesh/main.js');
@@ -324,6 +331,7 @@ function start() {
   notifs = new Notifs({ link, helper, settings, save: saveSettings, peerName, onChange: pushState });
   wake = new Wake({ link, settings, save: saveSettings, onChange: pushState, address: () => ownAddresses()[0] });
   const sender = new Sender(link);
+  sender.codec = () => settings.pcScreen.codec; // Share screen › Encoder
   vdd = new Vdd({ onChange: pushState });
   pcScreen = new PcScreen({ link, helper, sender, vdd, settings, popup: (kind, text) => hud.show(kind, text), inputAllowed: () => kvm.mode === 'home', onChange: pushState });
   vdd.check(); // Extend: can this desktop add a virtual monitor? (and one left on by a crash goes)
