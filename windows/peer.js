@@ -97,6 +97,11 @@ class Peer {
     return !!(this.server && this.server.current);
   }
 
+  // Preserve link.js's authentication gate for features that use this adapter in either role.
+  get authed() {
+    return !!(this.hosting ? this.server.current.authed : this.link.authed);
+  }
+
   // The other computer's OS while a session runs (else the stored pairing's).
   get peerOs() {
     if (this.hosting) return this.server.current.os || P.OS.WIN;
@@ -112,7 +117,8 @@ class Peer {
     }
     if (!this.link.authed) return null;
     const p = this.link.snapshot().paired;
-    return p && { deviceId: p.macId, os: p.os, role: 'host', transport: this.link.transport === 'ble' ? 'ble' : 'ip', address: p.address };
+    const address = this.link.transport !== 'ble' && this.link.ws ? this.link.ws.address : p && p.address;
+    return p && { deviceId: p.macId, os: p.os, role: 'host', transport: this.link.transport === 'ble' ? 'ble' : 'ip', address };
   }
 
   send(obj) {

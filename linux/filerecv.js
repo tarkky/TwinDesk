@@ -48,8 +48,9 @@ class FileRecv {
     if (!(m.size >= 0) || m.size > P.FILE_MAX_BYTES) return refuse('too_big');
     const name = safeName(m.name);
     fs.mkdirSync(this.dir, { recursive: true });
-    const tmp = path.join(this.dir, m.id + '.part');
+    const tmp = path.join(this.dir, P.randomHex(16) + '.part'); // not m.id: the other computer's string
     const f = { id: m.id, name, size: m.size, got: 0, seq: 0, hash: crypto.createHash('sha256'), out: fs.createWriteStream(tmp), tmp, done: false };
+    f.out.on('error', (e) => { f.error = f.error || e; }); // told at file.end
     if (this.files.size === 0) this.target = null; // a new drag
     this.files.set(m.id, f);
     this.link.send({ t: T.FILE_ACCEPT, id: m.id });
@@ -61,6 +62,11 @@ class FileRecv {
     if (!f || f.done || m.seq !== f.seq || (typeof m.data !== 'string' && !Buffer.isBuffer(m.data))) return;
     if (!f.out) openOut(f);
     const buf = (typeof m.data === 'string' ? Buffer.from(m.data, 'base64') : m.data); // a Buffer from fast files (shared/fastfile.js)
+    if (f.got + buf.length > f.size) { // more than it offered: not written (it could fill the disk)
+      if (f.batch) return this._batchFail(f, 'size mismatch');
+      this._drop(f.id);
+      return this.link.send({ t: T.FILE_DONE, id: f.id, ok: false, error: 'size mismatch' });
+    }
     f.seq++;
     f.got += buf.length;
     f.hash.update(buf);
@@ -77,7 +83,8 @@ class FileRecv {
     const f = this.files.get(m.id);
     if (!f || f.done) return;
     f.done = true;
-    f.out.end(() => {
+    f.out.end((err) => {
+      if (f.error || err) return this._finish(f, false, (f.error || err).message); // a full disk: part of it is missing
       const ok = f.got === f.size && f.hash.digest('hex') === m.sha256;
       if (!ok) {
         this._finish(f, false, 'checksum mismatch');
@@ -180,7 +187,8 @@ class FileRecv {
     if (f.done) return;
     f.done = true;
     if (!f.out) openOut(f); // an empty file
-    f.out.end(() => {
+    f.out.end((err) => {
+      if (f.error || err) return this._batchFail(f, (f.error || err).message); // a full disk: part of it is missing
       if (f.got !== f.size || f.hash.digest('hex') !== m.sha256) return this._batchFail(f, f.got !== f.size ? 'size mismatch' : 'checksum mismatch');
       try {
         fs.renameSync(f.tmp, f.final);
@@ -232,7 +240,7 @@ function safeName(name) {
 
 function openOut(f) {
   f.out = fs.createWriteStream(f.tmp);
-  f.out.on('error', () => {}); // the size/checksum check at the end fails instead
+  f.out.on('error', (e) => { f.error = f.error || e; }); // told at file.end (the checksum is of what came, not what was written)
 }
 
 // "Photos/2024/a.jpg" → safe Windows segments joined by '/', or null (.., empty, too deep).

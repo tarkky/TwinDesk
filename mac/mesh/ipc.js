@@ -7,6 +7,7 @@ const P = require('../../shared/protocol.js');
 const CL = require('../../shared/cursorlock.js');
 const { LINKS } = require('../../shared/about.js');
 const store = require('./store');
+const { planConnect, settleConnect, sessionIsUp } = require('../connect-plan');
 
 const SETTINGS_URLS = {
   screen: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
@@ -60,6 +61,7 @@ const SCHEMA = {
 
 function setupIpc(ctx) {
   const { settings, pushState } = ctx;
+  const t = ctx.t || ((text) => text);
 
   function save() {
     store.saveSettings(settings);
@@ -72,51 +74,71 @@ function setupIpc(ctx) {
     save();
   }
 
-  // "Connect by address" / Pair on a found device: a Mac host is
-  // paired as its guest, a PC gets an invite (it pairs with this Mac, which stays the host).
+  // "Connect by address" / Pair on a found device: a computer that dials us is invited,
+  // a computer this Mac dials (a Mac, Windows or Linux host) is dialled.
   const connect = ctx.state.connect;
-  const report = (message, error = false) => {
-    Object.assign(connect, { busy: false, message, error });
+  const report = (message, error = false, pending = null, messageKey = '', messageVars = {}) => {
+    Object.assign(connect, { busy: false, message, error, pending, messageKey, messageVars });
     pushState();
   };
+  const up = (id) => {
+    const clients = ctx.server.server && ctx.server.server.clients ? [...ctx.server.server.clients.values()] : [];
+    const authedHostIds = [];
+    if (ctx.link && ctx.link.list) {
+      for (const l of ctx.link.list()) if (l && l.authed && l.pairing) authedHostIds.push(l.pairing.macId);
+    }
+    return sessionIsUp(id, { current: ctx.server && ctx.server.current, clients, authedHostIds });
+  };
+  // The pending "Asked … / Connecting …" hint ends when that device's session is up.
+  ctx.server.on('client', (client) => {
+    const next = settleConnect(connect, client);
+    if (!next) return;
+    Object.assign(connect, next);
+    pushState();
+  });
   async function connectTo(dev, address) {
     const { discovery, pairing } = ctx;
     const link = ctx.link; // the guest links (links.js): one per host
-    if (dev && dev.os === P.OS.ANDROID && pairing.list().some((p) => p.id === dev.id)) {
+    const plan = planConnect({
+      dev,
+      address,
+      pairedIds: pairing.list().map((p) => p.id),
+      hosts: link.hosts || [],
+    });
+    // Already on this socket: leave the live session alone (the hint was stuck on "Asked …").
+    if (plan.id && up(plan.id)) return report('');
+    if (plan.action === 'phone') {
       report('');
-      return ctx.phone.connect(dev.id);
+      return ctx.phone.connect(plan.id);
     }
-    if (dev && dev.os !== 'mac') {
-      // Paired: invited, and its hello takes the session over from whoever has it (Connect / Switch).
-      if (pairing.list().some((p) => p.id === dev.id)) {
-        discovery.invite(dev.address);
-        return report(`Connecting to ${dev.name}…`);
-      }
-      discovery.invite(dev.address);
-      if (dev.os === P.OS.ANDROID) { // the popup says Pair has to be pressed on the phone, for a minute at most
-        const inv = { id: dev.id, name: dev.name };
+    if (plan.action === 'invite') {
+      discovery.invite(plan.address);
+      if (plan.inviting) { // the popup says Pair has to be pressed on the phone, for a minute at most
+        const inv = { id: plan.id, name: plan.name };
         connect.inviting = inv;
         setTimeout(() => { if (connect.inviting === inv) { connect.inviting = null; pushState(); } }, 60 * 1000);
       }
-      return report(`Asked ${dev.name} to connect. Confirm on ${dev.name}.`);
+      return report(plan.message, false, plan.pending, plan.messageKey, plan.messageVars);
     }
-    if (dev && pairing.list().some((p) => p.id === dev.id)) {
-      // A Mac that connects to us: invited, and its hello takes the session over (Take over).
-      discovery.invite(dev.address);
-      return report(`Connecting to ${dev.name}…`);
-    }
-    if (dev && link.get(dev.id)) {
-      // A host we dial: if it is also connected to us (it dials us), that socket goes first, then we dial.
-      const l = link.get(dev.id);
-      const inbound = ctx.server.server.clients.get(dev.id);
-      if (inbound) {
-        ctx.server.server.release(inbound);
-        setTimeout(() => l.connect(true), 800);
-      } else l.connect(true);
-      return report(`Connecting to ${dev.name}…`);
+    if (plan.action === 'dial') {
+      const l = link.get(plan.id);
+      if (l) {
+        if (plan.address && l.pairing && l.pairing.address !== plan.address) {
+          l.pairing.address = plan.address;
+          if (plan.port) l.pairing.port = plan.port;
+          if (l.store) l.store.save(l.pairing);
+        }
+        // A host we dial: if it is also connected to us (it dials us), that socket goes first, then we dial.
+        const inbound = ctx.server.server.clients.get(plan.id);
+        if (inbound) {
+          ctx.server.server.release(inbound);
+          setTimeout(() => l.connect(true), 800);
+        } else l.connect(true);
+        return report(plan.message, false, plan.pending, plan.messageKey, plan.messageVars);
+      }
     }
     report('');
-    link.startPairing({ address: dev ? dev.address : address, port: dev ? dev.port : P.PORT, macName: dev ? dev.name : address });
+    link.startPairing({ address: plan.address, port: plan.port || P.PORT, macName: plan.name });
   }
 
   const actions = {
@@ -124,7 +146,7 @@ function setupIpc(ctx) {
       const address = String(text || '').trim();
       if (!/^(\d{1,3})(\.\d{1,3}){3}$/.test(address)) return report('Type an address like 192.168.1.20.', true);
       if (ctx.state.addresses.includes(address)) return report('That’s this Mac.', true);
-      Object.assign(connect, { busy: true, message: `Looking at ${address}…`, error: false });
+      Object.assign(connect, { busy: true, message: `Looking at ${address}…`, error: false, messageKey: 'Looking at {address}…', messageVars: { address } });
       pushState();
       const dev = await ctx.discovery.ask(address);
       connectTo(dev, address); // no answer: try the WSS port directly (a Mac host answers there)
@@ -168,8 +190,8 @@ function setupIpc(ctx) {
       if (!arg || typeof arg.id !== 'string' || !/^[\w.]{1,200}$/.test(arg.id)) return;
       const name = String(arg.name || arg.id).slice(0, 100);
       Menu.buildFromTemplate([
-        { label: 'Open in a Window', click: () => ctx.phoneViews.openApp(arg.id, name) },
-        { label: 'Add to Dock', click: () => ctx.phoneViews.pin(arg.id, name) },
+        { label: t('Open in a Window'), click: () => ctx.phoneViews.openApp(arg.id, name) },
+        { label: t('Add to Dock'), click: () => ctx.phoneViews.pin(arg.id, name) },
       ]).popup();
     },
     phoneInstallFull() {
@@ -353,7 +375,7 @@ function setupIpc(ctx) {
       if (list.length && ctx.server.current) ctx.fileSend.sendBatch(list, 'send');
     },
     async chooseSendFiles() {
-      const r = await dialog.showOpenDialog({ properties: ['openFile', 'openDirectory', 'multiSelections'], buttonLabel: 'Send' });
+      const r = await dialog.showOpenDialog({ properties: ['openFile', 'openDirectory', 'multiSelections'], buttonLabel: t('Send') });
       if (!r.canceled) actions.sendFiles(r.filePaths);
     },
     setNotifs(partial) {
@@ -370,7 +392,7 @@ function setupIpc(ctx) {
       if (bundle.endsWith('.app')) shell.showItemInFolder(bundle);
     },
     async pickDropFolder() {
-      const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Use This Folder' });
+      const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'], buttonLabel: t('Use This Folder') });
       if (r.canceled || !r.filePaths[0]) return;
       settings.files.folder = r.filePaths[0];
       save();
@@ -393,7 +415,7 @@ function setupIpc(ctx) {
       else ctx.smb.stopSharing();
     },
     async chooseShareFolder() {
-      const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Share This Folder' });
+      const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'], buttonLabel: t('Share This Folder') });
       if (r.canceled || !r.filePaths[0]) return;
       if (settings.smb.sharing) await ctx.smb.stopSharing();
       settings.smb.folder = r.filePaths[0];
@@ -550,6 +572,12 @@ function setupIpc(ctx) {
     notifReply(r) {
       if (r && typeof r === 'object' && r.chat) return void ((ctx.chats && ctx.chats()) && (ctx.chats && ctx.chats()).reply(String(r.chat), r.text)); // a chat app's conversation (shared/chats.js)
       if (r && typeof r === 'object' && ctx.notifs && ctx.notifs.reply) ctx.notifs.reply(String(r.id || ''), r.text);
+    },
+    setLanguage(language) {
+      if (!['en', 'zh-CN'].includes(language) || settings.ui.language === language) return;
+      settings.ui.language = language;
+      save();
+      if (ctx.onLanguage) ctx.onLanguage();
     },
     setTab(tab) {
       if (!TABS.includes(tab)) return;

@@ -7,9 +7,10 @@
 // its sharing and closing it stops it again (`screen.ctl`); the Receive tab switches Extend/Mirror.
 // Monitor 2 never opens by itself (no "Open automatically"): only the Receive tab, the
 // tray or a Mac-app window open it, and nothing is sent before that.
-const { BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const P = require('../shared/protocol.js');
+const I18n = require('../shared/i18n.js');
 
 const T = P.T;
 const FROM_RENDERER = new Set([T.RTC_ANSWER, T.RTC_ICE, T.APP_FOCUS, T.APP_CLOSE]);
@@ -30,6 +31,9 @@ class Screen {
     this.remote = null; // the peer's screen.state {on, mode, remote, modes}; null = not told (older app)
     this.startedByUs = false; // we switched the peer's sharing on, so closing Monitor 2 switches it off
     this.wantStart = false; // Monitor 2 opened before the peer's screen.state arrived
+    this.heldKeys = new Set();
+    this.heldButtons = new Set();
+    this.lastPos = { x: 0.5, y: 0.5 };
 
     const link = this.link;
     link.on(T.STREAM_INFO, (m) => this._onInfo(m));
@@ -47,6 +51,9 @@ class Screen {
       this.policy();
     });
     link.on('closed', () => {
+      this.wantStart = false;
+      this.heldKeys.clear();
+      this.heldButtons.clear();
       this.sentAccept = null;
       this.remote = null;
       this.startedByUs = false;
@@ -59,7 +66,14 @@ class Screen {
       if (!this.win || e.sender !== this.win.webContents || this.test) return;
       if (!m) return;
       if (FROM_RENDERER.has(m.t)) this.link.send(m);
-      else if (INPUT.has(m.t) && this.state.state === 'on' && this.macInput && this.inputAllowed()) this.link.send(m);
+      else if (INPUT.has(m.t) && this.state.state === 'on' && this.macInput && this.inputAllowed()) {
+        if (m.t === T.IN_KEY_DOWN) this.heldKeys.add(m.code);
+        if (m.t === T.IN_KEY_UP) this.heldKeys.delete(m.code);
+        if (m.t === T.IN_DOWN) this.heldButtons.add(m.b);
+        if (m.t === T.IN_UP) this.heldButtons.delete(m.b);
+        if (Number.isFinite(m.x) && Number.isFinite(m.y)) this.lastPos = { x: m.x, y: m.y };
+        this.link.send(m);
+      }
     });
     ipcMain.on('drop', (e, d) => {
       if (!this.win || e.sender !== this.win.webContents || !this.fileDrop || !d || !Array.isArray(d.paths)) return;
@@ -98,6 +112,7 @@ class Screen {
 
   open(test) {
     this.test = !!test;
+    this.startHidden = false;
     if (!this.win || this.win.isDestroyed()) this._create();
     else if (!this.win.isVisible()) this.win.show();
     else if (this.win.isMinimized()) this.win.restore();
@@ -143,6 +158,7 @@ class Screen {
   policy() {
     if (this.link.status.state !== 'connected') return;
     const accept = this.watching();
+    this._startIfWatching();
     if (accept === this.sentAccept) return;
     this.sentAccept = accept;
     this.link.send({ t: T.SCREEN_POLICY, accept });
@@ -153,10 +169,15 @@ class Screen {
     const modes = Array.isArray(m.modes) ? m.modes.slice(0, 4).map(String) : [];
     this.remote = { on: m.on === true, mode: String(m.mode || ''), remote: m.remote !== false, modes };
     if (!this.remote.on) this.startedByUs = false;
-    if (this.wantStart && this.remote.remote && !this.remote.on) this.control({ share: true });
-    this.wantStart = false;
+    this._startIfWatching();
     this._pushRemote();
     this.onChange();
+  }
+
+  _startIfWatching() {
+    if (!this.wantStart || !this.remote || !this.watching()) return;
+    this.wantStart = false;
+    if (this.remote.remote && !this.remote.on) this.control({ share: true });
   }
 
   _onInfo(m) {
@@ -168,6 +189,7 @@ class Screen {
     this._relay({ t: T.STREAM_INFO, name: this.state.name, width, height, audio: this.state.audio });
     this._title();
     if (this.win && !this.win.isDestroyed()) this.win.streamSize = { width, height };
+    this._pushInput();
     this.onChange();
   }
 
@@ -211,15 +233,27 @@ class Screen {
 
   // Tell the renderer whether to capture input at all (off = no listeners work, normal cursor).
   _pushInput() {
+    const enabled = this.test || (this.state.state === 'on' && this.macInput && this.inputAllowed());
+    if (!enabled) this._releaseInput();
     if (this.ready && this.win && !this.win.isDestroyed()) {
-      this.win.webContents.send('input-enabled', this.test || (this.macInput && this.inputAllowed()));
+      this.win.webContents.send('input-enabled', enabled);
     }
+  }
+
+  _releaseInput() {
+    if (this.link.status.state === 'connected') {
+      for (const code of this.heldKeys) this.link.send({ t: T.IN_KEY_UP, code });
+      for (const b of this.heldButtons) this.link.send({ t: T.IN_UP, ...this.lastPos, b });
+    }
+    this.heldKeys.clear();
+    this.heldButtons.clear();
   }
 
   _stop() {
     if (this.state.state === 'off' && !this.replay.length) return;
     this.state = { state: 'off', name: '', width: 0, height: 0 };
     this.replay = [];
+    this._pushInput();
     this._toRenderer({ t: T.STREAM_STOP });
     this._title();
     this.onChange();
@@ -243,7 +277,12 @@ class Screen {
       : macName);
   }
 
+  _i18n() {
+    return I18n.create(I18n.resolveLanguage(this.settings.ui && this.settings.ui.language, app.getLocale()));
+  }
+
   _create() {
+    const i18n = this._i18n();
     const b = this.settings.windows.monitor || {};
     const aspect = this.state.width && this.state.height ? this.state.width / this.state.height : 16 / 9;
     const win = new BrowserWindow({
@@ -254,7 +293,7 @@ class Screen {
       minWidth: 320,
       minHeight: 200,
       backgroundColor: '#000000',
-      title: 'Monitor 2',
+      title: i18n.t('Monitor 2'),
       icon: path.join(__dirname, 'assets', 'tray@2x.png'),
       show: false,
       webPreferences: {
@@ -270,7 +309,7 @@ class Screen {
     this.ready = false;
     win.streamSize = { width: this.state.width || 1920, height: this.state.height || 1080 };
     if (this.apps) this.apps.attach(win); // Mac app windows open from this renderer
-    win.loadFile(path.join(__dirname, 'monitor.html'), { query: this.test ? { test: '1' } : {} });
+    win.loadFile(path.join(__dirname, 'monitor.html'), { query: { ...(this.test ? { test: '1' } : {}), language: i18n.locale } });
     win.once('ready-to-show', () => { if (!this.startHidden) win.show(); this.startHidden = false; });
     for (const ev of ['show', 'hide', 'minimize', 'restore', 'closed']) win.on(ev, () => this.policy());
     win.on('page-title-updated', (e) => e.preventDefault());
@@ -286,7 +325,7 @@ class Screen {
       if (input.key === 'F11') win.setFullScreen(!win.isFullScreen());
       else win.webContents.send('toggle-stats');
     });
-    win.webContents.on('did-start-loading', () => { this.ready = false; });
+    win.webContents.on('did-start-loading', () => { this._releaseInput(); this.ready = false; });
     // Closing only hides it, so the peer connection survives and reopening is instant.
     win.on('close', (e) => {
       this._saveBounds();
@@ -294,6 +333,7 @@ class Screen {
         e.preventDefault();
         if (win.isFullScreen()) win.setFullScreen(false);
         win.hide();
+        this._releaseInput();
         this.wantStart = false;
         if (this.startedByUs) this.control({ share: false }); // we started it, so we stop it
       }

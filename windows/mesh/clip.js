@@ -12,17 +12,9 @@ const electronClipboard = electron.clipboard; // undefined under plain node (tes
 const POLL_MS = 500; // instant mode: how often the clipboard is checked for a new copy
 const PREVIEW = 300; // characters kept per history item for the UI
 
-// Password managers mark secrets so clipboard tools leave them alone. clipboard.has() doesn't see
-// these registered formats; readBuffer() does (empty buffer = format absent).
-function isConcealed(clipboard) {
-  try {
-    if (clipboard.readBuffer('ExcludeClipboardContentFromMonitorProcessing').length) return true;
-    if (clipboard.readBuffer('Clipboard Viewer Ignore').length) return true;
-    const b = clipboard.readBuffer('CanIncludeInClipboardHistory');
-    if (b && b.length >= 4 && b.readUInt32LE(0) === 0) return true;
-  } catch (_) { /* unknown format: not concealed */ }
-  return false;
-}
+// Password managers mark secrets so clipboard tools leave them alone: shared/eclip.js (Electron 44
+// has no readBuffer).
+const { isConcealed } = require('../../shared/eclip.js');
 
 // The Pool's view of the mesh for the clipboard. Items from a device are always applied (its
 // clip.policy says what it wants from us, not what it sends); items go only to devices whose
@@ -194,9 +186,10 @@ class Clip {
     const c = this.cfg;
     if (!c.enabled || !c.send || !this.bus.connectedIds().length) return;
     if (!this.peerAccepts) return this._skip("{name} doesn't accept {me}’s clipboard");
-    const text = await this._readText();
+    // Read together: one await before the checks below, so no other copy or clip runs in between.
+    const [text, concealed] = await Promise.all([this._readText(), c.skipConcealed && isConcealed(this.clipboard)]);
     if (!text || text === this.lastSync.sent || text === this.lastSync.received) return;
-    if (c.skipConcealed && isConcealed(this.clipboard)) {
+    if (concealed) {
       this.lastSync.sent = text; // don't retry this item
       return this._skip('skipped a password (concealed item)');
     }

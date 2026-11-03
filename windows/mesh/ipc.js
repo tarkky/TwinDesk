@@ -21,6 +21,11 @@ function setupIpc(ctx) {
   };
 
   handle('getState', () => ctx.buildState());
+  // A local UI preference: never synchronized to another device.
+  handle('setLanguage', (language) => {
+    if (language !== 'en' && language !== 'zh-CN') return;
+    change('ui', { language }, () => ctx.onLanguage());
+  });
   // Calls, Messages and Photos (shared/phonehub.js, loaded the first time it's used).
   handle('hub', (r) => ctx.phoneHub().act(r));
 
@@ -59,6 +64,7 @@ function setupIpc(ctx) {
   handle('forget', () => {
     const id = hub.selectedId;
     link.forget();
+    sshd.revokeAll(); // forgotten: it may not log in any more
     if (id) kvm.forgetDevice(id);
   });
   // Disconnect (either side of the session); Connect again / Take over the computer we're a guest of.

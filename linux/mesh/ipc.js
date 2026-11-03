@@ -22,6 +22,11 @@ function setupIpc(ctx) {
   };
 
   handle('getState', () => ctx.buildState());
+  // A local UI preference: never synchronized to another device.
+  handle('setLanguage', (language) => {
+    if (language !== 'en' && language !== 'zh-CN') return;
+    change('ui', { language }, () => ctx.onLanguage());
+  });
   // Calls, Messages and Photos (shared/phonehub.js, loaded the first time it's used).
   handle('hub', (r) => ctx.phoneHub().act(r));
 
@@ -60,6 +65,7 @@ function setupIpc(ctx) {
   handle('forget', () => {
     const id = hub.selectedId;
     link.forget();
+    sshd.revokeAll(); // forgotten: it may not log in any more
     if (id) kvm.forgetDevice(id);
   });
   // Disconnect (either side of the session); Connect again / Take over the computer we're a guest of.
@@ -198,7 +204,10 @@ function setupIpc(ctx) {
   const phone = (name, fn) => handle(name, (...args) => (ctx.phone ? fn(...args) : undefined));
   phone('connectPhone', (id) => ctx.phone.connect(String(id)));
   phone('disconnectPhone', () => ctx.phone.disconnect());
-  handle('setPhone', (partial) => change('phone', partial, () => partial && 'input' in partial && ctx.phone && ctx.phone.bridge.tellVia()));
+  handle('setPhone', (partial) => change('phone', partial, () => {
+    if (partial && 'input' in partial && ctx.phone) ctx.phone.bridge.tellVia();
+    if (partial && ('enterSends' in partial || 'arrowSwipe' in partial) && ctx.phoneViews) ctx.phoneViews.applyOpts();
+  }));
   // The phone as a drive (phonedrive.js). The Mount page's switch: off unmounts and stops
   // everything (nothing runs until Mount anyway).
   phone('phoneMount', () => settings.mount.on && ctx.phoneDrive.mount());

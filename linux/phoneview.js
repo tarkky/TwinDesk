@@ -13,6 +13,8 @@ const path = require('path');
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const { EventEmitter } = require('events');
 const P = require('../shared/protocol.js');
+const I18n = require('../shared/i18n.js');
+const chat = require('../shared/phonechat');
 const { Session, ACTION, TYPE } = require('./scrcpy');
 const { KeyState, ANDROID } = require('./android-keys');
 
@@ -30,6 +32,19 @@ class PhoneViews extends EventEmitter {
     bridge.views = this;
     this.on('change', () => bridge._tellPhone()); // its Screen and Camera pages follow the windows here
     this.notified = null; // {pkg, name, at, unlocked}: a clicked notification's app, waiting to open (openNotified)
+    // The app in front on the phone, which its Accessibility says (the full app): Enter in a chat
+    // app sends (shared/phonechat.js); a11y: the phone clicks Send itself.
+    this.activeApp = '';
+    this.a11y = false;
+    server.on(`t:${T.PHONE_ACTIVE_APP}`, (m) => {
+      if (!m || typeof m.pkg !== 'string') return;
+      this.activeApp = m.pkg.slice(0, 200);
+      this.a11y = true;
+    });
+    server.on('closed', () => {
+      this.activeApp = '';
+      this.a11y = false;
+    });
     server.on(`t:${T.PHONE_AWAKE}`, (m) => this._awake(m));
     // The phone's own Show and Close (its Screen page): its screen in a window here (openScreen
     // decides how: wireless debugging, Wi-Fi first when on Bluetooth, or a popup saying what's
@@ -65,7 +80,7 @@ class PhoneViews extends EventEmitter {
   sound(on) {
     const open = [...this.views.values()].find((v) => v.kind === 'sound');
     if (on && !open && this.bridge.serial) {
-      this._open({ kind: 'sound', title: 'Phone sound', width: 200, height: 100, hidden: true, opts: { video: false, audio: true, control: false, audioSource: 'output' } });
+      this._open({ kind: 'sound', title: this._i18n().t('Phone sound'), titleKey: 'Phone sound', width: 200, height: 100, hidden: true, opts: { video: false, audio: true, control: false, audioSource: 'output' } });
     } else if (!on && open) this.close(open.id);
   }
 
@@ -73,7 +88,7 @@ class PhoneViews extends EventEmitter {
   // hidden window with no adb session, fed what comes through the session.
   netSound(on) {
     const open = [...this.views.values()].find((v) => v.kind === 'netsound');
-    if (on && !open) this._open({ kind: 'netsound', title: 'Phone sound', width: 200, height: 100, hidden: true });
+    if (on && !open) this._open({ kind: 'netsound', title: this._i18n().t('Phone sound'), titleKey: 'Phone sound', width: 200, height: 100, hidden: true });
     else if (!on && open) this.close(open.id);
   }
 
@@ -98,8 +113,9 @@ class PhoneViews extends EventEmitter {
     const work = screen.getPrimaryDisplay().workAreaSize;
     const h = Math.min(860, work.height - 80);
     const w = Math.round(h * Math.min(d.w, d.h) / Math.max(d.w, d.h));
-    const name = (this.server.current && this.server.current.name) || 'Phone';
-    this._open({ kind: 'screen', title: name, width: w, height: h, opts: this.bridge.sessionOpts('screen') });
+    const name = (this.server.current && this.server.current.name) || this._i18n().t('Phone');
+    const titleKey = (this.server.current && this.server.current.name) ? '' : 'Phone';
+    this._open({ kind: 'screen', title: name, titleKey, width: w, height: h, opts: this.bridge.sessionOpts('screen') });
   }
 
   // The phone's camera (Camera's switch, or the phone's Camera page; scrcpy's camera source, Android
@@ -122,8 +138,10 @@ class PhoneViews extends EventEmitter {
       return;
     }
     const facing = want || 'back';
-    const name = ((this.server.current && this.server.current.name) || 'Phone') + ' Camera';
-    const v = this._open({ kind: 'camera', title: name, width: 854, height: 512, opts: this._cameraOpts(facing, opts.size), hidden: !opts.show });
+    const titleName = (this.server.current && this.server.current.name) || '';
+    const titleKey = titleName ? '{name} Camera' : 'Phone Camera';
+    const name = this._i18n().t(titleKey, { name: titleName });
+    const v = this._open({ kind: 'camera', title: name, titleKey, titleName, width: 854, height: 512, opts: this._cameraOpts(facing, opts.size), hidden: !opts.show });
     if (!v) return;
     v.facing = facing;
     this.emit('change'); // with its facing, for the tab and the phone
@@ -237,10 +255,15 @@ class PhoneViews extends EventEmitter {
     return [...this.views.values()].some((v) => v.kind === 'screen' && v.session && v.session.opts.audio);
   }
 
-  _open({ kind, app, title, width, height, opts, hidden = false }) {
+  _i18n() {
+    const settings = this.getSettings();
+    return I18n.create(I18n.resolveLanguage(settings.ui && settings.ui.language, app.getLocale()));
+  }
+
+  _open({ kind, app, title, titleKey = '', titleName = '', width, height, opts, hidden = false }) {
     if (!this.bridge.serial && kind !== 'netsound') {
       // Wireless debugging not up yet (just on Wi-Fi after Bluetooth): main.js opens it once it is.
-      if (this.onNoAdb && this.onNoAdb({ kind, app, title, width, height, opts, hidden })) return;
+      if (this.onNoAdb && this.onNoAdb({ kind, app, title, titleKey, titleName, width, height, opts, hidden })) return;
       return this.bridge.emit('popup', 'home', 'Set up wireless debugging on the Phone page first');
     }
     const id = nextId++;
@@ -251,9 +274,9 @@ class PhoneViews extends EventEmitter {
       // click never comes: without this its AudioContext stays suspended and silent).
       webPreferences: { preload: path.join(__dirname, 'preload-phoneview.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' },
     });
-    const v = { id, kind, app, title, win, session: null, keys: new KeyState(), size: null, ready: false, queue: [] };
+    const v = { id, kind, app, title, win, session: null, keys: new KeyState(), eaten: new Set(), size: null, ready: false, queue: [] };
     this.views.set(id, v);
-    win.loadFile(path.join(__dirname, 'phoneview.html'), { query: { kind, title } });
+    win.loadFile(path.join(__dirname, 'phoneview.html'), { query: { kind, title, titleKey, titleName, language: this._i18n().locale } });
     if (!hidden) win.once('ready-to-show', () => win.show());
     win.webContents.once('did-finish-load', () => {
       v.ready = true;
@@ -280,7 +303,7 @@ class PhoneViews extends EventEmitter {
     this.emit('change');
     if (kind !== 'netsound') this._start(v, opts).catch((e) => {
       console.log(`[phone] ${kind} window: ${e.message}`);
-      this._send(v, 'phoneview:status', { error: e.message });
+      this._send(v, 'phoneview:status', { error: e.message, errorKey: e.messageKey, errorVars: e.messageVars });
     });
     return v;
   }
@@ -302,9 +325,9 @@ class PhoneViews extends EventEmitter {
     });
     s.on('video', (p) => this._send(v, 'phoneview:video', p));
     s.on('audio', (p) => !p.config && this._send(v, 'phoneview:audio', p.data));
-    s.on('closed', (why) => {
+    s.on('closed', (why, metadata) => {
       if (v.session !== s) return; // one a flip replaced
-      this._send(v, 'phoneview:status', { closed: why });
+      this._send(v, 'phoneview:status', { closed: why, closedKey: metadata && metadata.messageKey, closedVars: metadata && metadata.messageVars });
       if (v.kind === 'camera' && why !== 'stopped') {
         v.error = why;
         this.emit('change');
@@ -313,6 +336,45 @@ class PhoneViews extends EventEmitter {
     await s.start();
     if (v.app) setTimeout(() => s.startApp(v.app), 300);
     this._send(v, 'phoneview:status', { ready: true, via });
+    this._send(v, 'phoneview:opts', this._opts(v));
+  }
+
+  // The window's switches as they are now (its controls light up).
+  _opts(v) {
+    const ph = this.getSettings().phone || {};
+    return { enterSends: ph.enterSends !== false, arrowSwipe: ph.arrowSwipe === true, screenOff: !!v.screenOff };
+  }
+
+  // Enter sends / Arrow keys swipe changed (here, or on the Phone page): every window shows it.
+  applyOpts() {
+    for (const v of this.views.values()) if (v.kind !== 'sound' && v.kind !== 'netsound') this._send(v, 'phoneview:opts', this._opts(v));
+  }
+
+  // Enter in a chat app, an arrow that swipes (shared/phonechat.js): done here, the key (and its
+  // release) left out. True when the key was used up.
+  _special(v, code, down) {
+    if (!down) return v.eaten.delete(code);
+    if (v.eaten.has(code)) return true; // held: once
+    const ph = this.getSettings().phone || {};
+    const s = v.session;
+    let done = false;
+    const dir = chat.swipeOf(code, ph.arrowSwipe === true, v.keys.held);
+    if (dir) {
+      this._swipe(v, dir);
+      done = true;
+    } else if (chat.isEnter(code)) {
+      done = chat.enter({
+        on: ph.enterSends !== false,
+        pkg: v.app || this.activeApp,
+        shift: v.keys.held.has('ShiftLeft') || v.keys.held.has('ShiftRight'),
+        a11y: this.a11y,
+        phoneSend: () => this.server.sendToClient({ t: T.PHONE_SEND }),
+        tap: (k) => !s.closed && s.tap(k),
+        text: (t) => s.text(t),
+      });
+    }
+    if (done) v.eaten.add(code);
+    return done;
   }
 
   _input(v, m) {
@@ -328,6 +390,13 @@ class PhoneViews extends EventEmitter {
       ph.panel = ph.panel === false;
       this.bridge.emit('save');
       for (const w of this.views.values()) this._send(w, 'phoneview:opts', { panel: ph.panel });
+      return this.emit('change');
+    }
+    if (m.t === 'toggle' && (m.what === 'enterSends' || m.what === 'arrowSwipe')) {
+      const ph = this.getSettings().phone;
+      ph[m.what] = m.what === 'enterSends' ? ph.enterSends === false : ph.arrowSwipe !== true;
+      this.bridge.emit('save');
+      this.applyOpts();
       return this.emit('change');
     }
     const s = v.session;
@@ -349,7 +418,9 @@ class PhoneViews extends EventEmitter {
       case 'key': {
         if (typeof m.code !== 'string') return;
         const swap = P.keySwapNeeded(P.OS.LINUX, P.OS.ANDROID) && this.getSettings().keys.swapCtrlCmd !== false;
-        const e = v.keys.event(swap ? P.mapKeyFromOtherPlatform(m.code) : m.code, !!m.down);
+        const code = swap ? P.mapKeyFromOtherPlatform(m.code) : m.code;
+        if (this._special(v, code, !!m.down)) break;
+        const e = v.keys.event(code, !!m.down);
         if (e) s.key(m.down ? ACTION.DOWN : ACTION.UP, e.keycode, e.meta, m.repeat ? 1 : 0);
         break;
       }
@@ -358,6 +429,12 @@ class PhoneViews extends EventEmitter {
         if (m.key === 'back') { s.backOrScreenOn(ACTION.DOWN); s.backOrScreenOn(ACTION.UP); } else if (k) s.tap(k);
         if (m.key === 'notifications') s.simple(TYPE.EXPAND_NOTIFICATIONS);
         if (m.key === 'rotate') s.simple(TYPE.ROTATE);
+        // The phone's own screen off, its picture still here (scrcpy's display power).
+        if (m.key === 'screenPower' && v.kind === 'screen') {
+          v.screenOff = !v.screenOff;
+          s.setDisplayPower(!v.screenOff);
+          this._send(v, 'phoneview:opts', { screenOff: v.screenOff });
+        }
         break;
       }
       case 'resetVideo': // the window skipped frames: a keyframe now
@@ -380,8 +457,107 @@ class PhoneViews extends EventEmitter {
       case 'resize': // an app window changed size: its virtual display follows (flex)
         if (v.kind === 'app' && m.w > 50 && m.h > 50) s.resizeDisplay(Math.round(m.w), Math.round(m.h));
         break;
+      case 'swipe':
+        if (typeof m.dir === 'string') this._swipe(v, m.dir);
+        break;
       default: break;
     }
+  }
+
+  _swipe(v, dir) {
+    const s = v.session;
+    const size = v.size;
+    if (!s || s.closed || !size) return;
+    if (v.swiping) {
+      // Buffer at most 1 subsequent swipe so rapid taps are never dropped
+      v.pendingSwipe = dir;
+      return;
+    }
+    v.swiping = true;
+
+    const w = size.width;
+    const h = size.height;
+    let startX, startY, endX, endY;
+
+    // Inverted directional swipe for natural navigation:
+    // ArrowDown -> content moves down (finger swipes UP from bottom to top)
+    // ArrowUp -> content moves up (finger swipes DOWN from top to bottom)
+    // ArrowRight -> content moves right (finger swipes LEFT from right to left)
+    // ArrowLeft -> content moves left (finger swipes RIGHT from left to right)
+    switch (dir) {
+      case 'down':
+        startX = Math.round(w * 0.5);
+        startY = Math.round(h * 0.78);
+        endX = Math.round(w * 0.5);
+        endY = Math.round(h * 0.22);
+        break;
+      case 'up':
+        startX = Math.round(w * 0.5);
+        startY = Math.round(h * 0.22);
+        endX = Math.round(w * 0.5);
+        endY = Math.round(h * 0.78);
+        break;
+      case 'right':
+        startX = Math.round(w * 0.82);
+        startY = Math.round(h * 0.5);
+        endX = Math.round(w * 0.18);
+        endY = Math.round(h * 0.5);
+        break;
+      case 'left':
+        startX = Math.round(w * 0.18);
+        startY = Math.round(h * 0.5);
+        endX = Math.round(w * 0.82);
+        endY = Math.round(h * 0.5);
+        break;
+      default:
+        v.swiping = false;
+        return;
+    }
+
+    const duration = 160; // ms: natural flick duration
+    const startTime = Date.now();
+    const dx = endX - startX;
+    const dy = endY - startY;
+
+    // Send touch down directly over control socket (pointer: -2 = FINGER)
+    s.touch(ACTION.DOWN, -2, startX, startY, w, h, 1, 0, 0);
+
+    const timer = setInterval(() => {
+      if (s.closed) {
+        clearInterval(timer);
+        v.swiping = false;
+        v.swipeTimer = null;
+        v.pendingSwipe = null;
+        return;
+      }
+
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(1, elapsed / duration);
+
+      if (progress < 1) {
+        // Mild ease-in curve (t^1.15): starts cleanly without jerk and maintains brisk velocity
+        // right through release (ACTION.UP), ensuring Android's VelocityTracker detects a
+        // natural fling and triggers a smooth inertia scroll.
+        const ease = Math.pow(progress, 1.15);
+        const curX = Math.round(startX + dx * ease);
+        const curY = Math.round(startY + dy * ease);
+        s.touch(ACTION.MOVE, -2, curX, curY, w, h, 1, 0, 0);
+      } else {
+        clearInterval(timer);
+        v.swipeTimer = null;
+        // Liftoff at terminal position with authentic release velocity
+        s.touch(ACTION.UP, -2, endX, endY, w, h, 0, 0, 0);
+        setTimeout(() => {
+          v.swiping = false;
+          if (v.pendingSwipe) {
+            const next = v.pendingSwipe;
+            v.pendingSwipe = null;
+            this._swipe(v, next);
+          }
+        }, 30);
+      }
+    }, 10);
+    v.swipeTimer = timer;
   }
 
   shutdown() {

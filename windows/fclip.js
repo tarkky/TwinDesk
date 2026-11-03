@@ -26,6 +26,8 @@ class FileClip {
     this.incoming = null; // theirs: {id, items, files, bytes, at}
     this.pasting = null; // {id, files}
     this.error = '';
+    this.copySequence = 0;
+    this.pastePending = null;
     this.held = new Set(); // modifiers held while driving (intercept)
     this.eaten = new Set(); // shortcut keys whose release isn't sent
 
@@ -41,7 +43,7 @@ class FileClip {
       if (this.incoming && this.incoming.id === m.id) this.incoming = null;
       if (this.pasting && this.pasting.id === m.id) {
         this.pasting = null;
-        this.popup('home', 'Those files aren’t there any more');
+        this.popup('home', { key: 'Those files aren’t there any more' });
       }
       this.onChange();
     });
@@ -53,8 +55,11 @@ class FileClip {
       else if (m.action === 'paste') this.paste();
     });
     link.on('closed', () => {
+      ++this.copySequence;
+      this.offer = null;
       this.incoming = null;
       this.pasting = null;
+      this.pastePending = null;
       this.onChange();
     });
     this.apply();
@@ -71,12 +76,13 @@ class FileClip {
   // The paste batch landed (filerecv.js onBatch). For an app: into it, as files on the clipboard.
   pasted(b) {
     const p = this.pasting;
+    if (!p || b.batch !== p.id) return;
     this.pasting = null;
-    const done = b.ok ? 'Pasted ' + plural(b.files, 'file') : 'Pasted ' + b.files + ' of ' + b.count + ' files';
+    const done = { key: b.ok ? (b.files === 1 ? 'Pasted {count} file' : 'Pasted {count} files') : 'Pasted {count} of {total} files', vars: { count: b.files, ...(b.ok ? {} : { total: b.count }) } };
     if (p && p.into && b.files && b.placed && b.placed.length) {
       this.helper.request('pasteFiles', { paths: b.placed, hwnd: p.into.hwnd })
-        .then(() => this.popup('home', done + (p.into.title ? ' into ' + short(p.into.title) : '')))
-        .catch(() => this.popup('home', done + ': they’re on the clipboard, paste them with Ctrl+V'));
+        .then(() => this.popup('home', p.into.title ? { key: '{result} into {title}', vars: { result: done, title: short(p.into.title) } } : done))
+        .catch(() => this.popup('home', { key: '{result}: they’re on the clipboard, paste them with {keys}', vars: { result: done, keys: 'Ctrl+V' } }));
     } else {
       this.popup('home', done);
     }
@@ -153,33 +159,40 @@ class FileClip {
   }
 
   async copy() {
-    if (!this.connected) return this.popup('home', 'Not connected');
+    if (!this.connected) return this.popup('home', { key: 'Not connected' });
+    const sequence = ++this.copySequence;
     let paths = [];
     try {
       const src = await this.helper.request('fileSource');
       paths = src.explorer && src.selection.length ? src.selection : src.files || [];
     } catch (_) { /* no helper: nothing to copy */ }
+    if (!this.connected || sequence !== this.copySequence) return;
     paths = paths.filter((p) => typeof p === 'string' && fs.existsSync(p));
-    if (!paths.length) return this.popup('home', 'Select files in File Explorer first');
+    if (!paths.length) return this.popup('home', { key: 'Select files in File Explorer first' });
     const plan = this.fileDrop.plan(paths);
-    if (!plan || !plan.jobs.length) return this.popup('home', 'Nothing to copy there');
+    if (!plan || !plan.jobs.length) return this.popup('home', { key: 'Nothing to copy there' });
     if (this.offer) this.link.send({ t: T.FCLIP_GONE, id: this.offer.id }); // newest copy wins
     const files = plan.jobs.length;
     this.offer = { id: crypto.randomUUID(), paths, items: plan.items, files, bytes: plan.bytes };
     // list/dirs: every file and folder, so a PC can paste it with Windows' own copy.
     this.link.send({ t: T.FCLIP_OFFER, id: this.offer.id, items: plan.items, files, bytes: plan.bytes, list: plan.list, dirs: plan.dirs });
-    this.popup('away', 'Copied ' + (plan.items.length === 1 ? plan.items[0].name : plural(plan.items.length, 'item')) + ' for ' + this.peerName());
+    this.popup('away', { key: 'Copied {item} for {name}', vars: { item: plan.items.length === 1 ? plan.items[0].name : { key: '{count} items', vars: { count: plan.items.length } }, name: this.peerName() } });
     this.onChange();
   }
 
   async paste() {
     const inc = this.incoming;
-    if (!this.connected) return this.popup('home', 'Not connected');
-    if (!inc) return this.popup('home', 'Nothing copied on ' + this.peerName());
+    if (!this.connected) return this.popup('home', { key: 'Not connected' });
+    if (!inc) return this.popup('home', { key: 'Nothing copied on {name}', vars: { name: this.peerName() } });
+    if (this.pasting || this.pastePending) return;
+    const pending = this.pastePending = {};
     let front = {};
     try {
       front = (await this.helper.request('frontFolder')) || {};
     } catch (_) { /* Desktop */ }
+    if (this.pastePending !== pending) return;
+    this.pastePending = null;
+    if (!this.connected || this.incoming !== inc) return;
     let dir = front.path || '';
     // An app in front (not File Explorer, the desktop or TwinDesk itself): the files go into it.
     const into = !dir && front.app && front.pid !== process.pid ? { hwnd: front.hwnd, title: String(front.title || '') } : null;
@@ -190,7 +203,7 @@ class FileClip {
     if (!native) this.fileRecv.expectBatch(inc.id, dir, inc.bytes, !!into);
     this.pasting = { id: inc.id, files: inc.files, into };
     this.link.send({ t: T.FCLIP_PASTE, id: inc.id });
-    if (!native) this.popup('driven', 'Pasting ' + plural(inc.files, 'file') + (into && into.title ? ' into ' + short(into.title) : '') + '…');
+    if (!native) this.popup('driven', { key: into && into.title ? (inc.files === 1 ? 'Pasting {count} file into {title}…' : 'Pasting {count} files into {title}…') : inc.files === 1 ? 'Pasting {count} file…' : 'Pasting {count} files…', vars: { count: inc.files, title: into && into.title ? short(into.title) : '' } });
     this.onChange();
   }
 
@@ -203,10 +216,9 @@ class FileClip {
         if (Date.now() - fs.statSync(p).mtimeMs > PASTE_KEEP_MS) fs.rmSync(p, { recursive: true, force: true });
       }
     } catch (_) { /* none yet */ }
-    const dir = path.join(root, String(Date.now()));
     try {
-      fs.mkdirSync(dir, { recursive: true });
-      return dir;
+      fs.mkdirSync(root, { recursive: true });
+      return fs.mkdtempSync(path.join(root, 'paste-'));
     } catch (_) {
       return '';
     }
@@ -214,6 +226,7 @@ class FileClip {
 
   // The other side pasted: send our copied files (or say they're gone).
   _send(id) {
+    if (this.fileDrop.batches.has(id)) return; // a repeated shortcut while this copy is already going
     const o = this.offer;
     const there = o && o.id === id ? o.paths.filter((p) => fs.existsSync(p)) : [];
     if (!there.length || !this.fileDrop.sendBatch(there, 'paste', id)) this.link.send({ t: T.FCLIP_GONE, id });
@@ -239,9 +252,6 @@ function short(title) {
   return t.length > 40 ? t.slice(0, 39) + '…' : t;
 }
 
-function plural(n, word) {
-  return n + ' ' + word + (n === 1 ? '' : 's');
-}
 
 // "Control+Alt+C" → "Ctrl+Alt+C".
 function keysLabel(acc) {

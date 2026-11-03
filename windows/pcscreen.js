@@ -8,11 +8,12 @@
 // while it is false. A peer that never sends one (an older app) counts as watching, after a moment
 // for its first policy to arrive. We tell the viewer what we share (`screen.state`) and, when
 // "Let <peer> start and switch this screen" is on (pcScreen.remote), obey its `screen.ctl`.
-const { desktopCapturer, screen: displays } = require('electron');
+const { desktopCapturer, powerMonitor, screen: displays } = require('electron');
 const P = require('../shared/protocol.js');
 const RemoteInput = require('./remote-input');
 
 const T = P.T;
+const RETRY_MS = 2000; // a capture that ended by itself (the desktop locked): tried again, doubling up to 30 s
 
 class PcScreen {
   // opts: link, helper, sender, vdd, settings (shared), inputAllowed() (KVM at home), onChange()
@@ -24,6 +25,10 @@ class PcScreen {
     this.status = { status: 'off', error: '', name: '', width: 0, height: 0 };
     this.input = new RemoteInput(opts);
     this.busy = false;
+    this.revision = 0;
+    this.retries = 0;
+    this.retryTimer = null;
+    this.modeRequest = 0;
     this.lastMode = 'mirror'; // what screen.ctl {share:true} starts (the last mode used)
     this.stateKey = ''; // the last screen.state sent on this connection
 
@@ -37,7 +42,7 @@ class PcScreen {
       }, 1500);
       this.apply();
     });
-    link.on('closed', () => { clearTimeout(this.policyTimer); this.mac.accept = false; this.stateKey = ''; this.apply(); });
+    link.on('closed', () => { ++this.modeRequest; clearTimeout(this.policyTimer); this.mac.accept = false; this.stateKey = ''; this.apply(); });
     // The session moved (Bluetooth -> a Wi-Fi Direct link, or back): a session offered on the old path
     // never connects on the new one; the transport is part of the key, so apply() starts again.
     link.on('transport', () => this.apply());
@@ -56,8 +61,9 @@ class PcScreen {
 
     this.sender.on('state', (session, s) => {
       if (!this.sending || session !== this.sending.session) return;
+      if (s.status === 'ended' || s.status === 'failed') { this._stopSend(true); this._retryLater(); }
+      if (s.status === 'live') { this.retries = 0; if (this.retryTimer) clearTimeout(this.retryTimer); }
       Object.assign(this.status, s);
-      if (s.status === 'ended' || s.status === 'failed') this._stopSend(true); // apply() retries on the next change
       this.onChange();
     });
     this.sender.on('stats', (session, st) => {
@@ -67,14 +73,36 @@ class PcScreen {
     });
     // A monitor came or went (or changed size): the shared one may be different now.
     for (const ev of ['display-added', 'display-removed', 'display-metrics-changed']) displays.on(ev, () => this.apply());
+    // Win+L hands the desktop to the logon screen, which can't be captured: the picture ends there and
+    // nothing else changes when it's unlocked (#81). Unlocked or awake: at once, and again a moment
+    // later (the desktop may not be capturable yet).
+    for (const ev of ['unlock-screen', 'resume']) powerMonitor.on(ev, () => { this.retries = 0; this.apply(); this._retryLater(); });
+  }
+
+  // The capture ended by itself: try again while it's still wanted.
+  _retryLater() {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    if (!this._wanted()) return;
+    const ms = Math.min(30000, RETRY_MS * 2 ** Math.min(this.retries++, 4));
+    this.retryTimer = setTimeout(() => { if (!this.sending) this.apply(); }, ms);
   }
 
   get cfg() {
     return this.settings.pcScreen;
   }
 
-  async setMode(mode) {
-    if (!['off', 'mirror', 'extend'].includes(mode) || this.busy) return;
+  async setMode(mode, prepare) {
+    if (!['off', 'mirror', 'extend'].includes(mode)) return;
+    const request = ++this.modeRequest;
+    if (prepare && (!(await prepare()) || request !== this.modeRequest)) return;
+    if (this.busy) {
+      if (mode === 'off') {
+        this.mode = 'off';
+        this._stopSend(true);
+        this.apply();
+      }
+      return;
+    }
     if (mode === 'extend' && !this.vdd.state.installed) mode = 'mirror'; // no virtual display driver
     const was = this.mode;
     if (mode !== 'off') this.lastMode = mode;
@@ -89,16 +117,20 @@ class PcScreen {
         const [w, h] = size;
         this.vdd.addMode(w, h);
         const mon = await this.vdd.setOn(true);
-        if (mon && mon.name) await this.vdd.setMode(mon, w, h);
-        if (!mon) this.mode = 'off';
+        if (this.mode === 'extend' && mon && mon.name) await this.vdd.setMode(mon, w, h);
+        if (!mon && this.mode === 'extend') this.mode = 'off';
+      } catch (e) {
+        this.mode = 'off';
+        this.status.error = 'Starting Extend: ' + e.message;
       } finally {
+        if (this.mode !== 'extend') await this.vdd.setOn(false).catch(() => {});
         this.busy = false;
       }
       // The viewer told its size meanwhile (sizeExtend doesn't wait while busy): that size now.
       if (this.mode === 'extend' && String(this._extendSize()) !== String(size)) return this.sizeExtend();
     } else if (was === 'extend' && mode !== 'extend') {
       this._stopSend(true);
-      this.vdd.setOn(false);
+      await this.vdd.setOn(false).catch((e) => { this.status.error = e.message; });
     }
     this.apply();
   }
@@ -106,8 +138,8 @@ class PcScreen {
   // The virtual monitor's size: chosen, or what the Mac asks for (else 1920 × 1080).
   _extendSize() {
     const m = /^(\d+)x(\d+)$/.exec(this.cfg.extendSize);
-    if (m) return [Number(m[1]), Number(m[2])];
-    if (!this.mac.width) return [1920, 1080];
+    if (m && Number(m[1]) >= 320 && Number(m[2]) >= 320 && Number(m[1]) <= 7680 && Number(m[2]) <= 7680) return [Number(m[1]), Number(m[2])];
+    if (!this.mac.width || !this.mac.height) return [1920, 1080];
     // A phone tells its pixels: a monitor half that size, so text is readable there (the Mac's
     // Extend for a phone has the same size in points).
     // Windows takes no monitor with a side under 640 × 480 (a portrait phone's half is ~540 wide):
@@ -131,12 +163,19 @@ class PcScreen {
       if (this.vdd.addMode(w, h)) {
         this._stopSend(true);
         await this.vdd.setOn(false);
+        if (this.mode !== 'extend') return;
         await this.vdd.setOn(true);
       }
+      if (this.mode !== 'extend') return;
       const mon = await this.vdd.find().catch(() => null);
-      if (mon) await this.vdd.setMode(mon, w, h);
+      if (mon && this.mode === 'extend') await this.vdd.setMode(mon, w, h);
+    } catch (e) {
+      this.mode = 'off';
+      this.status.error = 'Resizing Extend: ' + e.message;
     } finally {
+      if (this.mode !== 'extend') await this.vdd.setOn(false).catch(() => {});
       this.busy = false;
+      if (this.mode !== 'extend') this.apply();
     }
     if (this.mode === 'extend' && String(this._extendSize()) !== String(size)) return this.sizeExtend(); // changed again meanwhile
     this.apply();
@@ -162,12 +201,22 @@ class PcScreen {
 
   // After welcome, a policy, a settings or display change.
   async apply() {
+    ++this.revision;
+    if (!this._wanted()) this._stopSend(this.link.status.state === 'connected');
     if (this.applying) { this.again = true; return; }
     this.applying = true;
     try {
       do {
         this.again = false;
-        await this._applyOnce();
+        const revision = this.revision;
+        try {
+          await this._applyOnce(revision);
+        } catch (e) {
+          if (revision === this.revision) {
+            this._stopSend(true);
+            Object.assign(this.status, { status: 'failed', error: 'Capturing: ' + e.message });
+          }
+        }
       } while (this.again);
     } finally {
       this.applying = false;
@@ -175,13 +224,19 @@ class PcScreen {
     this.onChange();
   }
 
-  async _applyOnce() {
+  _wanted() {
+    return this.link.status.state === 'connected' && this.mode !== 'off' && !this.busy && this.mac.accept &&
+      (!this.link.current || this.link.current.transport !== 'ble');
+  }
+
+  async _applyOnce(revision) {
     const connected = this.link.status.state === 'connected';
     // Bluetooth can't carry the picture: it starts once the session is on Wi-Fi (netlink.js).
     const transport = (this.link.current && this.link.current.transport) || 'ip';
     const want = connected && this.mode !== 'off' && !this.busy && this.mac.accept && transport !== 'ble';
     if (!want) return this._stopSend(connected);
     const d = await this._target();
+    if (revision !== this.revision || !this._wanted()) return;
     if (!d) return this._stopSend(true);
     const rect = displays.dipToScreenRect(null, d.bounds);
     const [width, height] = this._streamSize(rect);
@@ -189,6 +244,7 @@ class PcScreen {
     const key = [d.id, rect.x, rect.y, rect.width, rect.height, width, this.cfg.mbps, this.cfg.sound, fps, transport].join(',');
     if (this.sending && this.sending.key === key) return;
     const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+    if (revision !== this.revision || !this._wanted()) return;
     const src = sources.find((s) => s.display_id === String(d.id));
     if (!src) {
       this.status.error = 'Windows didn’t offer that monitor for capture';
@@ -278,8 +334,13 @@ class PcScreen {
 
   // Sharing ends with the app; the virtual monitor too.
   shutdown() {
+    const extended = this.mode === 'extend' || this.busy;
+    this.mode = 'off';
+    ++this.modeRequest;
+    ++this.revision;
+    clearTimeout(this.policyTimer);
     this._stopSend(true);
-    if (this.mode === 'extend') this.vdd.setOn(false);
+    if (extended && !this.busy) this.vdd.setOn(false).catch(() => {});
   }
 
   view() {
