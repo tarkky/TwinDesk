@@ -7,7 +7,7 @@ UI.tab({
   hidden: (s) => UI.isPhone(s), // the Phone page has the phone's screen, sound and apps
   group: 'More',
   order: 80,
-  title: I18n.t('Apps and Windows'),
+  title: I18n.t('Apps'),
   desc: I18n.t('Open apps from the other computer in their own windows.'),
   color: 'linear-gradient(#bf5af2, #5e5ce6)',
   master: { get: (s) => !!((s.apps && s.apps.offer) || (s.papps && s.papps.on)), set: (v) => { UI.api.setApps({ offer: v }); UI.api.setPcApps({ on: v }); } },
@@ -17,6 +17,9 @@ UI.tab({
     const offerSw = UI.switch((v) => api.setApps({ offer: v }), { label: I18n.t('Share apps') });
     const offerRow = UI.row(I18n.t('Open {me}’s apps on {name}'), '', [offerSw]);
     const usage = UI.row(I18n.t('Open there now'), '');
+    // apps.onVirtual (apps.js _holdVirtual): off by default, apps open on the shared screen as before.
+    const vdSw = UI.switch((v) => api.setApps({ onVirtual: v }), { label: I18n.t('Open on a virtual display') });
+    const vdRow = UI.row(I18n.t('Open on a virtual display'), I18n.t('Apps open on their own virtual display, in Mirror mode too. Off: they open on the shared screen, as before'), [vdSw]);
     const pcSw = UI.switch((v) => api.setPcApps({ on: v }), { label: I18n.t('Show apps here') });
     const pcRow = UI.row(I18n.t('Open {name}’s apps on {me}'), '', [pcSw], { literalHint: true });
     const pcUsage = UI.row(I18n.t('Open here now'), '');
@@ -54,8 +57,9 @@ UI.tab({
     }
     // Move windows (movewin.js): the key held, a window clicked and dragged past the shared edge moves
     // to the other computer (and back the same way). Off: nothing of it is loaded.
-    const MOVE_KEYS = [['ControlRight', I18n.t('Right Control')], ['ControlLeft', I18n.t('Left Control')], ['AltRight', I18n.t('Right Option')], ['AltLeft', I18n.t('Left Option')],
-      ['MetaRight', I18n.t('Right Command')], ['MetaLeft', I18n.t('Left Command')], ['ShiftRight', I18n.t('Right Shift')], ['ShiftLeft', I18n.t('Left Shift')]];
+    // Right Command first: most Mac keyboards have no Right Control.
+    const MOVE_KEYS = [['MetaRight', I18n.t('Right Command')], ['AltRight', I18n.t('Right Option')], ['ControlRight', I18n.t('Right Control')], ['ControlLeft', I18n.t('Left Control')],
+      ['AltLeft', I18n.t('Left Option')], ['MetaLeft', I18n.t('Left Command')], ['ShiftRight', I18n.t('Right Shift')], ['ShiftLeft', I18n.t('Left Shift')]];
     const moveSw = UI.switch((v) => api.setApps({ moveWindows: v }), { label: I18n.t('Move windows') });
     const moveKey = UI.select(MOVE_KEYS.map(([value, label]) => ({ value, label })), (v) => api.setApps({ moveKey: v }));
     const moveRow = UI.row(I18n.t('Move windows to {name}'), I18n.t('Drag a window past the edge with the key held: it opens on {name} and leaves this screen. Drag it back or close it there to bring it home'), [moveSw]);
@@ -66,6 +70,7 @@ UI.tab({
       UI.pair(
         UI.dir('m2w', [
           offerRow,
+          vdRow,
           usage,
         ]),
         UI.dir('w2m', [pcRow, pcUsage]),
@@ -79,8 +84,10 @@ UI.tab({
       const a = s.apps;
       if (!a) return;
       offerSw.set(a.offer);
+      vdSw.set(!!a.onVirtual);
+      vdRow.hidden = !a.offer;
       moveSw.set(!!a.moveWindows);
-      moveKey.set(a.moveKey || 'ControlRight');
+      moveKey.set(a.moveKey || 'MetaRight');
       moveKeyRow.hidden = !a.moveWindows;
       moveRow.setHint(a.moveWindows && !s.permissions.accessibility ? I18n.t('Needs Accessibility (General)') : I18n.t('Drag a window past the edge with the key held: it opens on {name} and leaves this screen. Drag it back or close it there to bring it home'));
       offerRow.setHint(!a.offer ? ''

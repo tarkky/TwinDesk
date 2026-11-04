@@ -10,6 +10,7 @@
 // helper's uinput backend); L7 packages (package.json "build"); L8 the shared folder (Samba + GVFS),
 // copy/paste of files with shortcuts, file drags across the edge, the file managers' Send to, and
 // Extend (a virtual monitor from Mutter on Wayland, a spare output on X11).
+const { lanType } = require('../../shared/lantype.js'); // Wi-Fi or Ethernet for Overview (#140)
 const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, Notification } = require('electron');
 const { Updates } = require('../../shared/updates.js');
 const { aboutInfo } = require('../../shared/about.js');
@@ -186,7 +187,7 @@ function start() {
   // Overview's controls of the selected device (a computer or a phone), and this computer's for it.
   const { DevCtl } = require('../../shared/devctl.js');
   const { DevLocal } = require('../../shared/devlocal.js');
-  devctl = new DevCtl({ link, local: new DevLocal(), adb: () => {
+  devctl = new DevCtl({ link, local: new DevLocal(), version: app.getVersion(), adb: () => {
     const br = phone && phone.bridge;
     return br && br.state === 'ready' && br.serial ? { adb: br.adb, serial: br.serial } : null;
   } });
@@ -323,7 +324,7 @@ function start() {
   screen.apps = apps;
   pcApps = new PcApps({ link, helper, sender, settings, inputAllowed: () => kvm.mode === 'home', onChange: pushState });
   peerApps = new PeerApps({ link, settings, popup: (kind, text) => hud.show(kind, text), peerName, onChange: pushState });
-  // Apps and Windows › Move windows: a window grabbed with the move key crossed with the pointer. A
+  // Apps › Move windows: a window grabbed with the move key crossed with the pointer. A
   // copy of the other computer's window goes home there (peerapps.js); one of this PC's goes over (pcapps.js).
   kvm.onMoveWindow = (m, to) => {
     const wid = Number(m.moving);
@@ -949,7 +950,7 @@ function buildState() {
     mount: { ...(phoneDrive ? phoneDrive.view : {}), on: settings.mount.on },
     // Calls, Messages and Photos: the settings alone until the hub is loaded (setupHub).
     hub: phoneHub ? phoneHub.view : { ...settings.hub, connected: false },
-    net: { ...(net ? net.view : {}), ...hotspotView(), side: wifi ? wifi.side : null, location: false, ble: settings.net.ble, blePc: false, bleWifiOff: settings.net.bleWifiOff, bleOff, radio: bleHost ? bleHost.radio : bleGuest ? bleGuest.state : 'off', transport: link.current ? link.current.transport : '' },
+    net: { ...(net ? net.view : {}), ...hotspotView(), side: wifi ? wifi.side : null, location: false, ble: settings.net.ble, blePc: false, bleWifiOff: settings.net.bleWifiOff, bleOff, radio: bleHost ? bleHost.radio : bleGuest ? bleGuest.state : 'off', transport: link.current ? link.current.transport : '', lan: lanType(link.current && link.current.address) },
   };
 }
 
@@ -1074,7 +1075,7 @@ function changeLanguage() {
     if (!player.isDestroyed()) player.webContents.send('ui-language', i18n.locale);
   }
   trayKey = '';
-  updateTray();
+  updateTray(buildState());
   if (mainWin && !mainWin.isDestroyed()) {
     mainWin.loadFile(path.join(__dirname, 'app.html'), { query: { language: i18n.locale } });
   }
@@ -1120,11 +1121,15 @@ function createTray() {
 }
 
 // The tray menu, by kind (shared/traymenu.js) like the PC's. Rebuilt when what it shows
-// changes (some Linux trays only take a new menu, not changes to the old one).
+// changes (some Linux trays only take a new menu, not changes to the old one). A new menu redraws
+// an open one (GNOME's top bar flickered, #100), so nothing that changes by itself is in it: the
+// round trip (ms) is only in the tooltip, and that too is set only when it changes.
 let trayKey = '';
+let trayTip = '';
 function updateTray(s) {
   if (!tray) return;
-  tray.setToolTip('TwinDesk: ' + statusLine(s));
+  const tip = 'TwinDesk: ' + statusLine(s);
+  if (tip !== trayTip) { trayTip = tip; tray.setToolTip(tip); }
   const connected = s.link.state === 'connected';
   const name = connected && s.peer ? s.peer.name : '';
   const k = settings.kvm;
@@ -1132,10 +1137,9 @@ function updateTray(s) {
   const sharing = s.pcScreen.mode !== 'off';
   const watching = screen.sentAccept === true;
   const found = s.found.filter((d) => !s.peer || d.id !== s.peer.id);
-  const rtt = connected && s.link.rtt != null ? ' · ' + s.link.rtt + ' ms' : '';
   const host = s.paired && s.paired.macName;
   const again = !connected && host && (s.link.state === 'stopped' || !!s.link.busy);
-  const key = JSON.stringify([name, rtt, again, away, pcApps ? pcApps.moved.size : 0, kvm.linked, kvm.paused, kvm.locked, kvm.mode, settings.keys.lockKeys, sharing, watching, k.driveOther, k.beDriven, settings.clipboard.enabled,
+  const key = JSON.stringify([name, again, away, pcApps ? pcApps.moved.size : 0, kvm.linked, kvm.paused, kvm.locked, kvm.mode, settings.keys.lockKeys, sharing, watching, k.driveOther, k.beDriven, settings.clipboard.enabled,
     settings.audio.send, settings.app.hud, k.keyboard, settings.files.edgeDrag, settings.files.shortcuts, settings.files.copyKeys, found.map((d) => [d.id, d.name, d.os]), s.updates && s.updates.available && s.updates.latest]);
   if (key === trayKey) return;
   trayKey = key;
@@ -1150,7 +1154,7 @@ function updateTray(s) {
   tray.setContextMenu(Menu.buildFromTemplate(trayMenu.template({
     t,
     connected,
-    status: connected ? t('Connected to {name}', { name }) + rtt : t('Not connected'),
+    status: connected ? t('Connected to {name}', { name }) : t('Not connected'),
     home: away ? () => kvm.home() : null,
     windowsBack: pcApps && pcApps.moved.size ? { label: t(pcApps.moved.size === 1 ? 'Bring the Window Back from {name}' : 'Bring {count} Windows Back from {name}', { count: pcApps.moved.size, name: other }), click: () => pcApps.bringBack() } : null,
     shared: { checked: kvm.linked && !kvm.paused, set: (on) => kvm.setShared(on) },

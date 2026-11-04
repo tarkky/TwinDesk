@@ -271,7 +271,7 @@ namespace MacShare
             PostMessage(Handle(wid), WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
         }
 
-        // ---- moving a window to another computer (pcapps.js, Apps and Windows › Move windows) ----
+        // ---- moving a window to another computer (pcapps.js, Apps › Move windows) ----
         // The move key held (Right Ctrl unless another is chosen), a click on a window grabs it: the
         // click never reaches the app, and the window follows the pointer until the button is let go.
         // If the pointer crosses to another computer meanwhile, the window goes with it (the edge or
@@ -287,6 +287,7 @@ namespace MacShare
         public static string MoveKeyName = "";
         static IntPtr grab = IntPtr.Zero; // the window that follows the pointer
         static int grabDx, grabDy; // the pointer's place in it
+        static int fromX, fromY; // its visible frame's top left when it was grabbed (where it goes back to)
         static bool grabUp; // the left button's release is swallowed (its press was)
         static readonly uint ownPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
 
@@ -330,8 +331,19 @@ namespace MacShare
                 grabDx = x - r.left;
                 grabDy = y - r.top;
             }
+            RECT vis;
+            if (!Frame(h, out vis)) vis = r;
+            fromX = vis.left;
+            fromY = vis.top;
             grab = h;
             grabUp = true;
+            // A Windows key held for it (a Mac's Command): an unassigned key tapped now keeps its
+            // release from opening Start.
+            if ((Native.GetAsyncKeyState(0x5B) & 0x8000) != 0 || (Native.GetAsyncKeyState(0x5C) & 0x8000) != 0)
+            {
+                keybd_event(0xE8, 0, 0, Native.MARK);
+                keybd_event(0xE8, 0, 2, Native.MARK);
+            }
             SetForegroundWindow(h);
             GrabMove(x, y);
             return true;
@@ -361,6 +373,8 @@ namespace MacShare
         {
             if (grab == IntPtr.Zero) return;
             d["moving"] = grab.ToInt64();
+            d["fromX"] = fromX; // where it was grabbed: it comes back there, not to the edge it crossed at
+            d["fromY"] = fromY;
             grab = IntPtr.Zero;
             if (!keepUp) grabUp = false;
         }
@@ -378,6 +392,12 @@ namespace MacShare
             if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
             Rectangle vs = System.Windows.Forms.SystemInformation.VirtualScreen;
             SetWindowPos(h, IntPtr.Zero, vs.Right + 200, vs.Top + 40, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            // Some apps put themselves back on a screen: say so (the log shows which one).
+            RECT r;
+            if (GetWindowRect(h, out r) && r.left < vs.Right)
+            {
+                try { Console.Error.WriteLine("[move] window " + h.ToInt64() + " (" + Text(h, true) + ") stayed on a screen at " + r.left + "," + r.top); } catch (Exception) { }
+            }
         }
 
         // Back with its visible frame's top left at x, y (physical px, as List gives them), in front.

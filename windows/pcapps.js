@@ -139,12 +139,14 @@ class PcApps {
     if (any) this._poll(true);
   }
 
-  // A window ReZume sent, closed there: only its copy goes (the window stays open here).
+  // A window ReZume sent, closed there: only its copy goes. The window stays open here and comes
+  // back to the front (it never left this screen).
   _unfollow(wid) {
     const w = this.windows.find((x) => x.wid === wid);
     const a = w && this.launched.get(w.id);
     if (!a || !a.rz) return false;
     a.skip.add(wid);
+    this._raise(wid);
     this._poll(true);
     return true;
   }
@@ -170,9 +172,9 @@ class PcApps {
 
   // Move windows (shared/movewin.js, loaded only when used): a grabbed window crossed with the
   // pointer goes over there; bringBack returns one or all of them.
-  moveOut(wid) {
+  moveOut(wid, from) {
     if (!this.settings.pcApps.moveWindows) return Promise.resolve(false);
-    return require('../shared/movewin.js').moveOut(this, wid);
+    return require('../shared/movewin.js').moveOut(this, wid, from);
   }
 
   bringBack(wid, home = false) {
@@ -387,8 +389,12 @@ class PcApps {
   _input(m) {
     if (m.wid == null || !this.streams.has(m.wid)) return;
     const wid = m.wid;
+    // A moved window (or its pop-up): back on a screen while it's used there, so the pointer reaches it.
+    const pop = this.windows.find((w) => w.wid === wid && w.popup);
+    const moved = this.moved.has(wid) ? wid : pop && this.moved.has(pop.owner) ? pop.owner : 0;
+    if (moved) require('../shared/movewin.js').touch(this, moved);
     // A pop-up is never raised (that would close a menu); its owner is already in front.
-    this.input.handle(m, (x, y) => this.helper.send('winMove', { wid, x, y }), this._popup(wid) ? null : () => this._raise(wid));
+    this.input.handle(m, (x, y) => this.helper.send('winMove', { wid, x, y }), this._popup(wid) ? null : () => this._raise(wid), undefined, !!moved);
   }
 
   // Quit: stop the window streams (the apps keep running on the PC).

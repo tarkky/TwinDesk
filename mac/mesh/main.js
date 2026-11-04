@@ -38,6 +38,7 @@
 // }
 'use strict';
 
+const { lanType } = require('../../shared/lantype.js'); // Wi-Fi or Ethernet for Overview (#140)
 const path = require('path');
 const { app, BrowserWindow, Tray, Menu, nativeImage, systemPreferences, Notification, dialog, globalShortcut } = require('electron');
 
@@ -254,7 +255,7 @@ function publishState() {
     if (svc && svc.net) {
       const c = peer && peer.current;
       const hs = c && settings.net.hotspots[c.deviceId];
-      state.net = { ...svc.net.view, ble: settings.net.ble !== false, blePc: settings.net.blePc === true, bleWifiOff: settings.net.bleWifiOff !== false, bleOff, radio: svc.ble.state, hotspotSsid: hs ? hs.ssid : '', hotspotSaved: !!(hs && hs.pass) };
+      state.net = { ...svc.net.view, ble: settings.net.ble !== false, blePc: settings.net.blePc === true, bleWifiOff: settings.net.bleWifiOff !== false, bleOff, radio: svc.ble.state, hotspotSsid: hs ? hs.ssid : '', hotspotSaved: !!(hs && hs.pass), lan: lanType(c && c.address) };
     }
     // Calls, Messages and Photos: the settings alone until the hub is loaded (setupHub).
     state.hub = phoneHub ? phoneHub.view : { ...settings.hub, connected: false };
@@ -569,8 +570,10 @@ app.whenReady().then(() => {
       link: {
         on: (ev, fn) => (ev === 'welcome' ? peer.on('client', fn) : ev === 'closed' ? peer.on('closed', fn) : peer.on('t:' + ev, fn)),
         send: (m) => peer.sendToClient(m),
+        get current() { return peer.current; },
       },
       local: new DevLocal(),
+      version: app.getVersion(),
       adb: () => {
         const br = svc && svc.phone && svc.phone.bridge;
         return br && br.state === 'ready' && br.serial ? { adb: br.adb, serial: br.serial } : null;
@@ -597,7 +600,7 @@ app.whenReady().then(() => {
     return svc.mic;
   };
   svc.loadMic();
-  // Apps and Windows › Move windows: a window grabbed with the move key crossed with the pointer. A
+  // Apps › Move windows: a window grabbed with the move key crossed with the pointer. A
   // copy of the other computer's window goes home there (pcapps.js); one of this Mac's goes over (appsend.js).
   svc.kvm.onMoveWindow = (m, to) => {
     const wid = Number(m.moving);

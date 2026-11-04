@@ -71,13 +71,14 @@ class Peer {
     if (this.il) server.ilOffer = (ctx) => (ctx.ilOn = this.il.offer(ctx.ilWanted, ctx.address));
     server.https.on('request', (req, res) => {
       if (this.fx.request(req, res)) return;
+      if (require('../shared/nativescreen.js').NativeScreen.request(req, res)) return; // a phone's own screen (Mirroring › Native)
       res.writeHead(404);
       res.end();
     });
     server.on('listening', () => { this.host = { on: true, error: '' }; this._changed(); });
     server.on('listenError', (err) => {
       console.error('[server]', err.code || err.message);
-      this.host = { on: false, error: err.code === 'EADDRINUSE' ? 'Port ' + P.PORT + ' is in use (another copy of TwinDesk?)' : err.code || err.message };
+      this.host = { on: false, error: err.code === 'EADDRINUSE' || err.code === 'EACCES' ? 'Port ' + P.PORT + ' is in use by another program (another copy of TwinDesk, or one in WSL). Trying again…' : err.code || err.message };
       this._changed();
     });
     server.on('client', (ctx) => {

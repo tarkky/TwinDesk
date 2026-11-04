@@ -63,6 +63,16 @@ final class Injector {
     return on
   }
 
+  // A volume, brightness or media key as macOS's own keys send it (NX_SYSDEFINED, aux control
+  // button): a key event with the volume's virtual key does nothing (#115).
+  func systemKey(_ kt: Int, down: Bool) {
+    let state = down ? 0x0A : 0x0B
+    guard let e = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(state << 8)),
+                                     timestamp: 0, windowNumber: 0, context: nil, subtype: 8,
+                                     data1: (kt << 16) | (state << 8), data2: -1) else { return }
+    post(e.cgEvent)
+  }
+
   func post(_ e: CGEvent?) {
     guard let e = e else { return }
     e.setIntegerValueField(.eventSourceUserData, value: injectedMark)
@@ -109,6 +119,8 @@ final class Injector {
   /// One `in.*` message (key codes already swapped by main) onto the display at `bounds`.
   func input(_ ev: [String: Any], bounds: CGRect) {
     guard let t = ev["t"] as? String else { return }
+    // At a window's copy over there: the hidden pointer stays where we put it (Capture.injectedPointer).
+    if t == "in.mm" || t == "in.md" || t == "in.mu" { Capture.shared.injectedPointer(at: point(ev, bounds)) }
     if let p = ev["pen"] as? [String: Any] {
       guard pen.arrive(p) else { return } // out of range: its proximity ended
       pen.current = p
@@ -138,7 +150,7 @@ final class Injector {
   /// Button down/up at `p`, with the click count macOS expects for double/triple clicks.
   func button(_ b: Int, down: Bool, at p: CGPoint) {
     // Move windows (Grab.swift): the move key and an injected click grab a window, the same as here.
-    if b == 0 && down && WindowGrab.shared.tryGrab(at: p) { return }
+    if b == 0 && down && WindowGrab.shared.tryGrab(at: p, flags: flags.rawValue) { return }
     if b == 0 && !down && WindowGrab.shared.upPending { _ = WindowGrab.shared.up(); return }
     if down {
       let now = ProcessInfo.processInfo.systemUptime
@@ -167,6 +179,7 @@ final class Injector {
   }
 
   func key(_ code: String, down: Bool) {
+    if let kt = KeyCodes.system[code] { return systemKey(kt, down: down) }
     if code == "Space" {
       let held = Set(heldMods.map(Injector.kind))
       if down && (held == ["Control"] || held == ["Control", "Alt"]) {

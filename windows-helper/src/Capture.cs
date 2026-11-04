@@ -429,7 +429,12 @@ namespace MacShare
                 if (gmsg == Native.WM_MOUSEMOVE && AppWindows.Grabbing) AppWindows.GrabMove(m.pt.x, m.pt.y);
             }
             if ((m.flags & Native.LLMHF_INJECTED) != 0 && m.dwExtraInfo == Native.MARK)
+            {
+                // Our pointer put on a moved window while this PC drives the other one (winMove, the
+                // window's copy there is used): this PC's mouse is measured from there on, not as a jump.
+                if (capturing && capMouse && gmsg == Native.WM_MOUSEMOVE) parked = new Point(m.pt.x, m.pt.y);
                 return Native.CallNextHookEx(mouseHook, nCode, wParam, lParam); // Rule 4: our own
+            }
             int msg = wParam.ToInt32();
             if (!capturing && mouseArrivalGuard && msg == Native.WM_MOUSEMOVE && (m.flags & Native.LLMHF_INJECTED) == 0)
             {
@@ -465,6 +470,7 @@ namespace MacShare
                         if (lane == 0) Lane.Totals(k, lr, lmn, lcx, lcy); // the lane is down: its totals go with the move
                         Forward(k);
                     }
+                    Shake.Feed(dx / s, dy / s, emit); // after it went: shaken, the pointer comes home (Shake.cs)
                 }
             }
             else if (button >= 0 && (down || up))

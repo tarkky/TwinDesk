@@ -38,6 +38,7 @@ let qrPair = null; // Connection's phone pairing QR code: {nonce, until}
 let adbQr = null; // wireless debugging's pairing QR code while shown (shared/adbqr.js)
 const qrKnows = (nonce) => !!qrPair && typeof nonce === 'string' && nonce === qrPair.nonce && Date.now() < qrPair.until;
 
+const { lanType } = require('../shared/lantype.js'); // Wi-Fi or Ethernet for Overview (#140)
 const path = require('path');
 const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, systemPreferences, Notification, dialog, globalShortcut } = require('electron');
 const Look = require('../shared/look.js');
@@ -53,7 +54,7 @@ app.commandLine.appendSwitch('force-fieldtrials', 'WebRTC-ForceSendPlayoutDelay/
 // Renamed to TwinDesk: settings, pairing and the identity stay in the old folder.
 app.setPath('userData', process.env.MACSHARE_PROFILE || path.join(app.getPath('appData'), 'MacShare')); // PROFILE: a second dev copy
 require('../shared/applog.js').start(app); // console.* and crashes into the log folder, both apps
-// Screen share codec (shared/screencodec.js, docs/perf-plan.md P5): H.265 available in WebRTC, so the
+// Screen share codec (shared/screencodec.js): H.265 available in WebRTC, so the
 // Encoder setting works on the next share. One enable-features switch for the app: Chromium keeps only the last one.
 {
   const codec = require('../shared/screencodec.js');
@@ -201,7 +202,7 @@ function pushState() {
     state.client = c ? { id: c.deviceId, name: c.name, os: c.os, role: c.role, address: c.address, rttMs: c.rttMs, transport: c.transport || 'ip' } : null;
     if (svc && svc.net) {
       const hs = c && settings.net.hotspots[c.deviceId];
-      state.net = { ...svc.net.view, ble: settings.net.ble !== false, blePc: settings.net.blePc === true, bleWifiOff: settings.net.bleWifiOff !== false, bleOff, radio: svc.ble.state, hotspotSsid: hs ? hs.ssid : '', hotspotSaved: !!(hs && hs.pass) };
+      state.net = { ...svc.net.view, ble: settings.net.ble !== false, blePc: settings.net.blePc === true, bleWifiOff: settings.net.bleWifiOff !== false, bleOff, radio: svc.ble.state, hotspotSsid: hs ? hs.ssid : '', hotspotSaved: !!(hs && hs.pass), lan: lanType(c && c.address) };
     }
     const { helper, displays, stream, clipboard: clip, kvm } = svc || {};
     state.helper.running = !!(helper && helper.running);
@@ -600,15 +601,13 @@ app.whenReady().then(() => {
 
   svc = startServices({ server: peer, getSettings: () => settings, pushState, onHelperReady: refreshPermissions });
   svc.kvm.laneReady.then(laneGo);
-  // Apps and Windows › Move windows: a window grabbed with the move key crossed with the pointer. A
-  // copy of the other computer's window goes home there (pcapps.js); one of this Mac's goes over the
-  // way its apps do: to a Mac window by window (appsend.js), to a PC through the shared display (apps.js).
+  // Apps › Move windows: a window grabbed with the move key crossed with the pointer. A
+  // copy of the other computer’s window goes home there (pcapps.js); one of this Mac’s goes over
+  // window by window, shared on its own (appsend.js, movewin.js), apart from how apps open.
   svc.kvm.onMoveWindow = (m) => {
     const wid = Number(m.moving);
     if (!wid || svc.pcApps.returnWindow(wid)) return;
-    if (!settings.apps.moveWindows) return;
-    if (peer.current && peer.current.os === P.OS.MAC) svc.appSend.moveOut(wid, Number(m.movingPid));
-    else svc.apps.moveOut(wid, Number(m.movingPid));
+    if (settings.apps.moveWindows) svc.appSend.moveOut(wid, Number(m.movingPid));
   };
   afterLane().then(() => {
     server.listen();
@@ -909,6 +908,7 @@ app.whenReady().then(() => {
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'assets', 'trayTemplate.png'))); // "Template": macOS tints it
   hud = new Hud(() => settings);
   svc.kvm.on('where', (mode) => {
+    svc.pcApps.setDriven(mode === 'driven'); // a moved window's copy shows this Mac's pointer then
     const name = peer.current ? peer.current.name : { key: 'the other computer' };
     if (mode === 'driving') hud.show('away', { key: settings.kvm.mouse ? 'Using {name}' : 'Typing on {name}', vars: { name } });
     else if (mode === 'driven') hud.show('driven', { key: '{name} is using {me}', vars: { name, me: id.macName } });
@@ -1152,7 +1152,9 @@ function loadHub() {
   const { PhoneHub } = require('../shared/phonehub.js');
   const hub = new PhoneHub({
     server: peer, getSettings: () => settings, save: () => store.saveSettings(settings),
-    audio: (opts) => require('./callaudio.js').create({ helper: svc.helper, ...opts }), // the calls' sound over Bluetooth
+    // No calls' sound on the Mac: macOS refuses an app the hands-free voice link (SCO, kIOReturnUnsupported
+    // on Apple silicon), so the Calls page has no Sound or Bluetooth setup here and the sound stays on the
+    // phone (answer, end, mute, hold and the keypad still work). mac/callaudio.js is kept, unused.
     send: (paths, batch) => !!(svc.fileSend && svc.fileSend.sendBatch(paths, 'send', batch)), // Files: into a folder on the phone
     choose: () => dialog.showOpenDialog(win && !win.isDestroyed() ? win : undefined, { properties: ['openFile', 'openDirectory', 'multiSelections'] })
       .then((r) => (r.canceled ? [] : r.filePaths)),

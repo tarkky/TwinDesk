@@ -45,7 +45,7 @@ const WAS_ON = {
 const DEFAULT_SETTINGS = {
   macId: null,
   macName: null,
-  rev: 8, // settings revision: older files are upgraded once in loadSettings
+  rev: 9, // settings revision: older files are upgraded once in loadSettings
   // `on` is reset to false at every start. remote: the other computer may start/stop
   // sharing and switch Extend/Mirror (screen.ctl). pace: playback of shared screens, both
   // directions, the same on both computers (pair.sync): 'fast' (shown the moment it arrives) |
@@ -68,6 +68,7 @@ const DEFAULT_SETTINGS = {
     linked: true, // mouse and keyboard sharing on (the hotkey's double-tap switches it); synced with the peer
     linkedBy: {}, // The last `linked` per paired device id, restored on connect
     gestures: true, // Trackpad gestures work on the other computer (synced per pair)
+    shakeHome: true, // shake this Mac's mouse while driving: the pointer comes home (the helper's Shake.swift)
     syncPads: false, // every mouse and trackpad moves the one pointer; off: a computer's own takes it back (synced per pair)
     ble: true, // cursor sharing while the session runs through Bluetooth (synced per pair)
     hotkeySwitch: false, // keyboard only (mouse off): double-tap the hotkey to move the keyboard over and back
@@ -98,10 +99,10 @@ const DEFAULT_SETTINGS = {
   files: { acceptDrops: false, folder: '', reveal: true, dragEdge: false, // '' = Downloads; dragEdge = drag.policy
     shortcuts: false, copyKeys: 'Control+Alt+C', pasteKeys: 'Control+Alt+V' }, // Copy/paste files
   notifs: { send: false, receive: false, hideText: false, muted: [] },
-  apps: { offer: false, moveWindows: false, moveKey: 'ControlRight' }, // The PC can list and open this Mac's apps; moveWindows: a window dragged past the edge with moveKey held moves there (movewin.js)
+  apps: { offer: false, onVirtual: false, moveWindows: false, moveKey: 'MetaRight' }, // The PC can list and open this Mac's apps; onVirtual: they open on the virtual display, in Mirror mode too (off: on the shared display, as always); moveWindows: a window dragged past the edge with moveKey held moves there (movewin.js)
   papps: { on: false }, // PC apps on this Mac, each window here with its own Dock icon
   // A phone as the peer: its screen window, apps and setup.
-  phone: { sound: false, bitrateMbps: 8, maxSize: 0, wallpaper: true, input: 'adb', inputPicked: false, enterSends: true, arrowSwipe: false }, // input: 'adb' | 'phone' (phone-bridge.js ctl), automatic until picked (inputMode)
+  phone: { sound: false, bitrateMbps: 8, maxSize: 0, wallpaper: true, input: 'adb', inputPicked: false, mirror: 'auto', soundVia: 'auto', enterSends: true, arrowSwipe: false }, // mirror, soundVia: 'auto' | 'adb' | 'native' (shared/phonemodes.js) // input: 'adb' | 'phone' (phone-bridge.js ctl), automatic until picked (inputMode)
   mount: { on: false }, // the phone in Finder (phonedrive.js), only when Mount is clicked
   // Calls, Messages, Photos and Files from a phone (shared/phonehub.js), each off until switched on.
   // callAudio: the calls' sound on this Mac over Bluetooth (btDevices: which paired device each phone is).
@@ -137,6 +138,11 @@ function loadSettings() {
   if ((s.rev || 0) < 8) {
     if (!out.camera.share) out.camera.on = false;
     out.rev = 8;
+  }
+  // Move windows: Right Command, not Right Control (most Mac keyboards have no Right Control).
+  if ((s.rev || 0) < 9) {
+    if (out.apps.moveKey === 'ControlRight') out.apps.moveKey = 'MetaRight';
+    out.rev = 9;
   }
   return out;
 }

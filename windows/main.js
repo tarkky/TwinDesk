@@ -1,5 +1,6 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
 // Main process: lifecycle, windows, tray, IPC and the state pushed to the main window.
+const { lanType } = require('../shared/lantype.js'); // Wi-Fi or Ethernet for Overview (#140)
 const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, Notification, shell, globalShortcut, systemPreferences } = require('electron');
 const Look = require('../shared/look.js');
 const { Updates } = require('../shared/updates.js');
@@ -77,7 +78,7 @@ app.commandLine.appendSwitch('force-fieldtrials', 'WebRTC-ForceSendPlayoutDelay/
 if (!app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', path.join(app.getPath('appData'), 'MacShare'));
 require('../shared/applog.js').start(app); // console.* and crashes into the log folder, both apps
 require('./encoder').start(app); // General › Advanced › Hardware encoder (#133), both apps: a switch read at startup
-// Screen share codec (shared/screencodec.js, docs/perf-plan.md P5): H.265 available in WebRTC, so the
+// Screen share codec (shared/screencodec.js): H.265 available in WebRTC, so the
 // Encoder setting works on the next share. One enable-features switch for the app: Chromium keeps only the last one.
 {
   const codec = require('../shared/screencodec.js');
@@ -386,12 +387,12 @@ function start() {
   pcScreen = new PcScreen({ link, helper, sender, vdd, settings, inputAllowed: () => kvm.mode === 'home', onChange: pushState });
   pcApps = new PcApps({ link, helper, sender, settings, inputAllowed: () => kvm.mode === 'home', onChange: pushState });
   peerApps = new PeerApps({ link, settings, popup: (kind, text) => hud.show(kind, text), peerName, onChange: pushState });
-  // Apps and Windows › Move windows: a window grabbed with the move key crossed with the pointer. A
+  // Apps › Move windows: a window grabbed with the move key crossed with the pointer. A
   // copy of the other computer's window goes home there (peerapps.js); one of this PC's goes over (pcapps.js).
   kvm.onMoveWindow = (m) => {
     const wid = Number(m.moving);
-    if (!wid || peerApps.returnWindow(wid) || apps.returnWindow(wid)) return; // a Mac's window here goes home (apps.js)
-    if (settings.pcApps.moveWindows) pcApps.moveOut(wid);
+    if (!wid || peerApps.returnWindow(wid)) return;
+    if (settings.pcApps.moveWindows) pcApps.moveOut(wid, { x: Number(m.fromX), y: Number(m.fromY) });
   };
   helper.on('exit', pushState);
   setupNet(guest);
@@ -1126,7 +1127,7 @@ function buildState() {
     mount: { ...(phoneDrive ? phoneDrive.view : {}), on: settings.mount.on },
     // Calls, Messages and Photos: the settings alone until the hub is loaded (setupHub).
     hub: hub ? hub.view : { ...settings.hub, connected: false },
-    net: { ...(net ? net.view : {}), ...hotspotView(), location: !!wifi && wifi.refusedLocation, ble: settings.net.ble, blePc: settings.net.blePc, bleWifiOff: settings.net.bleWifiOff, bleOff, radio: bleHost ? bleHost.state : bleGuest ? bleGuest.state : 'off', transport: link.current ? link.current.transport : '' },
+    net: { ...(net ? net.view : {}), ...hotspotView(), location: !!wifi && wifi.refusedLocation, ble: settings.net.ble, blePc: settings.net.blePc, bleWifiOff: settings.net.bleWifiOff, bleOff, radio: bleHost ? bleHost.state : bleGuest ? bleGuest.state : 'off', transport: link.current ? link.current.transport : '', lan: lanType(link.current && link.current.address) },
   };
 }
 

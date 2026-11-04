@@ -37,7 +37,7 @@ const SCHEMA = {
   virtual: { enabled: bool, width: (v) => Math.round(clamp(640, 3840, 1920)(v)), height: (v) => Math.round(clamp(480, 2160, 1080)(v)), hiDPI: bool, hz: oneOf([30, 60], 60) },
   kvm: {
     pcSide: oneOf(P.SIDES, 'right'), mouse: bool, keyboard: bool, driveOther: bool, beDriven: bool,
-    resistancePx: (v) => Math.round(clamp(0, 400, 120)(v)), speed: clamp(0.25, 4, 1), reverseScroll: bool, hotkeySwitch: bool, linked: bool, gestures: bool, ble: bool, syncPads: bool,
+    resistancePx: (v) => Math.round(clamp(0, 400, 120)(v)), speed: clamp(0.25, 4, 1), reverseScroll: bool, hotkeySwitch: bool, linked: bool, gestures: bool, ble: bool, syncPads: bool, shakeHome: bool,
   },
   keys: { swapCtrlCmd: bool, hotkey: oneOf(P.HOTKEYS, 'AltRight'), lockKeys: (v) => CL.validKeys(v, CL.DEFAULT_KEYS.mac) },
   app: { openAtLogin: bool, keepAwake: bool, hud: bool, inputProtocol: oneOf(['udp', 'tcp'], 'udp') },
@@ -47,11 +47,11 @@ const SCHEMA = {
   files: { acceptDrops: bool, reveal: bool, dragEdge: bool, shortcuts: bool, copyKeys: accel('Control+Alt+C'), pasteKeys: accel('Control+Alt+V') },
   notifs: { send: bool, receive: bool, hideText: bool },
   smb: { connectPc: bool },
-  apps: { offer: bool, moveWindows: bool, moveKey: oneOf(['ControlRight', 'ControlLeft', 'ShiftRight', 'ShiftLeft', 'AltRight', 'AltLeft', 'MetaRight', 'MetaLeft'], 'ControlRight') }, // moveWindows: Apps and Windows › Move windows (movewin.js)
+  apps: { offer: bool, onVirtual: bool, moveWindows: bool, moveKey: oneOf(['ControlRight', 'ControlLeft', 'ShiftRight', 'ShiftLeft', 'AltRight', 'AltLeft', 'MetaRight', 'MetaLeft'], 'MetaRight') }, // moveWindows: Apps › Move windows (movewin.js)
   receive: { on: bool, fullScreen: bool, input: bool, framegen: bool },
   sharing: { remote: bool, pace: oneOf(['fast', 'smooth'], 'fast'), codec: oneOf(['h264', 'h265'], 'h264') },
   papps: { on: bool },
-  phone: { sound: bool, bitrateMbps: (v) => Math.round(clamp(2, 40, 8)(v)), maxSize: oneOf([0, 1920, 1600, 1280, 1024], 0), wallpaper: bool, input: oneOf(['adb', 'phone'], 'adb'), inputPicked: bool, enterSends: bool, arrowSwipe: bool },
+  phone: { sound: bool, bitrateMbps: (v) => Math.round(clamp(2, 40, 8)(v)), maxSize: oneOf([0, 1920, 1600, 1280, 1024], 0), wallpaper: bool, input: oneOf(['adb', 'phone'], 'adb'), inputPicked: bool, mirror: oneOf(['auto', 'adb', 'native'], 'auto'), soundVia: oneOf(['auto', 'adb', 'native'], 'auto'), enterSends: bool, arrowSwipe: bool },
   mount: { on: bool },
   clipboard: {
     enabled: bool, send: bool, receive: bool, mode: oneOf(['switch', 'instant'], 'instant'),
@@ -156,6 +156,7 @@ function setupIpc(ctx) {
     setPhone(partial) {
       setGroup('phone', partial);
       if (partial && 'input' in partial) ctx.phone.bridge.tellVia();
+      if (partial && ('input' in partial || 'mirror' in partial || 'soundVia' in partial)) ctx.phone.bridge.modesChanged(); // ADB or Native (shared/phonemodes.js)
       if (partial && ('enterSends' in partial || 'arrowSwipe' in partial) && ctx.phoneViews) ctx.phoneViews.applyOpts(); // the open phone windows light their buttons
     },
     phonePair(arg) {
@@ -181,6 +182,9 @@ function setupIpc(ctx) {
     phoneCloseView(id) {
       ctx.phoneViews.close(Number(id));
     },
+    phoneScreenAct(key) {
+      if (key === 'rotate' || key === 'screenPower') ctx.phoneViews.screenAct(key);
+    },
     // Right-click on a phone app: open it, or keep it in the Dock (phoneview.js).
     phoneAppMenu(arg) {
       if (!arg || typeof arg.id !== 'string' || !/^[\w.]{1,200}$/.test(arg.id)) return;
@@ -193,8 +197,12 @@ function setupIpc(ctx) {
     phoneInstallFull() {
       ctx.phone.bridge.installFull();
     },
+    // Phone › Apps › Install Apps: .apk files picked here, installed over ADB (shared/apkinstall.js).
+    phoneInstallApps() {
+      if (ctx.phone) return require('../shared/apkinstall.js').choose(ctx.phone.bridge, t);
+    },
     phoneRetry() {
-      ctx.phone.bridge._kick();
+      ctx.phone.bridge.retry(); // also Set Up, when nothing used wireless debugging
     },
     // The phone in Finder (phonedrive.js).
     phoneMount() {
@@ -605,8 +613,11 @@ function setupIpc(ctx) {
     },
     // A phone chat's notification answered here (its own Reply).
     notifReply(r) {
-      if (r && typeof r === 'object' && r.chat) return void (ctx.chats && ctx.chats.reply(String(r.chat), r.text)); // a chat app's conversation (shared/chats.js)
-      if (r && typeof r === 'object' && ctx.notifs && ctx.notifs.reply) ctx.notifs.reply(String(r.id || ''), r.text);
+      if (r && typeof r === 'object' && r.chat) return void (ctx.chats && ctx.chats.reply(String(r.chat), r.text, r.image)); // a chat app's conversation (shared/chats.js)
+      if (!r || typeof r !== 'object' || !ctx.notifs) return;
+      if (r.dismiss) return void ctx.notifs.dismiss(String(r.id || '')); // Overview's × (shared/notifacts.js)
+      if (Number.isInteger(r.act)) return void ctx.notifs.act(String(r.id || ''), r.act); // one of its buttons
+      if (ctx.notifs.reply) ctx.notifs.reply(String(r.id || ''), r.text);
     },
     // Connection › Wireless debugging › Pair with a QR code: on while shown.
     adbQr(on) {

@@ -62,6 +62,7 @@ final class Capture {
   var gestures = true // Send trackpad gestures (k.ge) while capturing
   private var dock: (motion: Int64, progress: Double)? = nil // the dock swipe in progress
   private var pinnedAt: CGPoint?            // where the pointer stays (hidden) while it is on the other computer
+  private var leftAt: CGPoint?              // where it left (pinnedAt moves with our own injected pointer)
   private var lastCommand = 0.0
   private var deadman: Timer?
 #if MULTI
@@ -125,6 +126,7 @@ final class Capture {
                                 .otherMouseDragged, .scrollWheel, .keyDown, .keyUp, .flagsChanged]
     var mask = types.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
     for raw in Capture.gestureTypes { mask |= CGEventMask(1) << CGEventMask(raw) } // trackpad gestures
+    mask |= CGEventMask(1) << CGEventMask(Capture.systemDefined) // volume, brightness, media keys
     guard let t = CGEvent.tapCreate(tap: .cghidEventTap, place: .headInsertEventTap, options: .defaultTap,
                                     eventsOfInterest: mask, callback: tapCallback, userInfo: nil) else {
       log("event tap failed: Accessibility / Input Monitoring not granted?")
@@ -189,6 +191,7 @@ final class Capture {
     if mouse {
       CGAssociateMouseAndMouseCursorPosition(0) // pointer frozen, deltas still arrive
       pinnedAt = CGEvent(source: nil)?.location
+      leftAt = pinnedAt
       // Hide it once the leaving animation and a drag hand-off at the edge had their moment.
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
         if let self = self, self.capturing, self.capMouse { PointerVisibility.hide() }
@@ -210,18 +213,32 @@ final class Capture {
     deadman?.invalidate()
     deadman = nil
     if capMouse { CGAssociateMouseAndMouseCursorPosition(1) }
+    var moved: CGPoint? = nil // our injected pointer moved the pin: where it left
+    if let p = pinnedAt, let l = leftAt, abs(p.x - l.x) > 0.5 || abs(p.y - l.y) > 0.5 { moved = l }
     pinnedAt = nil
+    leftAt = nil
     PointerVisibility.show()
     if let side = side, let offset = offset {
       let p = Screens.edgePoint(side: side, offset: offset)
       warp(p)
       Flash.shared.arrive(at: p, side: side) // back on this Mac
+    } else if let back = moved {
+      warp(back) // our injected pointer moved it (a moved window used over there): back where it left
+      Flash.shared.arrive(at: back, side: nil)
     } else {
       Flash.shared.arrive(at: CGEvent(source: nil)?.location ?? .zero, side: nil)
     }
     swallowUps.formUnion(remoteDown)
     remoteDown.removeAll()
     arrived(side: side)
+  }
+
+  /// Our own injected pointer (a window moved to the other computer, used from its copy there while
+  /// this Mac drives it) put the hidden pointer at `p`: it stays there, not warped back to the pin.
+  /// Warping back fought every injected move, and each warp held the mouse still for a moment, so
+  /// this Mac's pointer couldn't get into that copy.
+  func injectedPointer(at p: CGPoint) {
+    if capturing && capMouse && pinnedAt != nil { pinnedAt = p }
   }
 
   /// The pointer came to this computer (back home, or placed by the driver) through `side`, or by
@@ -420,6 +437,7 @@ final class Capture {
     }
     if event.getIntegerValueField(.eventSourceUserData) == injectedMark { return pass }
     if Capture.gestureTypes.contains(type.rawValue) { return onGesture(event) ? nil : pass }
+    if type.rawValue == Capture.systemDefined { return onSystemKey(event) ? nil : pass }
     switch type {
     case .flagsChanged: return onFlags(event) ? nil : pass
     case .keyDown, .keyUp: return onKey(event, down: type == .keyDown) ? nil : pass
@@ -495,6 +513,7 @@ final class Capture {
   // gesture, 29 gesture (pinch, smart zoom, swipe), 30 dock control (the system's 3/4-finger swipes
   // and pinches: Mission Control, Spaces, App Exposé, Launchpad, Show Desktop), 31 swipe, 32 smart zoom.
   static let gestureTypes: Set<UInt32> = [18, 19, 20, 29, 30, 31, 32]
+  static let systemDefined: UInt32 = 14 // NX_SYSDEFINED
   // Private gesture fields (as WindowServer fills them for dock swipes).
   private static let fHidType = CGEventField(rawValue: 110)!, fMotion = CGEventField(rawValue: 123)!,
     fProgress = CGEventField(rawValue: 124)!, fPhase = CGEventField(rawValue: 132)!, fExit = CGEventField(rawValue: 129)!
@@ -565,6 +584,19 @@ final class Capture {
     return false
   }
 
+  // Volume, brightness and media keys (NX_SYSDEFINED, subtype 8): to the other computer while the
+  // keyboard is there, as k.kd / k.ku with their codes (KeyCodes.system). Anything else stays here.
+  private func onSystemKey(_ e: CGEvent) -> Bool {
+    guard capturing && capKeyboard, let ns = NSEvent(cgEvent: e), ns.subtype.rawValue == 8 else { return false }
+    let d = ns.data1
+    guard let code = KeyCodes.fromSystem[(d & 0xFFFF0000) >> 16] else { return false }
+    let state = (d & 0xFF00) >> 8 // 0x0A down, 0x0B up
+    guard state == 0x0A || state == 0x0B else { return false }
+    hkStage = 0
+    ev(["t": state == 0x0A ? "k.kd" : "k.ku", "code": code])
+    return true
+  }
+
   private func onMouse(_ type: CGEventType, _ e: CGEvent) -> Bool {
     var type = type
     let dx = e.getDoubleValueField(.mouseEventDeltaX), dy = e.getDoubleValueField(.mouseEventDeltaY)
@@ -572,7 +604,7 @@ final class Capture {
     let grab = WindowGrab.shared
     if type == .leftMouseUp && grab.upPending { _ = grab.up(); return true }
     if !capturing {
-      if type == .leftMouseDown && grab.tryGrab(at: e.location) { return true }
+      if type == .leftMouseDown && grab.tryGrab(at: e.location, flags: e.flags.rawValue) { return true }
       if grab.grabbing && type == .leftMouseDragged { e.type = .mouseMoved; type = .mouseMoved } // the system never saw the press
       if grab.grabbing && type == .mouseMoved { grab.move(to: e.location) }
     }
@@ -609,6 +641,7 @@ final class Capture {
 #else
         ev(["t": "k.mm", "dx": dx, "dy": dy])
 #endif
+        Shake.feed(dx, dy) // after it went: shaken, the pointer comes home (Shake.swift)
       }
       return true
     }

@@ -3,6 +3,7 @@
 // own code when multi.json says so. Lifecycle, windows, tray, IPC and the state pushed to the main
 // window, as ../main.js, over the mesh (hub.js) instead of one peer. When a fix in ../main.js applies
 // here too, make it in both.
+const { lanType } = require('../../shared/lantype.js'); // Wi-Fi or Ethernet for Overview (#140)
 const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, Notification, shell, globalShortcut } = require('electron');
 const { Updates } = require('../../shared/updates.js');
 const { aboutInfo } = require('../../shared/about.js');
@@ -177,7 +178,7 @@ function start() {
   // Overview's controls of the selected device (a computer or a phone), and this computer's for it.
   const { DevCtl } = require('../../shared/devctl.js');
   const { DevLocal } = require('../../shared/devlocal.js');
-  devctl = new DevCtl({ link, local: new DevLocal(), adb: () => {
+  devctl = new DevCtl({ link, local: new DevLocal(), version: app.getVersion(), adb: () => {
     const br = phone && phone.bridge;
     return br && br.state === 'ready' && br.serial ? { adb: br.adb, serial: br.serial } : null;
   } });
@@ -334,7 +335,7 @@ function start() {
   });
   pcApps = new PcApps({ link, helper, sender, settings, inputAllowed: () => kvm.mode === 'home', onChange: pushState });
   peerApps = new PeerApps({ link, settings, popup: (kind, text) => hud.show(kind, text), peerName, onChange: pushState });
-  // Apps and Windows › Move windows: a window grabbed with the move key crossed with the pointer. A
+  // Apps › Move windows: a window grabbed with the move key crossed with the pointer. A
   // copy of the other computer's window goes home there (peerapps.js); one of this PC's goes over (pcapps.js).
   kvm.onMoveWindow = (m, to) => {
     const wid = Number(m.moving);
@@ -893,7 +894,7 @@ function buildState() {
     mount: { ...(phoneDrive ? phoneDrive.view : {}), on: settings.mount.on },
     // Calls, Messages and Photos: the settings alone until the hub is loaded (setupHub).
     hub: phoneHub ? phoneHub.view : { ...settings.hub, connected: false },
-    net: { ...(net ? net.view : {}), ...hotspotView(), location: !!wifi && wifi.refusedLocation, ble: settings.net.ble, blePc: settings.net.blePc, bleWifiOff: settings.net.bleWifiOff, bleOff, radio: bleHost ? bleHost.state : bleGuest ? bleGuest.state : 'off', transport: link.current ? link.current.transport : '' },
+    net: { ...(net ? net.view : {}), ...hotspotView(), location: !!wifi && wifi.refusedLocation, ble: settings.net.ble, blePc: settings.net.blePc, bleWifiOff: settings.net.bleWifiOff, bleOff, radio: bleHost ? bleHost.state : bleGuest ? bleGuest.state : 'off', transport: link.current ? link.current.transport : '', lan: lanType(link.current && link.current.address) },
   };
 }
 
