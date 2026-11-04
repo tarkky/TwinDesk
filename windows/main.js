@@ -1,6 +1,7 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
 // Main process: lifecycle, windows, tray, IPC and the state pushed to the main window.
-const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, Notification, shell, globalShortcut } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, Notification, shell, globalShortcut, systemPreferences } = require('electron');
+const Look = require('../shared/look.js');
 const { Updates } = require('../shared/updates.js');
 const { aboutInfo } = require('../shared/about.js');
 const { execFile } = require('child_process');
@@ -239,11 +240,23 @@ function start() {
     pushState();
   });
   clip = new Clip(link, () => settings.clipboard, pushState, { popup: (kind, text) => hud && hud.show(kind, text), peerName });
-  devctl = new DevCtl({ link, local: new DevLocal(), adb: () => {
+  devctl = new DevCtl({ link, local: new DevLocal(), version: app.getVersion(), peerName, adb: () => {
     const br = phone && phone.bridge;
     return br && br.state === 'ready' && br.serial ? { adb: br.adb, serial: br.serial } : null;
   } });
   devctl.on('change', pushState);
+  // ReZume off here (not loaded): still answer the other side's policy, so it shows ReZume as off
+  // here, not missing, and offers nothing.
+  link.on(P.T.RZ_POLICY, () => { if (!rezume) link.send({ t: P.T.RZ_POLICY, on: false, web: false, docs: false, apps: false, push: false }); });
+  // The other side runs an older TwinDesk (shared/appinfo.js): say so once.
+  devctl.on('outdated', (o) => {
+    const { FEATURES } = require('../shared/appinfo.js');
+    const title = o.version ? t('{name} has an older TwinDesk ({version})', { name: o.name || t('The other device'), version: o.version })
+      : t('{name} has an older TwinDesk', { name: o.name || t('The other device') });
+    const body = o.missing.length ? t('Update it there for: {features}', { features: o.missing.map((k) => t(FEATURES[k])).join(', ') })
+      : t('Update it there: some features need the same version on both');
+    try { new Notification({ title, body }).show(); } catch {}
+  });
   const { Chats } = require('../shared/chats.js');
   chats = new Chats({ link, dir: app.getPath('userData'), want: () => settings.ui.chats === true, onChange: pushState });
   loadCamera(); // only while it's on
@@ -270,6 +283,7 @@ function start() {
   fileRecv = new FileRecv({ link, helper, settings, onChange: pushState });
   const dragRecv = new DragRecv({ link, helper, settings, isDriven: () => kvm && kvm.mode === 'driven', onChange: pushState });
   kvm = new Kvm({ link, helper, clip, fileDrop, fileRecv, dragRecv, settings, save: saveSettings, onChange: onKvmChange });
+  kvm.laneReady.then(laneGo);
   require('../shared/applog.js').linkStats(() => kvm.linkSample()); // the link's line in the log every 30 s
   hud = new Hud(() => settings);
   // Cursor sharing switched on/off (hotkey double-tap, tray, or the other computer): the big card.
@@ -388,11 +402,13 @@ function start() {
     get rezume() { return rezume; }, loadReZume,
     get phone() { return phone; }, get phoneViews() { return phoneViews; }, get camShare() { return camShare; }, get vcam() { return vcam; }, get phoneRemote() { return phoneRemote; }, get nowPlaying() { return nowPlaying; }, get btAudio() { return btAudio; }, get phoneDrive() { return phoneDrive; }, get terminal() { return terminal; }, loadRemote, setCamera, loadNowPlaying, loadBtAudio, loadTerminal, connectPhoneDev, cancelPhoneInvite, hub: loadHub,
     get net() { return net; }, applyNet, joinHotspot,
-    checkFirewall, fixFirewall, setStartup, onApp: updateTray, onLanguage: changeLanguage });
+    checkFirewall, fixFirewall, setStartup, onApp: updateTray, onLanguage: changeLanguage, onLook: () => Look.applyTheme(nativeTheme, settings.ui.theme) });
+  Look.applyTheme(nativeTheme, settings.ui.theme);
+  systemPreferences.on('accent-color-changed', () => pushState());
   pairSync = new PairSync({ link, settings, save: saveSettings, set: ipc.set }); // Two-way switches per pair
   nativeTheme.on('updated', () => { checkTaskbar(); pushState(); });
   loadReZume(); // only while it's on
-  link.start();
+  afterLane().then(() => link.start());
 
   link.on('welcome', () => { // a pinned Mac app started while the Mac wasn't connected
     if (pendingMacApp && Date.now() < pendingMacApp.until) openMacApp(pendingMacApp.id);
@@ -405,10 +421,18 @@ function start() {
   if (process.argv.includes('--test-monitor')) screen.open(true); // dev: ?test=1 pattern
 }
 
+// The first session, either way, waits for the helper's input lane (kvm.laneReady), so it's native
+// from the start: about 0.3 s at launch, at most LANE_WAIT_MS when the helper doesn't answer.
+const LANE_WAIT_MS = 1500;
+let laneGo;
+const laneGate = new Promise((r) => (laneGo = r));
+const afterLane = () => Promise.race([laneGate, new Promise((r) => setTimeout(r, LANE_WAIT_MS))]);
+
 // Host role: our own server, once the certificate exists (made on first start).
 async function startHost(guest) {
   try {
     const id = await identity.load();
+    await afterLane();
     discovery.self.fp = id.fp; // beacons carry it now
     const server = new Server(id);
     discovery.self.port = server.port;
@@ -598,6 +622,9 @@ function loadRemote() {
 // Loaded the first time it's turned on: until then nothing is looked at.
 function loadReZume() {
   if (rezume || !settings.rezume.on) return rezume;
+  try { return loadReZumeNow(); } catch (e) { console.error('[rezume] couldn’t start: ' + (e && e.stack || e)); rezume = null; return null; }
+}
+function loadReZumeNow() {
   const { ReZume } = require('../shared/rezume.js');
   const { ReZumeShelf } = require('../shared/rezume-shelf.js');
   const act = require('./activity').create({ helper });
@@ -1036,6 +1063,7 @@ function buildState() {
     btAudio: btAudio ? btAudio.view : null,
     rezume: rezume ? rezume.view : { ...settings.rezume, connected: false }, // ReZume tab (shared/rezume.js)
     ui: settings.ui,
+    look: Look.view(settings.ui, systemPreferences),
     app: settings.app,
     version: app.getVersion(),
     about: about || (about = aboutInfo(app)), // About page: this app and this computer
@@ -1335,7 +1363,6 @@ function updateTray(s = buildState()) {
     update: s.updates && s.updates.available ? { label: t('Download TwinDesk {version}…', { version: s.updates.latest }), click: showUpdateWindow } : null,
     rezume: rezumeItems(),
     open: showMain,
-    log: () => require('../shared/applog.js').open(),
     quit: () => app.quit(),
   })));
 }

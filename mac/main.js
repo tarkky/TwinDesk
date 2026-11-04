@@ -39,7 +39,8 @@ let adbQr = null; // wireless debugging's pairing QR code while shown (shared/ad
 const qrKnows = (nonce) => !!qrPair && typeof nonce === 'string' && nonce === qrPair.nonce && Date.now() < qrPair.until;
 
 const path = require('path');
-const { app, BrowserWindow, Tray, Menu, nativeImage, systemPreferences, Notification, dialog, globalShortcut } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, systemPreferences, Notification, dialog, globalShortcut } = require('electron');
+const Look = require('../shared/look.js');
 
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 // The hidden capture window plays system audio into WebRTC without any user gesture.
@@ -237,6 +238,7 @@ function pushState() {
     state.phoneMedia = svc && svc.nowPlaying ? svc.nowPlaying.view : null;
     state.btAudio = null; // macOS can't be a phone's Bluetooth speaker
     state.ui = settings.ui;
+    state.look = Look.view(settings.ui, systemPreferences); // General › Appearance
     state.app = settings.app;
     if (kvm) state.input = kvm.view;
     if (kvm && lockKey) {
@@ -490,7 +492,7 @@ function updateTray() {
   if (key === trayKey) return;
   trayKey = key;
   tray.setToolTip(c ? `TwinDesk: ${c.name}` : 'TwinDesk');
-  tray.setContextMenu(Menu.buildFromTemplate(trayMenu.template({
+  const model = {
     t,
     connected: !!c,
     status: c ? t('Connected to {name}', { name: c.name }) + (c.transport === 'ble' ? ' · ' + t('Bluetooth') : '') : t('Not connected'),
@@ -519,9 +521,10 @@ function updateTray() {
     update: updates && updates.status.available ? { label: t('TwinDesk {version} available…', { version: updates.status.latest }), click: showUpdateWindow } : null,
     rezume: rezumeItems(),
     open: showWindow,
-    log: () => require('../shared/applog.js').open(),
     quit: () => app.quit(),
-  })));
+  };
+  tray.setContextMenu(Menu.buildFromTemplate(trayMenu.template(model)));
+  Menu.setApplicationMenu(Menu.buildFromTemplate(trayMenu.appMenu(model))); // the same items in the menu bar
 }
 
 app.whenReady().then(() => {
@@ -610,14 +613,28 @@ app.whenReady().then(() => {
     link: {
       on: (ev, fn) => (ev === 'welcome' ? peer.on('client', fn) : ev === 'closed' ? peer.on('closed', fn) : peer.on('t:' + ev, fn)),
       send: (m) => peer.sendToClient(m),
+      get current() { return peer.current; },
     },
     local: new DevLocal(),
+    version: app.getVersion(),
     adb: () => {
       const br = svc.phone && svc.phone.bridge;
       return br && br.state === 'ready' && br.serial ? { adb: br.adb, serial: br.serial } : null;
     },
   });
   svc.devctl.on('change', pushState);
+  // ReZume off here (not loaded): still answer the other side's policy, so it shows ReZume as off
+  // here, not missing, and offers nothing.
+  peer.on(`t:${P.T.RZ_POLICY}`, () => { if (!svc.rz && peer.current) peer.sendToClient({ t: P.T.RZ_POLICY, on: false, web: false, docs: false, apps: false, push: false }); });
+  // The other side runs an older TwinDesk (shared/appinfo.js): say so once.
+  svc.devctl.on('outdated', (o) => {
+    const { FEATURES } = require('../shared/appinfo.js');
+    const title = o.version ? t('{name} has an older TwinDesk ({version})', { name: o.name || t('The other device'), version: o.version })
+      : t('{name} has an older TwinDesk', { name: o.name || t('The other device') });
+    const body = o.missing.length ? t('Update it there for: {features}', { features: o.missing.map((k) => t(FEATURES[k])).join(', ') })
+      : t('Update it there: some features need the same version on both');
+    try { new Notification({ title, body }).show(); } catch {}
+  });
   // Messages' chat apps from a phone, kept per phone (shared/chats.js).
   const { Chats } = require('../shared/chats.js');
   svc.chats = new Chats({ link: {
@@ -781,7 +798,7 @@ app.whenReady().then(() => {
       },
       hide() { if (stub) { stub.stop(); stub = null; } },
     };
-    svc.rzShelf = new ReZumeShelf({ rezume: svc.rz, cfg: () => settings.rezume, peerName: name, dock });
+    svc.rzShelf = new ReZumeShelf({ rezume: svc.rz, cfg: () => settings.rezume, peerName: name, dock, badge: path.join(__dirname, 'assets', 'sidebar-icon@4x.png') });
     svc.rz.apply();
     return svc.rz;
   };
@@ -821,7 +838,11 @@ app.whenReady().then(() => {
     },
   });
   updates.start();
-  actions = setupIpc({ state, settings, pushState, onLanguage: changeLanguage, t, server: peer, pairing, discovery, link, ...svc, hub: loadHub, login, refreshPermissions, updates });
+  Look.applyTheme(nativeTheme, settings.ui.theme);
+  nativeTheme.on('updated', () => pushState());
+  // The system accent colour changed (General › Appearance › System follows it).
+  try { systemPreferences.subscribeNotification('AppleColorPreferencesChangedNotification', () => pushState()); } catch {}
+  actions = setupIpc({ state, settings, pushState, onLanguage: changeLanguage, onLook: () => Look.applyTheme(nativeTheme, settings.ui.theme), t, server: peer, pairing, discovery, link, ...svc, hub: loadHub, login, refreshPermissions, updates });
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'assets', 'trayTemplate.png'))); // "Template": macOS tints it
   hud = new Hud(() => settings);
   svc.kvm.on('where', (mode) => {
@@ -855,7 +876,34 @@ app.whenReady().then(() => {
         : { key: ble ? 'It comes back on Wi-Fi. Double-tap {key} to turn it on' : 'Double-tap {key} to turn it on', vars: { key } };
     hud.show(on ? 'linkOn' : 'linkOff', { key: on ? 'Cursor sharing on' : ble ? 'Cursor sharing off over Bluetooth' : 'Cursor sharing off' }, sub);
   });
+  // Files on their way, live (as on the PC): the popup with the percentage while a batch takes more
+  // than a moment, and a notification for it, replaced by how it ended (macOS notifications can't
+  // show a bar, so it isn't re-posted for every step).
+  const peerLabel = () => (peer.current ? peer.current.name : t('the other computer'));
+  const liveNote = { recv: null, send: null };
+  const liveShow = (tag, title, body) => {
+    if (liveNote[tag] || !Notification.isSupported()) return;
+    try {
+      liveNote[tag] = new Notification({ title, body, silent: true });
+      liveNote[tag].show();
+    } catch { liveNote[tag] = null; }
+  };
+  const liveDone = (tag, title, body) => {
+    const n = liveNote[tag];
+    if (!n) return;
+    liveNote[tag] = null;
+    try { n.close(); new Notification({ title, body, silent: true }).show(); } catch {}
+  };
+  svc.fileSend.on('batchDone', (b) => {
+    const label = b.items > 1 ? t('{count} items', { count: b.items }) : b.name;
+    liveDone('send', b.ok ? t('Sent {file}', { file: label }) : t('Not everything arrived'), t(b.ok ? 'On {name}' : 'On {name}: some files didn’t make it', { name: peerLabel() }));
+  });
+  peer.on('closed', () => {
+    liveDone('recv', t('Files stopped'), t('{name} disconnected', { name: peerLabel() }));
+    liveDone('send', t('Files stopped'), t('{name} disconnected', { name: peerLabel() }));
+  });
   svc.drop.on('batch', (b) => {
+    liveDone('recv', b.files ? t(b.files === 1 ? 'Received {count} file' : 'Received {count} files', { count: b.files }) : t('Nothing arrived'), b.files ? t('From {name}', { name: peerLabel() }) : '');
     if (svc.rz && svc.rz.received(b)) return; // a document taken here: it opens
     if (b.kind === 'send') hud.show('driven', { key: b.files === 1 ? 'Received {count} file from {name}' : 'Received {count} files from {name}', vars: { count: b.files, name: peer.current ? peer.current.name : { key: 'the other computer' } } });
   });
@@ -863,14 +911,33 @@ app.whenReady().then(() => {
   // (macOS notifications have no progress bar, and TwinDesk has no Dock icon to put one on).
   let trayPct = '';
   setInterval(() => {
+    const dv = svc.drop.view;
+    const sv = svc.fileSend.view;
     const sum = (list, k) => list.reduce((a, f) => [a[0] + (f[k] || 0), a[1] + (f.size || 0)], [0, 0]);
-    const [got, gotOf] = sum(svc.drop.view.receiving, 'got');
-    const [sent, sentOf] = sum(svc.fileSend.view.sending, 'sent');
-    const pct = (n, of) => Math.min(99, Math.floor((100 * n) / of));
-    const t = (gotOf ? ` ↓${pct(got, gotOf)}%` : '') + (sentOf ? ` ↑${pct(sent, sentOf)}%` : '');
-    if (t === trayPct || !tray) return;
-    trayPct = t;
-    tray.setTitle(t, { fontType: 'monospacedDigit' });
+    const [got, gotOf] = dv.inBatches.reduce((a, b) => (b.bytes ? [a[0] + b.got, a[1] + b.bytes] : a), sum(dv.receiving, 'got'));
+    const [sent, sentOf] = sv.outBatches.reduce((a, b) => [a[0] + b.sent, a[1] + b.bytes], sum(sv.sending, 'sent'));
+    const pct = (n, of) => Math.min(99, Math.floor((100 * n) / Math.max(1, of)));
+    // The popup and the notification: batches that have taken more than a moment.
+    const now = Date.now();
+    const rb = dv.inBatches.find((b) => now - b.at >= 400);
+    if (rb) {
+      const key = rb.kind === 'paste'
+        ? rb.count === 1 ? 'Pasting {count} file from {name}' : 'Pasting {count} files from {name}'
+        : rb.count === 1 ? 'Receiving {count} file from {name}' : 'Receiving {count} files from {name}';
+      const vars = { count: rb.count, name: peerLabel(), percent: rb.bytes ? pct(rb.got, rb.bytes) : pct(rb.done, rb.count) };
+      hud.show('driven', { key: `${key} · {percent} %`, vars });
+      liveShow('recv', t(key, vars), t('From {name}', { name: peerLabel() }));
+    }
+    const sb = sv.outBatches.find((b) => now - b.at >= 400 && b.bytes > 5 * 1024 * 1024);
+    if (sb && !rb) {
+      const file = sb.items > 1 ? { key: '{count} items', vars: { count: sb.items } } : sb.name;
+      hud.show('away', { key: 'Sending {file} to {name} · {percent} %', vars: { file, name: peerLabel(), percent: pct(sb.sent, sb.bytes) } });
+    }
+    if (sb) liveShow('send', t('Sending {file}', { file: sb.items > 1 ? t('{count} items', { count: sb.items }) : sb.name }), t('To {name}', { name: peerLabel() }));
+    const title = (gotOf ? ` ↓${pct(got, gotOf)}%` : '') + (sentOf ? ` ↑${pct(sent, sentOf)}%` : '');
+    if (title === trayPct || !tray) return;
+    trayPct = title;
+    tray.setTitle(title, { fontType: 'monospacedDigit' });
   }, 500).unref();
   // Started at login: in the menu bar only; the window is made when it's first opened.
   if (startHidden) startHidden = false;

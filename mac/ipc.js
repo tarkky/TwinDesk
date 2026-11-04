@@ -48,7 +48,7 @@ const SCHEMA = {
   smb: { connectPc: bool },
   apps: { offer: bool },
   receive: { on: bool, fullScreen: bool, input: bool, framegen: bool },
-  sharing: { remote: bool, pace: oneOf(['fast', 'smooth'], 'fast'), codec: oneOf(['h264', 'auto', 'h265'], 'h264') },
+  sharing: { remote: bool, pace: oneOf(['fast', 'smooth'], 'fast'), codec: oneOf(['h264', 'h265'], 'h264') },
   papps: { on: bool },
   phone: { sound: bool, bitrateMbps: (v) => Math.round(clamp(2, 40, 8)(v)), maxSize: oneOf([0, 1920, 1600, 1280, 1024], 0), wallpaper: bool, input: oneOf(['adb', 'phone'], 'adb'), inputPicked: bool, enterSends: bool, arrowSwipe: bool },
   mount: { on: bool },
@@ -603,6 +603,16 @@ function setupIpc(ctx) {
     // Connection › Wireless debugging › Pair with a QR code: on while shown.
     adbQr(on) {
       if (ctx.adbQr) ctx.adbQr(on === true);
+    },
+    // General › Appearance: { theme } and/or { accent } ('' follows the system); local only.
+    setLook(o) {
+      if (!o || typeof o !== 'object') return;
+      const Look = require('../shared/look.js');
+      if (typeof o.theme === 'string') settings.ui.theme = Look.theme(o.theme);
+      if (typeof o.accent === 'string') settings.ui.accent = Look.accent(o.accent);
+      store.saveSettings(settings);
+      if (ctx.onLook) ctx.onLook();
+      ctx.pushState();
     },
     setLanguage(language) {
       if (!['en', 'zh-CN'].includes(language) || settings.ui.language === language) return;
