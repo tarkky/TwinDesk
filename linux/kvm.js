@@ -4,6 +4,7 @@
 // own shortcuts. File drags across the edge: in, a drop into a folder (dragrecv.js); out, on X11,
 // the helper's edge strip (drop.c) hands us the dragged paths with its `edge` event.
 const P = require('../shared/protocol.js');
+const { CapsSync } = require('../shared/capsync.js');
 const blepipe = require('../shared/blepipe.js');
 const { KvmMoves } = require('../shared/kvm-moves.js');
 const { KeyLayout } = require('../shared/keylayout.js');
@@ -53,14 +54,17 @@ class Kvm {
       speed: () => this.cfg.speed,
     });
     const il = this.link.il;
+    let laneSettled;
+    this.laneReady = new Promise((r) => (laneSettled = r)); // the helper's lane asked for: main.js starts the first session after
     if (il) {
       // The helper's own lane (native/tdfast, P3) when it has one: an older helper answers "unknown cmd".
-      this.helper.on('ready', () => il.useNative(this.helper));
-      if (this.helper.running) il.useNative(this.helper);
+      const native = () => il.useNative(this.helper).then(laneSettled, laneSettled);
+      this.helper.on('ready', native);
+      if (this.helper.running) native();
       il.on('start', () => this.laneIn.reset());
       il.on('move', (s) => this.laneIn.move(s));
       il.on('event', (m) => LANE_EVENTS.has(m.t) && this.laneIn.event(m, true));
-    }
+    } else laneSettled();
     // … and on the driven side, the moves that came in the same turn go to the helper as one.
     this.injectMoves = new KvmMoves({
       send: (m) => this.mode === 'driven' && this.helper.send('inject', { ev: { t: P.T.K_MOVE, dx: m.dx, dy: m.dy } }),
@@ -102,6 +106,11 @@ class Kvm {
     });
     link.on(T.KVM_DISPLAYS, (m) => this.map.onDisplays(m));
     link.on(T.KVM_IDENTIFY, () => this.map.identify(false));
+    // Caps Lock follows the input (shared/capsync.js, #131): after the handlers above.
+    this.caps = new CapsSync({ helper: this.helper, platform: 'linux' });
+    link.on(T.KVM_TAKE, () => { if (this.mode === 'driven') this.caps.expect(); });
+    link.on(T.KVM_HOME, () => { if (this.mode === 'home') this.caps.expect(); });
+    link.on(T.KVM_CAPS, (m) => this.caps.onPeer(m));
     link.on(T.KVM_TAKE, (m) => this._onTake(m));
     link.on(T.KVM_LINK, (m) => this.setLinked(m.on !== false, false)); // the other side switched it: follow, no echo
     link.on(T.KVM_ACCEPT, (m) => {
@@ -241,6 +250,7 @@ class Kvm {
       hotkey: this.settings.keys.hotkey || P.HOTKEY_WIN,
       driveOther: !!(this.linked && k.driveOther && k.mouse && this.connected && this.crossingSide && !this.blockEdge() && !this.paused && !(this.locked && this.mode === 'home')),
       keyboard: !!k.keyboard,
+      takeBack: !k.syncPads, // off with Sync touchpads: our own trackpad never takes the computer back (the 'local' watch)
       deadmanMs: P.HELPER_DEADMAN_MS,
       doubleTapMs: P.DOUBLE_TAP_MS,
       cooldownMs: P.KVM_CROSS_COOLDOWN_MS,
@@ -380,6 +390,8 @@ class Kvm {
           const paths = msg.drag && Array.isArray(msg.drag.paths) && this._dragsOut() ? msg.drag.paths.filter((p) => typeof p === 'string') : [];
           const drag = paths.length ? this.fileDrop.prepareDrag(paths) : null;
           this._take({ side: P.opposite(this.crossingSide), offset: this.map.toPeer(msg.offset), ...(drag ? { drag: { count: drag.count } } : {}) });
+          // A window grabbed with the move key crossed with the pointer (main.js onMoveWindow).
+          if (!drag && msg.moving && this.onMoveWindow) this.onMoveWindow(msg);
           if (drag) { // order: kvm.take, drag.start, then the files
             this.fileDrop.beginDrag(drag);
             this.dragPending = true;
@@ -419,8 +431,19 @@ class Kvm {
         } else this.setLinked(true); // also turns the mouse on
         break;
       }
+      // This computer's own mouse or trackpad moved or clicked while driven (the helper's return
+      // watch): it takes the computer back. The driver's pointer comes back where it left, ours stays
+      // where the driver left it, and the two pointers work apart again: either one crosses over.
+      // Sync touchpads on (kvm.syncPads): every mouse moves the one pointer, nobody takes it back.
+      case 'local':
+        if (this.mode === 'driven' && !this.locked && !this.cfg.syncPads) this._sendHome(undefined, '');
+        break;
       case 'return':
-        if (this.mode === 'driven' && !this.locked) this._sendHome(msg.offset, '', msg.drag || {});
+        if (this.mode === 'driven' && !this.locked) {
+          this._sendHome(msg.offset, '', msg.drag || {});
+          // A window grabbed with the move key crossed with the pointer, home (main.js onMoveWindow).
+          if (msg.moving && this.onMoveWindow) this.onMoveWindow(msg);
+        }
         break;
       case 'released': // our left button came up at home, the other computer's drag having come with it (watchRelease)
         if (this.mode === 'home' && this.dragRecv) this.dragRecv.onRelease();
@@ -428,7 +451,7 @@ class Kvm {
       case 'ev':
         if (this.mode === 'driving' && msg.ev && K_TYPES.has(msg.ev.t)) {
           if (this.local && this.local.drives() && this._lockKeyHere(msg.ev)) break; // a phone has no lock key: ours counts there
-          if (this.fileClip && this.fileClip.intercept(msg.ev)) break; // copy/paste shortcut: done over there
+          if (this.fileClip && this.fileClip.intercept(msg.ev)) { this.lane.skip(msg.ev, (x) => this.link.send(x)); break; } // copy/paste shortcut: done over there
           if (msg.ev.t === T.K_MOVE) {
             this.lane.nativeTotals(msg.ev); // the helper's lane is down: its totals go with the move
             this.moves.add(Number(msg.ev.dx) || 0, Number(msg.ev.dy) || 0);
@@ -437,7 +460,7 @@ class Kvm {
           this._flushMove(); // a click goes where the moves before it took the pointer
           this._driveEvent(this.keys.tag(msg.ev)); // keys with the letter they type here (shared/keylayout.js)
           if (msg.ev.t === T.K_UP && msg.ev.b === P.BUTTON.LEFT) this.dragPending = false; // released over there
-        }
+        } else if (msg.ev) this.lane.skip(msg.ev, (x) => this.link.send(x)); // numbered by the helper but not sent: its number goes all the same
         break;
       case 'captureEnded': // dead-man, or a grab another app holds: input is back here
         if (this.mode === 'driving') this._release(msg.reason === 'grab' ? 'Another app is holding the mouse or keyboard' : '');
@@ -451,6 +474,7 @@ class Kvm {
     const k = this.cfg;
     this.keyboardOnly = !where.side; // the hotkey in keyboard-only mode (edge crossings carry a side)
     this._drive({ t: T.KVM_TAKE, route: this.route, ...where, mouse: !!k.mouse && !this.keyboardOnly, keyboard: !!k.keyboard });
+    if (!(this.local && this.local.drives())) this.caps.handOver((m) => this.link.send(m)); // our Caps Lock, there
     this._setMode('driving', '');
     this.clip.sendIfChanged('switch');
     this._clearAccept();
@@ -665,6 +689,7 @@ class Kvm {
     const msg = typeof offset === 'number' ? { t: T.KVM_HOME, route: this.peerRoute, offset: this.map.toPeer(offset) } : { t: T.KVM_HOME, route: this.peerRoute };
     const out = this._dragHome(msg, drag);
     this.link.send(msg);
+    this.caps.handOver((c) => this.link.send(c)); // our Caps Lock, home
     if (out) this.fileDrop.beginDrag(out); // after kvm.home: drag.start, then the files
     this._drivenHome(message, true);
   }

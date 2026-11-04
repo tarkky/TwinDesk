@@ -7,6 +7,9 @@ const { savedLanguage } = require('../shared/i18n.js');
 const Look = require('../shared/look.js');
 const { normalizeFolder } = require('../shared/received.js');
 
+// The keys that can be held to move a window to the other computer (the helper grabs with them).
+const MOVE_KEYS = ['ControlRight', 'ControlLeft', 'ShiftRight', 'ShiftLeft', 'AltRight', 'AltLeft', 'MetaRight', 'MetaLeft'];
+
 const TABS = ['phone', 'overview', 'connection', 'mirror', 'papps', 'calls', 'messages', 'media', 'pfiles', 'mac-pc', 'pc-mac', 'cursor', 'keyboard', 'clipboard', 'notifications', 'files', 'mount', 'terminal', 'audio', 'camera', 'remote', 'apps', 'rezume', 'multi', 'general', 'about'];
 
 const OLD_TABS = { display: 'mac-pc', receive: 'mac-pc', share: 'pc-mac' }; // older names
@@ -71,12 +74,14 @@ function normalize(s) {
       linkedBy: kvm.linkedBy && typeof kvm.linkedBy === 'object'
         ? Object.fromEntries(Object.entries(kvm.linkedBy).filter(([, v]) => typeof v === 'boolean').slice(0, 50)) : {},
       gestures: bool(kvm.gestures, true), // Trackpad gestures work on the other computer (pair.sync 'gestures')
+      syncPads: bool(kvm.syncPads, false), // every mouse and trackpad moves the one pointer; off: this PC's own takes it back (pair.sync 'syncPads')
       hotkeySwitch: bool(kvm.hotkeySwitch, false), // keyboard only (Cursor off): double-tap moves the keyboard over and back
       ble: bool(kvm.ble, true), // cursor sharing while the session runs through Bluetooth (pair.sync 'ble')
     },
     // hotkey: double-tap = mouse and keyboard home. lockKeys: cursor lock on/off (shared/cursorlock.js)
     keys: { swapCtrlCmd: bool(keys.swapCtrlCmd, true), hotkey: P.HOTKEYS.includes(keys.hotkey) ? keys.hotkey : P.HOTKEY_WIN, lockKeys: CL.validKeys(keys.lockKeys, CL.DEFAULT_KEYS.linux) },
-    app: { hud: bool(appS.hud, true) }, // popup when switching computers
+    // hud: popup when switching computers. inputProtocol: udp = tdv2 input lane (default), tcp = tdv1
+    app: { hud: bool(appS.hud, true), inputProtocol: appS.inputProtocol === 'tcp' ? 'tcp' : 'udp' },
     // New releases on GitHub (shared/updates.js); notified = the last version announced, skipped = version ignored
     updates: { auto: bool(up.auto, true), notified: typeof up.notified === 'string' ? up.notified.slice(0, 40) : '', skipped: typeof up.skipped === 'string' ? up.skipped.slice(0, 40) : '' },
     clipboard: {
@@ -126,6 +131,12 @@ function normalize(s) {
       // Bluetooth, this computer as its speaker (shared/btaudio.js), off until turned on
       phoneMedia: bool(audio.phoneMedia, was),
       phoneBt: bool(audio.phoneBt, false),
+      // Microphone (shared/mic.js): this computer's to the other (micSend), the other's here (micReceive),
+      // off until turned on; micDevice: the microphone sent, micOut: where the other's plays ('' = found)
+      micSend: bool(audio.micSend, false),
+      micReceive: bool(audio.micReceive, false),
+      micDevice: typeof audio.micDevice === 'string' ? audio.micDevice.slice(0, 200) : '',
+      micOut: typeof audio.micOut === 'string' ? audio.micOut.slice(0, 200) : '',
       phoneBtDevice: typeof audio.phoneBtDevice === 'string' ? audio.phoneBtDevice.slice(0, 400) : '',
     },
     terminal: {
@@ -164,7 +175,9 @@ function normalize(s) {
     },
     pairSync: pairSync(s.pairSync), // {deviceId: {feature: {out, in}}} (pairsync.js)
     wake: { peers: wakePeers(wk.peers) }, // {deviceId: {name, os, macs, address, at}} from wol.info
-    pcApps: { allow: bool(pca.allow, was) },
+    // moveWindows: the move key held, a window clicked and dragged past the shared edge goes to the
+    // other computer (shared/movewin.js), off until switched on; moveKey: which key.
+    pcApps: { allow: bool(pca.allow, was), moveWindows: bool(pca.moveWindows, false), moveKey: MOVE_KEYS.includes(pca.moveKey) ? pca.moveKey : 'ControlRight' },
     // A phone as the peer: its screen window, apps and setup
     phone: {
       sound: bool(ph.sound, false),
@@ -252,4 +265,4 @@ function apply(settings, section, partial) {
   return changed;
 }
 
-module.exports = { normalize, apply };
+module.exports = { MOVE_KEYS, normalize, apply };

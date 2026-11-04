@@ -68,6 +68,7 @@ const DEFAULT_SETTINGS = {
     linked: true, // mouse and keyboard sharing on (the hotkey's double-tap switches it); synced with the peer
     linkedBy: {}, // The last `linked` per paired device id, restored on connect
     gestures: true, // Trackpad gestures work on the other computer (synced per pair)
+    syncPads: false, // every mouse and trackpad moves the one pointer; off: a computer's own takes it back (synced per pair)
     ble: true, // cursor sharing while the session runs through Bluetooth (synced per pair)
     hotkeySwitch: false, // keyboard only (mouse off): double-tap the hotkey to move the keyboard over and back
   },
@@ -87,9 +88,9 @@ const DEFAULT_SETTINGS = {
   // setupSkipped: the missing items when Setup was skipped; setupDone: Setup has been through once
   // (everything allowed, or skipped), so it never takes over the window again (General shows the rest).
   ui: { tab: 'overview', setupSkipped: '', setupDone: false, language: '', theme: 'system', accent: '' }, // theme/accent: General › Appearance
-  app: { openAtLogin: false, keepAwake: true, hud: true }, // hud = popup when switching computers
+  app: { openAtLogin: false, keepAwake: true, hud: true, inputProtocol: 'udp' }, // inputProtocol: udp = tdv2 input lane, tcp = tdv1 // hud = popup when switching computers
   updates: { auto: true, notified: '', skipped: '' }, // check GitHub for new releases; notified = last version announced, skipped = version ignored
-  audio: { send: false, receive: false, muteLocal: false, volume: 1, phoneMedia: false }, // Independent, both ways; phoneMedia: a phone's media controls on Overview
+  audio: { send: false, receive: false, muteLocal: false, volume: 1, phoneMedia: false, micSend: false, micReceive: false, micDevice: '', micOut: '' }, // Independent, both ways; phoneMedia: a phone's media controls on Overview
   rezume: require('../shared/rezume.js').DEFAULTS, // ReZume tab (shared/rezume.js): off until turned on; what goes, which ways, where it shows
   remote: { allow: false }, // Remote tab (shared/phone-remote.js): the phone's Remote page moves the pointer and types here
   camera: { on: false, share: false, device: '', virtual: false, rotate: 0, target: 'obs' }, // Camera tab (shared/camshare.js): this Mac's camera to the other computer, off until turned on; virtual: the running camera's picture also goes to the virtual camera (shared/vcam.js); rotate: its picture turned clockwise; target: the virtual camera it feeds, 'obs' (OBS Virtual Camera, the default) or 'twindesk'
@@ -97,7 +98,7 @@ const DEFAULT_SETTINGS = {
   files: { acceptDrops: false, folder: '', reveal: true, dragEdge: false, // '' = Downloads; dragEdge = drag.policy
     shortcuts: false, copyKeys: 'Control+Alt+C', pasteKeys: 'Control+Alt+V' }, // Copy/paste files
   notifs: { send: false, receive: false, hideText: false, muted: [] },
-  apps: { offer: false }, // The PC can list and open this Mac's apps
+  apps: { offer: false, moveWindows: false, moveKey: 'ControlRight' }, // The PC can list and open this Mac's apps; moveWindows: a window dragged past the edge with moveKey held moves there (movewin.js)
   papps: { on: false }, // PC apps on this Mac, each window here with its own Dock icon
   // A phone as the peer: its screen window, apps and setup.
   phone: { sound: false, bitrateMbps: 8, maxSize: 0, wallpaper: true, input: 'adb', inputPicked: false, enterSends: true, arrowSwipe: false }, // input: 'adb' | 'phone' (phone-bridge.js ctl), automatic until picked (inputMode)

@@ -76,6 +76,7 @@ app.commandLine.appendSwitch('force-fieldtrials', 'WebRTC-ForceSendPlayoutDelay/
 // in (Electron would follow the new product name). A dev copy's --user-data-dir still wins.
 if (!app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', path.join(app.getPath('appData'), 'MacShare'));
 require('../shared/applog.js').start(app); // console.* and crashes into the log folder, both apps
+require('./encoder').start(app); // General › Advanced › Hardware encoder (#133), both apps: a switch read at startup
 // Screen share codec (shared/screencodec.js, docs/perf-plan.md P5): H.265 available in WebRTC, so the
 // Encoder setting works on the next share. One enable-features switch for the app: Chromium keeps only the last one.
 {
@@ -149,6 +150,7 @@ let fileDrop = null;
 let smb = null;
 let apps = null;
 let sound = null;
+let mic = null; // Audio › Microphone (shared/mic.js), loaded only while one of its switches is on
 let pcScreen = null;
 let pcApps = null;
 let peerApps = null; // The other PC's apps here
@@ -199,6 +201,7 @@ function loadDevice() {
 function start() {
   device = loadDevice();
   settings = normalize(store.read('settings.json', {}));
+  require('../shared/inputlane.js').setLaneProtocol(settings.app.inputProtocol); // General › Advanced, before any lane binds
   i18n = I18n.create(I18n.resolveLanguage(settings.ui.language, app.getLocale()));
 
   discovery = new Discovery(device);
@@ -276,6 +279,7 @@ function start() {
   apps = new Apps({ link, allowed: () => settings.macApps.on, getLanguage: () => i18n.locale, getMonitor: () => screen.win, popup: (kind, text) => hud && hud.show(kind, text), peerName, onChange: pushState, onWatch: () => screen.policy() });
   screen.apps = apps;
   sound = new Sound({ link, settings, onChange: pushState });
+  loadMic();
   smb = new Smb({ link, settings, save: saveSettings, onChange: pushState });
   helper = new Helper();
   screen.helper = helper; // Wi-Fi low-latency mode while a screen is shown (Wlan.cs)
@@ -382,6 +386,13 @@ function start() {
   pcScreen = new PcScreen({ link, helper, sender, vdd, settings, inputAllowed: () => kvm.mode === 'home', onChange: pushState });
   pcApps = new PcApps({ link, helper, sender, settings, inputAllowed: () => kvm.mode === 'home', onChange: pushState });
   peerApps = new PeerApps({ link, settings, popup: (kind, text) => hud.show(kind, text), peerName, onChange: pushState });
+  // Apps and Windows › Move windows: a window grabbed with the move key crossed with the pointer. A
+  // copy of the other computer's window goes home there (peerapps.js); one of this PC's goes over (pcapps.js).
+  kvm.onMoveWindow = (m) => {
+    const wid = Number(m.moving);
+    if (!wid || peerApps.returnWindow(wid) || apps.returnWindow(wid)) return; // a Mac's window here goes home (apps.js)
+    if (settings.pcApps.moveWindows) pcApps.moveOut(wid);
+  };
   helper.on('exit', pushState);
   setupNet(guest);
   helper.start();
@@ -400,7 +411,7 @@ function start() {
   updates.start();
   const ipc = setupIpc({ devctl: () => devctl, chats: () => chats, explorer: () => explorer, qrPair: qrPairView, adbQr: adbQrDo, link, discovery, screen, clip, kvm, sshd, fileDrop, smb, apps, sound, pcScreen, pcApps, peerApps, vdd, notifs, fileClip, wake, updates, settings, save: saveSettings, push: pushState, buildState,
     get rezume() { return rezume; }, loadReZume,
-    get phone() { return phone; }, get phoneViews() { return phoneViews; }, get camShare() { return camShare; }, get vcam() { return vcam; }, get phoneRemote() { return phoneRemote; }, get nowPlaying() { return nowPlaying; }, get btAudio() { return btAudio; }, get phoneDrive() { return phoneDrive; }, get terminal() { return terminal; }, loadRemote, setCamera, loadNowPlaying, loadBtAudio, loadTerminal, connectPhoneDev, cancelPhoneInvite, hub: loadHub,
+    get phone() { return phone; }, get phoneViews() { return phoneViews; }, get camShare() { return camShare; }, get vcam() { return vcam; }, get phoneRemote() { return phoneRemote; }, get nowPlaying() { return nowPlaying; }, get btAudio() { return btAudio; }, get phoneDrive() { return phoneDrive; }, get terminal() { return terminal; }, loadRemote, setCamera, loadNowPlaying, loadBtAudio, loadMic, loadTerminal, connectPhoneDev, cancelPhoneInvite, hub: loadHub,
     get net() { return net; }, applyNet, joinHotspot,
     checkFirewall, fixFirewall, setStartup, onApp: updateTray, onLanguage: changeLanguage, onLook: () => Look.applyTheme(nativeTheme, settings.ui.theme) });
   Look.applyTheme(nativeTheme, settings.ui.theme);
@@ -641,15 +652,43 @@ function loadReZumeNow() {
     appIcon: (exe) => (path.isAbsolute(exe) ? act.appIcon(exe) : ''),
     open: { url: (u) => shell.openExternal(u), file: (p) => shell.openPath(p), phoneApp: (pkg) => openPhoneApp(pkg) },
     sendFile: (p, batch) => !!fileDrop.sendBatch([p], 'rezume', batch),
-    expectFile: (batch) => fileRecv.expectBatch(batch, receivedDir(settings, app.getPath('downloads')), 0, true),
+    expectFile: (batch, dir) => fileRecv.expectBatch(batch, dir || receivedDir(settings, app.getPath('downloads')), 0, true),
+    // Documents opened in place (shared/rzlive.js), the chooser (shared/rzpick.js), and where copies go.
+    cacheDir: path.join(app.getPath('temp'), 'TwinDesk ReZume'),
+    live: liveDocs(),
+    pick: (o, ways) => require('../shared/rzpick.js').pick(o, ways, { peer: peerName(), language: i18n.locale }),
     adb: () => phoneAdb(phone && phone.bridge),
     phoneApps: () => (phone && phone.apps) || [],
+    save: saveSettings,
+    // An app's window between two computers: ours streamed there as the Apps tab's are (pcapps.js),
+    // theirs shown here (peerapps.js; a Mac's come through apps.js, which takes them as they come).
+    window: {
+      canSend: () => !!pcApps,
+      send: (app) => !!(pcApps && pcApps.adopt(app)),
+      accept: (on) => {
+        const set = () => { if (peerApps) peerApps.acceptReZume(on); return true; };
+        return on ? waitWifi('apps', set) : set();
+      },
+      stop: (app) => pcApps && pcApps.unadopt(app),
+    },
   });
   rezume.on('change', pushState);
   rezume.on('opened', (o) => hud && hud.show('home', { key: o.how === 'sent' ? 'Sent to {name}: {title}' : 'From {name}: {title}', vars: { name: peerName(), title: o.title } }));
   rezumeShelf = new ReZumeShelf({ rezume, cfg: () => settings.rezume, peerName, appIcon: path.join(__dirname, 'assets', 'icon.png'), appId: 'org.macshare.windows.rezume' });
   rezume.apply();
   return rezume;
+}
+
+// ReZume's live documents: shared with the session's certificate, mounted as the phone drive is.
+function liveDocs() {
+  const { LiveShare } = require('../shared/rzlive.js');
+  const ls = new LiveShare({ tls: () => hostServer && hostServer.tls, mounter: require('./phonedrive').mounter });
+  return {
+    share: (p) => ls.share(p),
+    mount: (info) => waitWifi('folder', () => ls.mount(info), () => { throw new Error('The other computer could not be reached over Wi-Fi'); }),
+    stop: () => ls.stop(),
+    shutdown: () => ls.shutdown(),
+  };
 }
 
 // The phone through wireless debugging, for ReZume: its app in front, and a tab opened there at once.
@@ -1065,11 +1104,12 @@ function buildState() {
     ui: settings.ui,
     look: Look.view(settings.ui, systemPreferences),
     app: settings.app,
+    encoder: require('./encoder').view(), // General › Advanced › Hardware encoder
     version: app.getVersion(),
     about: about || (about = aboutInfo(app)), // About page: this app and this computer
     updates: updates ? updates.view : null,
     firewall: fw,
-    audio: { ...settings.audio, ...sound.view() },
+    audio: { ...settings.audio, ...sound.view(), mic: mic ? mic.view() : null },
     pcScreen: pcScreen.view(),
     pcApps: pcApps.view(),
     macApps: settings.macApps,
@@ -1318,7 +1358,7 @@ function updateTray(s = buildState()) {
   const watching = screen.sentAccept === true;
   const host = s.paired && s.paired.macName;
   const again = !connected && host && (s.link.state === 'stopped' || !!s.link.busy);
-  const key = JSON.stringify([name, rtt, again, away, kvm.linked, kvm.paused, kvm.locked, kvm.mode, settings.keys.lockKeys, sharing, watching, k.driveOther, k.beDriven, settings.clipboard.enabled,
+  const key = JSON.stringify([name, rtt, again, away, pcApps ? pcApps.moved.size : 0, kvm.linked, kvm.paused, kvm.locked, kvm.mode, settings.keys.lockKeys, sharing, watching, k.driveOther, k.beDriven, settings.clipboard.enabled,
     settings.audio.send, settings.app.hud, k.keyboard, settings.files.edgeDrag, settings.files.shortcuts, settings.files.copyKeys, rezumeItems().map((i) => i.label), found.map((d) => [d.id, d.name, d.os]), s.updates && s.updates.available && s.updates.latest]);
   if (key === trayKey) return;
   trayKey = key;
@@ -1335,6 +1375,7 @@ function updateTray(s = buildState()) {
     connected,
     status: connected ? t('Connected to {name}', { name }) + rtt : t('Not connected'),
     home: away ? () => kvm.home() : null,
+    windowsBack: pcApps && pcApps.moved.size ? { label: t(pcApps.moved.size === 1 ? 'Bring the Window Back from {name}' : 'Bring {count} Windows Back from {name}', { count: pcApps.moved.size, name: other }), click: () => pcApps.bringBack() } : null,
     shared: { checked: kvm.linked && !kvm.paused, set: (on) => kvm.setShared(on) },
     lock: connected ? { label: t('Lock Cursor on {name} ({keys})', { name: kvm.mode === 'driving' ? other : device.name, keys: CL.keysLabel(settings.keys.lockKeys, 'win') }), checked: kvm.locked, set: (on) => kvm.setLocked(on) } : null,
     keyboard: { checked: k.keyboard, set: (on) => set('kvm', { keyboard: on }, () => kvm.applyConfig()) },
@@ -1367,7 +1408,16 @@ function updateTray(s = buildState()) {
   })));
 }
 
+// Audio › Microphone: loaded the first time one of its switches is on (each change applies it).
+function loadMic() {
+  if (mic || !(settings.audio.micSend || settings.audio.micReceive)) return mic;
+  const { Mic } = require('../shared/mic.js');
+  mic = new Mic({ link, cfg: () => settings.audio, onChange: pushState });
+  return mic;
+}
+
 app.on('before-quit', () => {
+  if (mic) mic.shutdown();
   quitting = true;
   saveBounds();
   if (discovery) discovery.stop();

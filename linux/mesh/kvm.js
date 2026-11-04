@@ -14,6 +14,7 @@
 'use strict';
 
 const P = require('../../shared/protocol.js');
+const { CapsSync } = require('../../shared/capsync.js');
 const E = require('../../shared/kvm-edges.js');
 const blepipe = require('../../shared/blepipe.js');
 const { KvmMoves } = require('../../shared/kvm-moves.js');
@@ -38,6 +39,7 @@ class Kvm {
     pointerAccel.watch(() => this.applyConfig()); // the desktop's mouse acceleration, for the Wayland helper
     this.subRoute = 0;
     this.partner = null; // the device our input goes to (driving) or comes from (driven); null at home
+    this._busyId = null; // the partner link marked busy while driving/driven (see _markBusy)
     this.message = '';
     this.acceptTimer = null;
     this.keepalive = null;
@@ -49,6 +51,7 @@ class Kvm {
     this.sentDragPolicy = undefined;
     // k.mm summed while driving, sent as one (shared/kvm-moves.js): paced for Bluetooth, and held
     // (still summed) while the socket is backed up, so the pointer never replays old moves.
+    this._driveWss = (x) => this._drive(x); // bound once: nothing new per move
     this.moves = new KvmMoves({
       send: (m) => this.mode === 'driving' && this._driveMove(m),
       delay: () => (this._movesBle() ? P.KVM_MOVE_BLE_MS : 0),
@@ -63,12 +66,12 @@ class Kvm {
       il: (id) => (this._session(id) && this._session(id).il) || null,
       partner: () => this.partner,
       route: () => this.peerRoute,
-      move: (dx, dy, id) => this._inject({ t: P.T.K_MOVE, dx, dy }, id),
+      move: (dx, dy, id) => this._laneMove(dx, dy, id),
       deliver: (m, id) => (m.t === P.T.K_GESTURE ? this._onGesture(m, id) : this._inject(m, id)),
     });
     // … and on the driven side, the moves that came in the same turn go to the helper as one.
     this.injectMoves = new KvmMoves({
-      send: (m) => this.mode === 'driven' && this.helper.send('inject', { ev: { t: P.T.K_MOVE, dx: m.dx, dy: m.dy } }),
+      send: (m) => this.mode === 'driven' && (this.helper.sendMove ? this.helper.sendMove(m.dx, m.dy) : this.helper.send('inject', { ev: { t: P.T.K_MOVE, dx: m.dx, dy: m.dy } })),
     });
     const im = inputMethods.wrap((cmd, args) => this.helper.request(cmd, args), (cmd, args) => this.helper.send(cmd, args)); // Fcitx 5 / IBus
     this.keys = new KeyLayout(im.request, im.send); // shortcuts, alphabets and input methods across layouts
@@ -105,6 +108,11 @@ class Kvm {
     });
     for (const t of K_TYPES) bus.on(t, (m, from) => this._onWire(m, from));
     bus.on(T.K_GESTURE, (m, from) => this._onWire(m, from)); // Trackpad gestures
+    // Caps Lock follows the input (shared/capsync.js, #131): after the handlers above.
+    this.caps = new CapsSync({ helper: this.helper, platform: 'linux' });
+    bus.on(T.KVM_TAKE, () => { if (this.mode === 'driven') this.caps.expect(); });
+    bus.on(T.KVM_HOME, () => { if (this.mode === 'home') this.caps.expect(); });
+    bus.on(T.KVM_CAPS, (m, from) => { if (this.mode === 'home' || from === this.partner) this.caps.onPeer(m); });
     bus.on(T.KVM_LOCK, (m, from) => {
       if (this.mode !== 'home' && from === this.partner) this.setLocked(m.on === true, false);
     });
@@ -336,6 +344,7 @@ class Kvm {
       hotkey: this.settings.keys.hotkey || P.HOTKEY_WIN,
       driveOther: sides.length > 0,
       keyboard: !!k.keyboard,
+      takeBack: !k.syncPads, // off with Sync touchpads: our own trackpad never takes the computer back (the 'local' watch)
       deadmanMs: P.HELPER_DEADMAN_MS,
       doubleTapMs: P.DOUBLE_TAP_MS,
       cooldownMs: P.KVM_CROSS_COOLDOWN_MS,
@@ -482,6 +491,13 @@ class Kvm {
         } else this.setLinked(true); // also turns the mouse on
         break;
       }
+      // This computer's own mouse or trackpad moved or clicked while driven (the helper's return
+      // watch): it takes the computer back. The driver's pointer comes back where it left, ours stays
+      // where the driver left it, and the two pointers work apart again: either one crosses over.
+      // Sync touchpads on (kvm.syncPads): every mouse moves the one pointer, nobody takes it back.
+      case 'local':
+        if (this.mode === 'driven' && !this.locked && !this.cfg.syncPads) this._sendHome(undefined, '');
+        break;
       case 'return':
         if (this.mode === 'driven' && !this.locked) this._onReturn(msg);
         break;
@@ -520,6 +536,7 @@ class Kvm {
     const paths = msg.drag && Array.isArray(msg.drag.paths) && this._dragsOut(id) ? msg.drag.paths.filter((p) => typeof p === 'string') : [];
     const drag = paths.length ? this.fileDrop.prepareDrag(paths) : null;
     this._take({ side: P.opposite(side), offset: msg.offset, ...(drag ? { drag: { count: drag.count } } : {}) }, id);
+    if (!drag && msg.moving && this.onMoveWindow) this.onMoveWindow(msg, id); // a window grabbed with the move key (main.js)
     if (drag) { // order: kvm.take, drag.start, then the files
       this.fileDrop.beginDrag(drag);
       this.dragPending = true;
@@ -534,6 +551,8 @@ class Kvm {
     this.partner = id || null;
     this.lanes.drive.reset(this.route);
     this._drive({ t: T.KVM_TAKE, route: this.route, ...where, mouse: !!k.mouse && !this.keyboardOnly, keyboard: !!k.keyboard });
+    const to = this.partner;
+    if (to && !(this.local && this.local.drives(to))) this.caps.handOver((m) => this._send(to, m)); // our Caps Lock, there
     this._setMode('driving', '');
     this.clip.sendIfChanged('switch');
     this._clearAccept();
@@ -593,13 +612,22 @@ class Kvm {
 
   // A summed move while driving: on the partner's input lane when there is one, else as always.
   _driveMove(m) {
-    if (!this.lanes.drive.move(m.dx, m.dy, (x) => this._drive(x))) this._drive({ t: P.T.K_MOVE, dx: m.dx, dy: m.dy });
+    if (!this.lanes.drive.move(m.dx, m.dy, this._driveWss)) this._drive({ t: P.T.K_MOVE, dx: m.dx, dy: m.dy });
+  }
+
+  // A move from a device's input lane: summed for the helper at once, without a message object per
+  // move (_inject's k.mm path, which copies the message first). Relayed on to a phone: as a k.mm.
+  _laneMove(dx, dy, from) {
+    if (this.mode !== 'driven' || from !== this.partner) return;
+    if (this.sub) return this._inject({ t: P.T.K_MOVE, dx, dy }, from);
+    const speed = this.cfg.speed;
+    this.injectMoves.add(dx * speed, dy * speed);
   }
 
   // A click, key, wheel or gesture while driving: numbered for the lane when there is one.
   _driveEvent(msg) {
     if (!LANE_TYPES.has(msg.t) || !this.lanes.o.lane(this.partner)) return this._drive(msg);
-    this.lanes.drive.event(msg, (x) => this._drive(x));
+    this.lanes.drive.event(msg, this._driveWss);
   }
 
   // Input from a device on WSS: numbered or with totals (an app with the input lane) through that
@@ -717,7 +745,10 @@ class Kvm {
     const to = side ? this.layoutSync.across(side) : null;
     console.log('[kvm] return ' + side + ' -> ' + (to || 'nobody') + ' (partner ' + this.partner + ')');
     // The way back: the side of the device that drives us (judged by who is there, not only by the side we expect).
-    if (!side || to === this.partner || side === this.layoutSync.sideTo(this.partner)) return this._sendHome(msg.offset);
+    if (!side || to === this.partner || side === this.layoutSync.sideTo(this.partner)) {
+      if (msg.moving && this.onMoveWindow) this.onMoveWindow(msg, this.partner); // a window grabbed with the move key (main.js)
+      return this._sendHome(msg.offset);
+    }
     if (to && to !== this.partner && this._canRelay(to)) return this._relayTo(to, side, Number(msg.offset) || 0);
     if (to && to !== this.partner) this._send(this.partner, { t: T.KVM_NEXT, route: this.peerRoute, to, side, offset: Number(msg.offset) || 0 });
     this._armReturn();
@@ -841,7 +872,9 @@ class Kvm {
   // Row 8c: we send the input home (return edge or hotkey).
   _sendHome(offset, message = '') {
     const msg = typeof offset === 'number' ? { t: T.KVM_HOME, route: this.peerRoute, offset } : { t: T.KVM_HOME, route: this.peerRoute };
-    this._send(this.partner, msg);
+    const to = this.partner;
+    this._send(to, msg);
+    this.caps.handOver((c) => this._send(to, c)); // our Caps Lock, home
     this._drivenHome(message, true);
   }
 
@@ -874,10 +907,21 @@ class Kvm {
 
   // ---- shared ----
 
+  // Keep-alive: the active partner link (driving or driven) pings every PING_MS so the other end's
+  // silence watch (KVM_SILENCE_MS) never trips because that link has gone idle with two or more
+  // devices. The old partner is marked idle, the new one busy (docs/mesh.md "Keep-alive").
+  _markBusy(partner) {
+    if (this._busyId && this._busyId !== partner) this.hub.setBusy(this._busyId, null); // not forced idle: a single link or the selected device stays busy by default
+    if (partner) this.hub.setBusy(partner, true);
+    this._busyId = partner || null;
+  }
+
   _setMode(mode, message) {
     const was = this.mode;
     this.mode = mode;
     this.lanes.active(mode !== 'home'); // the partner's lane pinged more often
+    // The partner link is busy while input is shared; idle at home.
+    this._markBusy(mode === 'home' ? null : this.partner);
     if (was !== mode && this.locked) { // moved by the hotkey, the tray or a disconnect: the lock was for where it was
       this.locked = false;
       if (was === 'home') this.applyConfig();

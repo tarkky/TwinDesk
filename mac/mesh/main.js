@@ -219,7 +219,7 @@ function publishState() {
     }
     if (stream) {
       state.stream = stream.view;
-      state.audio = { ...settings.audio, ...svc.audio.view, screen: stream.audio };
+      state.audio = { ...settings.audio, ...svc.audio.view, screen: stream.audio, mic: svc.mic ? svc.mic.view() : null };
     }
     state.streamInput = settings.streamInput !== false;
     state.displayMode = displayMode();
@@ -483,6 +483,7 @@ app.whenReady().then(() => {
   if (app.dock && !app.isPackaged) app.dock.setIcon(path.join(__dirname, '..', '..', 'shared', 'icon', 'teindesk-dark-mac.png'));
   store.init(app.getPath('userData'));
   settings = store.loadSettings();
+  require('../../shared/inputlane.js').setLaneProtocol(settings.app.inputProtocol); // General › Advanced, before any lane binds
   i18n = I18n.create(I18n.resolveLanguage(settings.ui.language, app.getLocale()));
   id = identity.load(settings);
   Object.assign(state, { macName: id.macName, macId: id.macId, fp: id.fp, version: app.getVersion(), about: aboutInfo(app) });
@@ -587,6 +588,23 @@ app.whenReady().then(() => {
 
   svc = startServices({ server: peer, getSettings: () => settings, pushState, onHelperReady: refreshPermissions,
     hub, mesh, layoutSync, selfName: () => id.macName });
+  // Audio › Microphone (shared/mic.js): loaded the first time one of its switches is on.
+  svc.loadMic = () => {
+    if (svc.mic || !(settings.audio.micSend || settings.audio.micReceive)) return svc.mic || null;
+    const { Mic } = require('../../shared/mic.js');
+    const askMic = () => (systemPreferences.getMediaAccessStatus('microphone') === 'granted' ? Promise.resolve(true) : systemPreferences.askForMediaAccess('microphone'));
+    svc.mic = new Mic({ server: peer, cfg: () => settings.audio, onChange: pushState, platform: 'mac', askMic });
+    return svc.mic;
+  };
+  svc.loadMic();
+  // Apps and Windows › Move windows: a window grabbed with the move key crossed with the pointer. A
+  // copy of the other computer's window goes home there (pcapps.js); one of this Mac's goes over (appsend.js).
+  svc.kvm.onMoveWindow = (m, to) => {
+    const wid = Number(m.moving);
+    if (to && to !== hub.selectedId) return; // apps and windows go to the selected device only
+    if (!wid || svc.pcApps.returnWindow(wid)) return;
+    if (settings.apps.moveWindows) svc.appSend.moveOut(wid, Number(m.movingPid));
+  };
   if (settings.app.openAtLogin !== login.isOn()) login.apply(settings.app.openAtLogin);
 
   // Every phone gets its own stack (phone.js, phone-bridge.js, phoneview.js) on a link bound to it (phones.js);
@@ -647,7 +665,7 @@ app.whenReady().then(() => {
   };
   pairSync = new PairSync({ server: peer, getSettings: () => settings, saveSettings: () => store.saveSettings(settings), only: Object.keys(SYNC_ACTIONS), // no ReZume or Remote here
     apply: (f, dir, on) => (f !== 'value' ? SYNC_ACTIONS[f](dir, on)
-      : ['gestures', 'keyboard', 'speed', 'reverseScroll'].includes(dir) ? actions.setKvm({ [dir]: on }) : actions.setSharingOpts({ [dir]: on })) });
+      : ['gestures', 'keyboard', 'speed', 'reverseScroll', 'syncPads'].includes(dir) ? actions.setKvm({ [dir]: on }) : actions.setSharingOpts({ [dir]: on })) });
   // New releases on GitHub: a notification once per version, the menu bar item and About › Updates.
   updates = new Updates({
     current: app.getVersion(), platform: 'mac', getSettings: () => settings, getLanguage: () => i18n.locale,
@@ -883,6 +901,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
 });
 app.on('before-quit', () => {
+  if (svc && svc.mic) svc.mic.shutdown();
   quitting = true;
   if (svc && svc.phone) svc.phone.shutdown();
   if (svc && svc.phoneDrive) svc.phoneDrive.shutdown();

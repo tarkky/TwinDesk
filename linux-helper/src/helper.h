@@ -117,6 +117,13 @@ void wins_close(unsigned long wid);
 void wins_size(unsigned long wid, int w, int h);
 void wins_move(unsigned long wid, double x, double y);
 void wins_info(double id, int atPointer);
+void wins_move_key(const char *key);     // Move windows: the key held to grab a window, "" = off
+int wins_move_xevent(XEvent *e);         // the grab's core events (main.c's dpy_in loop)
+int wins_grabbing(void);                 // a window follows the pointer
+int wins_move_eat_up(void);              // the grab's left-button release: not passed on
+unsigned long wins_move_take(int keepUp); // crossing: the grabbed window (0: none); the grab ends
+void wins_park(unsigned long wid);
+void wins_place(unsigned long wid, int x, int y);
 
 // ---- wl.c: Wayland backend (evdev + uinput) ----
 struct pollfd;
@@ -152,6 +159,11 @@ int ble_handle(const char *line); // 1: a ble*/blp* command, taken
 void ble_shutdown(void);
 
 double now_ms(void);
+
+// ---- localwatch.c: driven, this computer's own mouse or touchpad takes it back (`local`) ----
+void local_allow(int on); // kvmConfig takeBack
+void local_watch(int on);
+int local_note(double dx, double dy, int click); // 1: it took it back (the return watch stops)
 
 // ---- lane.c: the input lane in the helper (native/tdfast; only with -DTDFAST) ----
 #ifdef TDFAST

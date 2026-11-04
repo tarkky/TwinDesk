@@ -17,7 +17,7 @@ UI.tab({
     const { el, api } = UI;
     const t = (...args) => I18n.t(...args);
     const language = UI.select([
-      { value: 'en', label: 'English' }, { value: 'zh-CN', label: '简体中文' },
+      { value: 'en', label: 'English' }, { value: 'zh-CN', label: '简体中文' }, { value: 'ru', label: 'Русский' }, { value: 'tr', label: 'Türkçe' },
     ], (v) => api.setLanguage(v));
     language.set(I18n.locale);
     const startup = UI.switch((v) => api.setStartup(v), { label: t('Start with Windows') });
@@ -73,6 +73,20 @@ UI.tab({
     const themeRow = UI.themeRow((v) => api.setLook({ theme: v }));
     const accentRow = UI.accentRow((v) => api.setLook({ accent: v }));
     // One page that scrolls, its sections listed beside it; Permissions first.
+    // Advanced: how input travels (shared/inputlane.js). UDP (tdv2, the default): moves on their own
+    // lane beside the session. TCP (tdv1): everything on the session. Read at startup, so Restart shows.
+    let protoStart = null; // the protocol this run started with
+    const protoRestart = UI.button(t('Restart'), () => api.relaunch(), 'small');
+    protoRestart.hidden = true;
+    const protoSel = UI.select([
+      { value: 'udp', label: t('UDP (tdv2)') }, { value: 'tcp', label: t('TCP (tdv1)') },
+    ], (v) => { api.setApp({ inputProtocol: v }); protoRestart.hidden = v === protoStart; });
+    const protoRow = UI.row(t('Input protocol'), t('UDP moves the pointer faster. TCP works on networks that block UDP. Applies after a restart'), [protoSel, protoRestart]);
+    // Hardware encoder (windows/encoder.js, #133): the GPU's, or OpenH264 in software. Read at startup too.
+    const encRestart = UI.button(t('Restart'), () => api.relaunch(), 'small');
+    encRestart.hidden = true;
+    const encSw = UI.switch((v) => api.setEncoder(v), { label: t('Hardware encoder') });
+    const encRow = UI.row(t('Hardware encoder'), t('Shares the screen and app windows with the graphics card. Off: in software (OpenH264), for a picture that stalls or goes black. Applies after a restart'), [encSw, encRestart]);
     const sections = UI.sections([
       UI.card(t('Permissions'), [fwRow, btRow, locRow]),
       UI.card(t('Startup'), [
@@ -92,10 +106,24 @@ UI.tab({
       UI.card(t('Overview'), partRows),
       UI.card(t('Network and Bluetooth'), [bleRow, blePcRow, bleWifiRow, wakeRow, sendToRow]),
       UI.card(t('This computer'), [deviceRow, helperRow, vddRow]),
+      UI.card(t('Advanced'), [protoRow, ...(api.setEncoder ? [encRow] : [])]),
     ]);
     body.append(sections);
 
     return (s) => {
+      if (s.app) {
+        const proto = s.app.inputProtocol === 'tcp' ? 'tcp' : 'udp';
+        if (protoStart === null) protoStart = proto;
+        protoSel.set(proto);
+        protoRestart.hidden = proto === protoStart;
+      }
+      if (s.encoder) {
+        encSw.set(s.encoder.hw !== false);
+        encRestart.hidden = !s.encoder.restart;
+        if (s.encoder.auto && !s.encoder.restart) encRow.setHint(t('Turned off by itself: the hardware encoder stopped sending. Software encoding (OpenH264) is in use'));
+        else if (s.encoder.auto) encRow.setHint(t('Turned off by itself: the hardware encoder stopped sending. Restart to use the software encoder (OpenH264)'));
+        else encRow.setHint(t('Shares the screen and app windows with the graphics card. Off: in software (OpenH264), for a picture that stalls or goes black. Applies after a restart'));
+      }
       themeRow.render(s.look && s.look.theme);
       accentRow.render(s.look);
       sections.spy();

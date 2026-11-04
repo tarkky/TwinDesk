@@ -115,6 +115,7 @@
       KVM_LOCK: 'kvm.lock', // either {on}: the cursor is locked on the device it is on (shared/cursorlock.js); sent only while one drives the other
       KVM_DISPLAYS: 'kvm.displays', // either {displays: [{id, x, y, w, h, scale, primary, name}]}: our monitors (shared/kvm-geom.js), on connect and when they change
       KVM_IDENTIFY: 'kvm.identify', // either {}: show each monitor's number on it for a moment (the Cursor tab's Identify)
+      KVM_CAPS: 'kvm.caps', // either {on}: my Caps Lock as I hand my input over (take, or home); the other side turns its own that way (shared/capsync.js, #131)
       KVM_NEXT: 'kvm.next', // multi-device: {route, to, side, offset}: a device we drive reached an edge that leads to device `to` (docs/mesh.md)
       K_MOVE: 'k.mm',
       K_DOWN: 'k.md',
@@ -182,6 +183,12 @@
       AUDIO_ANSWER: 'audio.answer', // receiver->sender {dir, session, sdp}
       AUDIO_ICE: 'audio.ice', // either {dir, session, candidate}
       AUDIO_STOP: 'audio.stop', // sender->receiver {dir}
+      // Audio › Microphone (shared/mic.js): each side's microphone on the other, either way on its own
+      MIC_POLICY: 'mic.policy', // either {accept, ask?}: it uses the other's microphone; ask: send yours back (just loaded)
+      MIC_OFFER: 'mic.offer', // sender->receiver {session, sdp}
+      MIC_ANSWER: 'mic.answer', // receiver->sender {session, sdp}
+      MIC_ICE: 'mic.ice', // either {session, to: 'recv'|'send', candidate}
+      MIC_STOP: 'mic.stop', // sender->receiver {}
       // Camera sharing between two computers (shared/camshare.js, the Camera tab): one's camera in a
       // window on the other, WebRTC set up through these, the picture straight between them.
       CAM_POLICY: 'cam.policy', // either way, after welcome and on change {share}: this side lets the other see its camera
@@ -206,6 +213,7 @@
       APP_WINDOWS: 'app.windows', // M->W {windows: [{wid, id, title, x, y, w, h}]} normalized rects
       APP_FOCUS: 'app.focus', // W->M {wid}
       APP_CLOSE: 'app.close', // W->M {wid}
+      APP_RETURN: 'app.return', // W->M {wid}: a window moved there (app.windows moved: true) dragged back past the edge: it comes home
       // PC apps on the Mac
       PAPP_POLICY: 'papp.policy', // M->W {accept}
       PAPPS_LIST: 'papps.list', // M->W
@@ -216,6 +224,7 @@
       PAPP_FOCUS: 'papp.focus', // M->W {wid}
       PAPP_CLOSE: 'papp.close', // M->W {wid}
       PAPP_SIZE: 'papp.size', // M->W {wid, w, h} physical px
+      PAPP_RETURN: 'papp.return', // M->W {wid}: a window moved here (papp.windows moved: true) goes back, dragged past the edge home
       // A phone (os 'android') as the peer
       PHONE_INFO: 'phone.info', // phone->Mac {model, maker, sdk, release, battery?, charging?, colors: ['#rrggbb'], wallpaper?: data URL (small JPEG)}
       PHONE_APPS_LIST: 'phone.apps.list', // Mac->phone
@@ -254,13 +263,14 @@
       REMOTE_PAD: 'remote.pad',
       // ReZume (shared/rezume.js, ReZume.kt): what is in use on one side, to go on with on the other.
       // Off until turned on on both sides; offers go only to a side whose rz.policy says on.
-      RZ_POLICY: 'rz.policy', // either way, after welcome and on change {on, web, docs, apps, push}: this side takes the other's ReZume offers (and of which kinds)
-      // sender->receiver {id, kind: 'web'|'doc'|'app', title, url? (web), name?, size? (doc), app (bundle id, exe or package), appName, icon? (small PNG data: URL), at, push?}:
-      // the tab, document or phone app in use there (kept until another or rz.clear); push: sent on purpose (Send to / Open on computer), opened at once
+      RZ_POLICY: 'rz.policy', // either way, after welcome and on change {on, web, docs, apps, push, windows}: this side takes the other's ReZume offers (and of which kinds; windows: an app's window, computers only)
+      // sender->receiver {id, kind: 'web'|'doc'|'app'|'window', title, url? (web), name?, size? (doc), app (bundle id, exe or package), appName, icon? (small PNG data: URL), at, push?}:
+      // the tab, document, phone app or app window in use there (kept until another or rz.clear); push: sent on purpose (Send to / Open on computer), opened at once.
+      // A window taken is streamed as the Apps tab's are (papp.windows + rtc2 kind 'window', or app.windows from a Mac to a PC); closing it there only stops that.
       RZ_OFFER: 'rz.offer',
       RZ_CLEAR: 'rz.clear', // sender->receiver {id}: nothing to go on with any more
-      RZ_TAKE: 'rz.take', // receiver->sender {id}: taken; a doc's file follows as file.offer drop 'rezume', batch 'rz-<id>' (only to a side that asked)
-      RZ_DONE: 'rz.done', // sender->receiver {id, ok, why?}: a doc that couldn't be sent (gone, too big)
+      RZ_TAKE: 'rz.take', // receiver->sender {id}: taken; a doc's file follows as file.offer drop 'rezume', batch 'rz-<id>' (only to a side that asked); a window's are streamed
+      RZ_DONE: 'rz.done', // sender->receiver {id, ok, why?}: a doc or window that couldn't be sent (gone, too big, not let through); ok: a window went
       PHONE_SEND: 'phone.send', // computer->phone: clicks the active app's Send button
       PHONE_ACTIVE_APP: 'phone.activeApp', // phone->computer {pkg}: current foreground package
       // Wireless debugging (adb), which the Mac uses for the screen, touch, mouse and keyboard,

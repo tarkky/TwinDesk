@@ -5,6 +5,7 @@
 import Carbon.HIToolbox
 import Cocoa
 import IOKit.pwr_mgt
+import IOKit.hidsystem
 
 let injectedMark: Int64 = 0x4D53
 
@@ -43,6 +44,23 @@ final class Injector {
     }
     if capsLock { f.insert(.maskAlphaShift) }
     return f
+  }
+
+  /// Caps Lock (#131): set != nil turns it that way, the real one (its light too) and the one our
+  /// keys carry. Returns whether it is on.
+  func caps(set: Bool?) -> Bool {
+    guard let on = set else { return CGEventSource.flagsState(.combinedSessionState).contains(.maskAlphaShift) }
+    capsLock = on
+    let svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(kIOHIDSystemClass))
+    if svc != 0 {
+      var conn: io_connect_t = 0
+      if IOServiceOpen(svc, mach_task_self_, UInt32(kIOHIDParamConnectType), &conn) == KERN_SUCCESS {
+        IOHIDSetModifierLockState(conn, Int32(kIOHIDCapsLockState), on)
+        IOServiceClose(conn)
+      }
+      IOObjectRelease(svc)
+    }
+    return on
   }
 
   func post(_ e: CGEvent?) {
@@ -119,6 +137,9 @@ final class Injector {
 
   /// Button down/up at `p`, with the click count macOS expects for double/triple clicks.
   func button(_ b: Int, down: Bool, at p: CGPoint) {
+    // Move windows (Grab.swift): the move key and an injected click grab a window, the same as here.
+    if b == 0 && down && WindowGrab.shared.tryGrab(at: p) { return }
+    if b == 0 && !down && WindowGrab.shared.upPending { _ = WindowGrab.shared.up(); return }
     if down {
       let now = ProcessInfo.processInfo.systemUptime
       var count: Int64 = 1

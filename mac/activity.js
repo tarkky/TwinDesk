@@ -5,7 +5,8 @@
 // browser, "TwinDesk wants to control …"); any other app's document from its window's AXDocument
 // through System Events (Accessibility, which TwinDesk has for the mouse and keyboard, and System
 // Events' Automation, asked once). Firefox has no scripting: its window's title, then its own
-// session file (shared/browsertabs.js). Nothing runs before ReZume is on.
+// session file (shared/browsertabs.js). Anything else is at least the app itself (kind 'app'), whose
+// window ReZume may send to another computer. Nothing runs before ReZume is on.
 'use strict';
 
 const { execFile } = require('child_process');
@@ -51,6 +52,33 @@ const jxa = (docs) => new Promise((resolve) => {
   });
 });
 
+// An app's own icon, 64 px PNG in base64 (as the helper's Apps.icon). Not app.getFileIcon: on macOS
+// it goes by the extension alone, so every .app got the blank app icon.
+const ICON = `
+ObjC.import('AppKit');
+function run(argv) {
+  let file = argv[0];
+  if (file.charAt(0) !== '/') { // a bundle id (an app on ReZume's lists, from before a restart)
+    const u = $.NSWorkspace.sharedWorkspace.URLForApplicationWithBundleIdentifier(file);
+    if (!u || u.isNil()) return '';
+    file = ObjC.unwrap(u.path);
+  }
+  const img = $.NSWorkspace.sharedWorkspace.iconForFile(file);
+  const rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, 64, 64, 8, 4, true, false, 'NSDeviceRGBColorSpace', 0, 0);
+  $.NSGraphicsContext.saveGraphicsState;
+  $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep));
+  img.drawInRectFromRectOperationFraction($.NSMakeRect(0, 0, 64, 64), $.NSMakeRect(0, 0, 0, 0), 2, 1); // the whole image, source-over
+  $.NSGraphicsContext.restoreGraphicsState;
+  return rep.representationUsingTypeProperties(4, $({})).base64EncodedStringWithOptions(0).js; // PNG
+}`;
+
+const iconOf = (p) => new Promise((resolve) => {
+  execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', ICON, p], { timeout: 5000 }, (err, out) => {
+    const b64 = err ? '' : String(out).trim();
+    resolve(/^[A-Za-z0-9+/=]{100,}$/.test(b64) ? 'data:image/png;base64,' + b64 : '');
+  });
+});
+
 // "Not authorized to send Apple events" (-1743): Automation was refused for that app.
 const refused = (e) => /-1743|not authori[sz]ed|not allowed assistive/i.test(String(e || ''));
 
@@ -66,7 +94,7 @@ function create({ cfg }) {
       if (r.browser || /firefox|librewolf|zen/i.test(app)) {
         if (refused(r.err)) return { why: 'Let TwinDesk control ' + appName + ' to offer its tabs: System Settings › Privacy & Security › Automation › TwinDesk' };
         const url = r.url || (tabs.tabOf(app, r.title || '') || {}).url;
-        return url ? { kind: 'web', url, title: tabs.splitTitle(r.title || '').page || r.title || url, app, appName } : null;
+        return url ? { kind: 'web', url, title: tabs.splitTitle(r.title || '').page || r.title || url, app, appName } : null; // a browser: its link only
       }
       if (refused(r.serr)) return { why: 'Let TwinDesk control System Events to offer documents: System Settings › Privacy & Security › Automation › TwinDesk' };
       if (typeof r.doc === 'string' && r.doc.startsWith('file://')) {
@@ -74,14 +102,11 @@ function create({ cfg }) {
         try { p = decodeURIComponent(new URL(r.doc).pathname); } catch (_) { p = ''; }
         if (p) return { kind: 'doc', path: p, title: require('path').basename(p), app, appName };
       }
-      return null;
+      return { kind: 'app', title: r.title || appName, app, appName };
     },
     async appIcon(app) {
-      const p = paths.get(app);
-      if (!p) return '';
-      const { app: eApp } = require('electron');
-      const img = await eApp.getFileIcon(p, { size: 'normal' }); // 'large' aborts the whole app on macOS (Chromium's NOTREACHED)
-      return img && !img.isEmpty() ? img.resize({ width: 64, height: 64 }).toDataURL() : '';
+      const p = paths.get(app) || (/^[A-Za-z0-9.-]{1,200}$/.test(app) ? app : '');
+      return p ? iconOf(p) : '';
     },
     stop() {},
   };

@@ -57,7 +57,8 @@ require('../shared/applog.js').start(app); // console.* and crashes into the log
 // Encoder setting works on the next share. One enable-features switch for the app: Chromium keeps only the last one.
 {
   const codec = require('../shared/screencodec.js');
-  const on = codec.features([]);
+  const hub = require('./audiohub.js'); // the screen's sound captured by Chromium (macOS 14.2+)
+  const on = codec.features(hub.loopback() ? hub.LOOPBACK_FEATURES : []);
   if (on) app.commandLine.appendSwitch('enable-features', on);
 }
 // Multi-device switched on (multi.js, docs/multi-device.md): mesh/main.js runs instead of everything below.
@@ -222,7 +223,7 @@ function pushState() {
     }
     if (stream) {
       state.stream = stream.view;
-      state.audio = { ...settings.audio, ...svc.audio.view, screen: stream.audio };
+      state.audio = { ...settings.audio, ...svc.audio.view, screen: stream.audio, mic: svc.mic ? svc.mic.view() : null };
     }
     state.streamInput = settings.streamInput !== false;
     state.displayMode = displayMode();
@@ -527,18 +528,26 @@ function updateTray() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(trayMenu.appMenu(model))); // the same items in the menu bar
 }
 
+// The first session, either way, waits for the helper's input lane (kvm.laneReady), so it's native
+// from the start: about 0.3 s at launch, at most LANE_WAIT_MS when the helper doesn't answer.
+const LANE_WAIT_MS = 1500;
+let laneGo;
+const laneGate = new Promise((r) => (laneGo = r));
+const afterLane = () => Promise.race([laneGate, new Promise((r) => setTimeout(r, LANE_WAIT_MS))]);
+
 app.whenReady().then(() => {
   if (app.dock) app.dock.hide();
   // Dev runs show Electron's icon otherwise; the built app has it in its bundle.
   if (app.dock && !app.isPackaged) app.dock.setIcon(path.join(__dirname, '..', 'shared', 'icon', 'teindesk-dark-mac.png'));
   store.init(app.getPath('userData'));
   settings = store.loadSettings();
+  require('../shared/inputlane.js').setLaneProtocol(settings.app.inputProtocol); // General › Advanced, before any lane binds
   i18n = I18n.create(I18n.resolveLanguage(settings.ui.language, app.getLocale()));
   id = identity.load(settings);
   Object.assign(state, { macName: id.macName, macId: id.macId, fp: id.fp, version: app.getVersion(), about: aboutInfo(app) });
   console.log(`[main] ${id.macName} (${id.macId}) fp ${id.fp}`);
 
-  server = new Server(id);
+  server = new Server(id, { hold: true }); // listens once the helper's input lane is settled (afterLane below)
   server.on('listening', () => console.log(`[server] listening on 0.0.0.0:${server.port}`));
   server.on('listenError', (err) => {
     state.serverError = `Cannot listen on port ${P.PORT}: ${err.code || err.message}`;
@@ -588,9 +597,23 @@ app.whenReady().then(() => {
   });
   peer.on('closed', pushState);
   peer.on('rtt', pushState);
-  link.start();
 
   svc = startServices({ server: peer, getSettings: () => settings, pushState, onHelperReady: refreshPermissions });
+  svc.kvm.laneReady.then(laneGo);
+  // Apps and Windows › Move windows: a window grabbed with the move key crossed with the pointer. A
+  // copy of the other computer's window goes home there (pcapps.js); one of this Mac's goes over the
+  // way its apps do: to a Mac window by window (appsend.js), to a PC through the shared display (apps.js).
+  svc.kvm.onMoveWindow = (m) => {
+    const wid = Number(m.moving);
+    if (!wid || svc.pcApps.returnWindow(wid)) return;
+    if (!settings.apps.moveWindows) return;
+    if (peer.current && peer.current.os === P.OS.MAC) svc.appSend.moveOut(wid, Number(m.movingPid));
+    else svc.apps.moveOut(wid, Number(m.movingPid));
+  };
+  afterLane().then(() => {
+    server.listen();
+    link.start();
+  });
   if (settings.app.openAtLogin !== login.isOn()) login.apply(settings.app.openAtLogin);
 
   svc.phone = new Phone({ server: peer, raw: server, discovery, pairing });
@@ -680,6 +703,15 @@ app.whenReady().then(() => {
     return svc.nowPlaying;
   };
   svc.loadNowPlaying();
+  // Audio › Microphone (shared/mic.js): loaded the first time one of its switches is on.
+  svc.loadMic = () => {
+    if (svc.mic || !(settings.audio.micSend || settings.audio.micReceive)) return svc.mic || null;
+    const { Mic } = require('../shared/mic.js');
+    const askMic = () => (systemPreferences.getMediaAccessStatus('microphone') === 'granted' ? Promise.resolve(true) : systemPreferences.askForMediaAccess('microphone'));
+    svc.mic = new Mic({ server: peer, cfg: () => settings.audio, onChange: pushState, platform: 'mac', askMic });
+    return svc.mic;
+  };
+  svc.loadMic();
   // Camera tab: the cameras of the two computers (shared/camshare.js; a phone's is phoneViews.openCamera),
   // loaded only while Camera is on. ipc reaches them through svc.cam() (its ctx is a copy of svc).
   svc.loadCamera = () => {
@@ -783,9 +815,40 @@ app.whenReady().then(() => {
       appIcon: (a) => svc.rzAct.appIcon(a),
       open: { url: (u) => shell.openExternal(u), file: (p) => shell.openPath(p), phoneApp: (pkg) => openPhoneApp(pkg) },
       sendFile: (p, batch) => !!svc.fileSend.sendBatch([p], 'rezume', batch),
-      expectFile: (batch) => svc.drop.expectBatch(batch, '', true),
+      expectFile: (batch, dir) => svc.drop.expectBatch(batch, dir || '', true),
+      // Documents opened in place (shared/rzlive.js), the chooser (shared/rzpick.js), and where copies go.
+      cacheDir: path.join(app.getPath('temp'), 'TwinDesk ReZume'),
+      live: (() => {
+        const { LiveShare } = require('../shared/rzlive.js');
+        const ls = new LiveShare({ tls: () => server && server.tls, mounter: require('./phonedrive').mounter });
+        return {
+          share: (p) => ls.share(p),
+          mount: async (info) => {
+            if (svc.net && !(await svc.net.need('folder'))) throw new Error('The other computer could not be reached over Wi-Fi');
+            return ls.mount(info);
+          },
+          stop: () => ls.stop(),
+          shutdown: () => ls.shutdown(),
+        };
+      })(),
+      pick: (o, ways) => require('../shared/rzpick.js').pick(o, ways, { peer: name(), language: i18n.locale }),
       adb: () => phoneAdb(svc.phone && svc.phone.bridge),
       phoneApps: () => (svc.phone && svc.phone.apps) || [],
+      save: () => store.saveSettings(settings),
+      // An app's window between two computers: ours streamed window by window (appsend.js), theirs
+      // shown here as the PC apps are (pcapps.js).
+      window: {
+        canSend: () => true,
+        // The way this Mac's apps go there: to a Mac window by window (appsend.js), to a PC through
+        // the shared display (apps.js), exactly as its Apps tab opens them.
+        send: (app) => (peer.current && peer.current.os === P.OS.MAC ? svc.appSend.adopt(app) : svc.apps.adopt(app)),
+        accept: async (on) => {
+          if (on && svc.net && !(await svc.net.need('apps'))) return false;
+          svc.pcApps.acceptReZume(on);
+          return true;
+        },
+        stop: (app) => { svc.appSend.unadopt(app); svc.apps.unadopt(app); },
+      },
     });
     svc.rz.on('change', pushState);
     svc.rz.on('opened', (o) => hud && hud.show('home', { key: o.how === 'sent' ? 'Sent to {name}: {title}' : 'From {name}: {title}', vars: { name: peer.current ? peer.current.name : { key: 'the other computer' }, title: o.title } }));
@@ -824,7 +887,7 @@ app.whenReady().then(() => {
   pairSync = new PairSync({ server: peer, getSettings: () => settings, saveSettings: () => store.saveSettings(settings),
     apply: (f, dir, on) => (f !== 'value' ? SYNC_ACTIONS[f](dir, on)
       : dir === 'rezume' ? actions.setRezume({ on })
-        : ['gestures', 'ble', 'keyboard', 'speed', 'reverseScroll'].includes(dir) ? actions.setKvm({ [dir]: on }) : actions.setSharingOpts({ [dir]: on })) });
+        : ['gestures', 'ble', 'keyboard', 'speed', 'reverseScroll', 'syncPads'].includes(dir) ? actions.setKvm({ [dir]: on }) : actions.setSharingOpts({ [dir]: on })) });
   // New releases on GitHub: a notification once per version, the menu bar item and About › Updates.
   updates = new Updates({
     current: app.getVersion(), platform: 'mac', getSettings: () => settings, getLanguage: () => i18n.locale,
@@ -1129,6 +1192,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
 });
 app.on('before-quit', () => {
+  if (svc && svc.mic) svc.mic.shutdown();
   if (svc && svc.rzShelf) svc.rzShelf.shutdown();
   if (svc && svc.rz) svc.rz.shutdown();
   quitting = true;
