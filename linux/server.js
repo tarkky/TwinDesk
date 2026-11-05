@@ -34,6 +34,7 @@ class Server extends EventEmitter {
     this.blePorts = new Map(); // local ports of our own connections that carry a Bluetooth pipe (blepipe.js) -> last bytes
     this.tls = { key, cert }; // also the shared folder's server (shared/foldershare.js)
     this.https = https.createServer(this.tls);
+    this.https.requestTimeout = 0; // not Node's 5-min cap on a whole request: fast files' PUTs (a phone's, a guest's) outlast it
     this.wss = new WebSocketServer({ server: this.https, maxPayload: P.MAX_PAYLOAD });
     this.wss.on('connection', (ws, req) => this._onConnection(ws, req));
     this.wss.on('error', () => {}); // ws repeats the server's errors here; listenError below reports them
@@ -226,7 +227,7 @@ class Server extends EventEmitter {
     this.current = ctx;
     // The input lane (shared/inputlane.js): when its hello asked, over the network only.
     const il = ctx.ilWanted && ctx.transport === 'ip' && this.ilOffer ? this.ilOffer(ctx) : null;
-    this.send(ctx, { ...welcome, resume: ctx.resumeKey, ...(ctx.fx ? { fx: ctx.fx } : {}), ...(ctx.fx2 ? { fx2: { port: ctx.fx2 } } : {}), ...(il ? { il } : {}) });
+    this.send(ctx, { ...welcome, resume: ctx.resumeKey, ...(ctx.fx ? { fx: ctx.fx } : {}), ...(ctx.fx2 ? { fx2: { port: ctx.fx2 } } : {}), ...(this.fxPlainOffer ? this.fxPlainOffer(ctx) : {}), ...(il ? { il } : {}) });
     this.emit('client', ctx);
   }
 

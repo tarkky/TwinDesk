@@ -27,7 +27,7 @@
         rec {
           twindesk = pkgs.stdenv.mkDerivation rec {
             pname = "twindesk";
-            version = "2.5.0";
+            version = "2.5.3";
 
             src = self;
 
@@ -80,6 +80,9 @@
 
               $CC -O2 -Wall -Wextra -std=gnu11 linux-helper/pad/pad.c                 -o linux-helper/bin/twindesk-pad
 
+              # Camera > Virtual camera's writer (linux/vcam.js); without it the switch says "Not in this build"
+              $CC -O2 -Wall -Wextra -std=gnu11 linux-helper/vcam/vcam.c               -o linux-helper/bin/twindesk-vcam
+
               runHook postBuild
             '';
 
@@ -99,12 +102,14 @@
               if [ -d shared/icon ]; then
                 cp -r shared/icon "$share/shared/"
               fi
+              cp -r shared/lang "$out/share/twindesk/shared/"
 
               # Copy helper binaries
               cp linux-helper/bin/macshare-linuxhelper "$share/linux-helper/bin/"
               cp linux-helper/bin/macshare-linuxhelper-multi "$share/linux-helper/bin/"
               cp linux-helper/bin/twindesk-wifiap "$share/linux-helper/bin/"
               cp linux-helper/bin/twindesk-pad "$share/linux-helper/bin/"
+              cp linux-helper/bin/twindesk-vcam "$share/linux-helper/bin/"
               cp linux-helper/bin/twindesk-wifiap "$out/libexec/twindesk-wifiap"
 
               # Install twindesk-connector helper and polkit policy for Extend virtual display
@@ -264,19 +269,45 @@ EOF
               uinput = mkOption {
                 type = types.bool;
                 default = true;
-                description = "Whether to enable hardware.uinput for Wayland remote input injection.";
+                description = ''
+                  Wayland mouse and keyboard sharing: loads uinput, gives /dev/uinput to the input group, and
+                  installs the TwinDesk helper as a setgid input wrapper (/run/wrappers/bin/twindesk-linuxhelper),
+                  so the helper alone can read /dev/input and write /dev/uinput. No user is added to a group.
+                '';
               };
 
               user = mkOption {
                 type = types.nullOr types.str;
                 default = null;
-                description = "Primary user to add to the 'input' and 'uinput' groups for Wayland input capture & injection.";
+                description = "Your user name. Only used with inputGroups.";
+              };
+
+              inputGroups = mkOption {
+                type = types.bool;
+                default = false;
+                description = ''
+                  Also add `user` to the input and uinput groups. TwinDesk doesn't need this (its helper has the
+                  input group on its own), and it lets every program that user runs read the keyboard and inject
+                  input. Leave it off unless you know you want it.
+                '';
               };
 
               enableWifiDirect = mkOption {
                 type = types.bool;
                 default = true;
                 description = "Whether to configure security.wrappers for twindesk-wifiap with CAP_NET_ADMIN.";
+              };
+
+              virtualCamera = mkOption {
+                type = types.bool;
+                default = true;
+                description = ''
+                  Whether to provide a "TwinDesk Camera" v4l2loopback device for Camera > Virtual camera.
+                  TwinDesk's own installer for it needs apt, dnf or pacman, which NixOS doesn't have. This loads
+                  the v4l2loopback module and adds the device at boot with v4l2loopback-ctl, without touching
+                  boot.extraModprobeConfig, so it works beside other v4l2loopback users (OBS's virtual camera,
+                  say).
+                '';
               };
             };
 
@@ -300,23 +331,68 @@ EOF
               # Wayland input emulation
               hardware.uinput.enable = mkIf cfg.uinput true;
               services.udev.extraRules = mkIf cfg.uinput ''
-                KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+                KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
               '';
 
-              # Add user to input and uinput groups if configured
-              users.users = mkIf (cfg.uinput && cfg.user != null) {
+              # Only with inputGroups: the user in the input groups (every program of theirs can then read
+              # the keyboard; TwinDesk doesn't need it, #144).
+              users.users = mkIf (cfg.uinput && cfg.inputGroups && cfg.user != null) {
                 ${cfg.user}.extraGroups = [ "input" "uinput" ];
               };
 
-              # Wi-Fi Direct helper security wrapper with CAP_NET_ADMIN
-              security.wrappers = mkIf cfg.enableWifiDirect {
-                twindesk-wifiap = {
-                  source = "${cfg.package}/libexec/twindesk-wifiap";
-                  capabilities = "cap_net_admin+ep";
-                  owner = "root";
-                  group = "root";
+              # Virtual camera: a v4l2loopback device named "TwinDesk Camera" (linux/vcam.js looks it up by that name).
+              # Added at runtime rather than through `options v4l2loopback ...` in boot.extraModprobeConfig:
+              # those lines from different modules (OBS, ...) don't merge.
+              boot.extraModulePackages = mkIf cfg.virtualCamera [ config.boot.kernelPackages.v4l2loopback ];
+              boot.kernelModules = mkIf cfg.virtualCamera [ "v4l2loopback" ];
+              systemd.services.twindesk-vcam = mkIf cfg.virtualCamera {
+                description = "TwinDesk virtual camera device (v4l2loopback)";
+                wantedBy = [ "multi-user.target" ];
+                wants = [ "modprobe@v4l2loopback.service" ];
+                after = [ "systemd-modules-load.service" "modprobe@v4l2loopback.service" ];
+                serviceConfig = {
+                  Type = "oneshot";
+                  RemainAfterExit = true;
                 };
+                script = ''
+                  for f in /sys/class/video4linux/*/name; do
+                    read -r name 2>/dev/null < "$f" || continue
+                    [ "$name" = "TwinDesk Camera" ] && exit 0
+                  done
+                  ${config.boot.kernelPackages.v4l2loopback.bin}/bin/v4l2loopback-ctl add -x 1 -n "TwinDesk Camera"
+                '';
               };
+
+              warnings = optional (cfg.user != null && !cfg.inputGroups)
+                "programs.twindesk.user no longer adds ${cfg.user} to the input and uinput groups: the TwinDesk helper has the input group on its own (a setgid wrapper). Set programs.twindesk.inputGroups = true only if you want the old behaviour.";
+
+              security.wrappers = mkMerge [
+                # The helper alone gets the input group (setgid): it reads /dev/input and writes /dev/uinput
+                # for Wayland sharing (linux/system.js helperBin).
+                (mkIf cfg.uinput {
+                  twindesk-linuxhelper = {
+                    source = "${cfg.package}/share/twindesk/linux-helper/bin/macshare-linuxhelper";
+                    setgid = true;
+                    owner = "root";
+                    group = "input";
+                  };
+                  twindesk-linuxhelper-multi = {
+                    source = "${cfg.package}/share/twindesk/linux-helper/bin/macshare-linuxhelper-multi";
+                    setgid = true;
+                    owner = "root";
+                    group = "input";
+                  };
+                })
+                # Wi-Fi Direct helper security wrapper with CAP_NET_ADMIN
+                (mkIf cfg.enableWifiDirect {
+                  twindesk-wifiap = {
+                    source = "${cfg.package}/libexec/twindesk-wifiap";
+                    capabilities = "cap_net_admin+ep";
+                    owner = "root";
+                    group = "root";
+                  };
+                })
+              ];
             };
           };
 

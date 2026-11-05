@@ -320,7 +320,7 @@ function start() {
   wake = new Wake({ link, settings, save: saveSettings, onChange: pushState, address: () => ownAddresses()[0] });
   const sender = new Sender(link);
   vdd = new Vdd({ onChange: pushState });
-  pcScreen = new PcScreen({ link, helper, sender, vdd, settings, popup: (kind, text) => hud.show(kind, text), inputAllowed: () => kvm.mode === 'home', onChange: pushState });
+  pcScreen = new PcScreen({ link, helper, sender, vdd, settings, popup: (kind, text) => hud.show(kind, text), inputAllowed: () => kvm.mode === 'home', onChange: pushState , needDriver: () => goTab('pc-mac') });
   vdd.check(); // Extend: can this desktop add a virtual monitor? (and one left on by a crash goes)
   apps = new Apps({ link, allowed: () => settings.macApps.on, getLanguage: () => i18n.locale, getMonitor: () => screen.win, popup: (kind, text) => hud.show(kind, text), peerName, onChange: pushState, onWatch: () => screen.policy() });
   screen.apps = apps;
@@ -356,7 +356,7 @@ function start() {
     get phone() { return phone; }, get phoneViews() { return phone ? phone.views : null; }, get phoneDrive() { return phoneDrive; }, connectPhoneDev, cancelPhoneInvite, phoneHub: loadHub, loadMic,
     applyMesh: () => autoJoin && autoJoin.schedule(),
     get net() { return net; }, get wifi() { return wifi; }, applyNet, joinHotspot, openBluetoothSettings,
-    checkFirewall, fixFirewall, fixInput, setStartup, onApp: () => updateTray(buildState()), onLanguage: changeLanguage, onLook: () => theme.setPref(settings.ui.theme) });
+    checkFirewall, fixFirewall, fixInput, leaveInputGroup, removeInput, setStartup, onApp: () => updateTray(buildState()), onLanguage: changeLanguage, onLook: () => theme.setPref(settings.ui.theme) });
   pairSync = new PairSync({ link, settings, save: saveSettings, set: ipc.set, only: ['clipboard', 'notifs', 'apps', 'audio', 'cursor', 'terminal', 'files'] }); // Two-way switches per pair (no ReZume or Remote here)
   nativeTheme.on('updated', pushState);
   link.start();
@@ -995,13 +995,35 @@ async function fixFirewall() {
   pushState();
 }
 
+// Input access on Wayland (system.js, #144): the helper's own, never the user's.
 async function fixInput() {
   try {
     await system.fixInput();
-    inputNote = 'Done. Log out and back in once to finish.';
+    inputNote = 'Done. Only the TwinDesk helper can read and control the mouse and keyboard.';
   } catch (e) {
     inputNote = 'Not fixed: ' + e.message;
   }
+  helper.stop();
+  helper.start(); // as its setgid copy now
+  pushState();
+}
+async function leaveInputGroup() {
+  try {
+    await system.leaveInputGroup();
+    inputNote = 'Done. Log out and back in once to finish.';
+  } catch (e) {
+    inputNote = 'Not changed: ' + e.message;
+  }
+  pushState();
+}
+async function removeInput() {
+  try {
+    await system.removeInput();
+    inputNote = 'Removed. Log out and back in once to finish. Sharing the mouse and keyboard on Wayland needs Fix again.';
+  } catch (e) {
+    inputNote = 'Not removed: ' + e.message;
+  }
+  helper.stop();
   helper.start();
   pushState();
 }
@@ -1142,7 +1164,7 @@ function updateTray(s) {
   const found = s.found.filter((d) => !s.peer || d.id !== s.peer.id);
   const host = s.paired && s.paired.macName;
   const again = !connected && host && (s.link.state === 'stopped' || !!s.link.busy);
-  const key = JSON.stringify([name, again, away, pcApps ? pcApps.moved.size : 0, kvm.linked, kvm.paused, kvm.locked, kvm.mode, settings.keys.lockKeys, sharing, watching, k.driveOther, k.beDriven, settings.clipboard.enabled,
+  const key = JSON.stringify([name, again, away, pcApps ? pcApps.moved.size : 0, kvm.linked, kvm.paused, kvm.locked, kvm.mode, settings.keys.lockKeys, sharing, s.pcScreen.mode, watching, k.driveOther, k.beDriven, settings.clipboard.enabled,
     settings.audio.send, settings.app.hud, k.keyboard, settings.files.edgeDrag, settings.files.shortcuts, settings.files.copyKeys, found.map((d) => [d.id, d.name, d.os]), s.updates && s.updates.available && s.updates.latest]);
   if (key === trayKey) return;
   trayKey = key;
@@ -1167,7 +1189,10 @@ function updateTray(s) {
     driven: { label: t('Let {name} Control {me}', { name: other, me: device.name }), checked: k.beDriven, set: (on) => set('kvm', { beDriven: on }, () => kvm.applyConfig()) },
     popup: { checked: settings.app.hud, set: (on) => set('app', { hud: on }) },
     screen: [
-      { label: t('Share Screen'), checked: sharing, set: (on) => pcScreen.setMode(on ? 'mirror' : 'off') },
+      { label: t('Share Screen'), checked: sharing, set: (on) => pcScreen.setMode(on ? 'last' : 'off') }, // in the mode last picked here
+      { label: t('Extend'), checked: pcScreen.mode === 'extend', set: (on) => (on ? pcScreen.extend() : pcScreen.setMode('off')) },
+      { label: t('Mirror'), checked: pcScreen.mode === 'mirror', set: (on) => pcScreen.setMode(on ? 'mirror' : 'off') },
+      { sep: true },
       // Opens/closes the screen window (opening starts the other computer's sharing).
       { label: t('Receive Screen'), checked: watching, set: (on) => (on ? screen.open(false) : screen.close()) },
     ],

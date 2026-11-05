@@ -108,25 +108,25 @@ A native Rust input lane over UDP, a parallel file engine, hardware video. [How]
 
 **🍎 macOS**<br><sub>13 Ventura or later</sub>
 
-<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.0/TwinDesk-2.5.0-arm64.dmg"><img src="https://img.shields.io/badge/Apple_Silicon-.dmg-000000?style=for-the-badge" alt="macOS, Apple Silicon"></a><br>
-<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.0/TwinDesk-2.5.0-x64_Intel.dmg"><img src="https://img.shields.io/badge/Intel-.dmg-555555?style=for-the-badge" alt="macOS, Intel"></a>
+<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.2/TwinDesk-2.5.2-arm64.dmg"><img src="https://img.shields.io/badge/Apple_Silicon-.dmg-000000?style=for-the-badge" alt="macOS, Apple Silicon"></a><br>
+<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.2/TwinDesk-2.5.2-x64_Intel.dmg"><img src="https://img.shields.io/badge/Intel-.dmg-555555?style=for-the-badge" alt="macOS, Intel"></a>
 
 </td>
 <td width="25%" align="center" valign="top">
 
 **🪟 Windows**<br><sub>10 and 11</sub>
 
-<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.0/TwinDesk-Setup-2.5.0.exe"><img src="https://img.shields.io/badge/x64-Installer-0078d4?style=for-the-badge" alt="Windows, x64"></a><br>
-<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.0/TwinDesk-Setup-2.5.0-arm64.exe"><img src="https://img.shields.io/badge/ARM64-Installer-005a9e?style=for-the-badge" alt="Windows on ARM"></a>
+<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.2/TwinDesk-Setup-2.5.2.exe"><img src="https://img.shields.io/badge/x64-Installer-0078d4?style=for-the-badge" alt="Windows, x64"></a><br>
+<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.2/TwinDesk-Setup-2.5.2-arm64.exe"><img src="https://img.shields.io/badge/ARM64-Installer-005a9e?style=for-the-badge" alt="Windows on ARM"></a>
 
 </td>
 <td width="25%" align="center" valign="top">
 
 **🐧 Linux**<br><sub>X11 and Wayland, x86_64</sub>
 
-<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.0/TwinDesk-2.5.0-amd64.deb"><img src="https://img.shields.io/badge/Debian_·_Ubuntu-.deb-d70a53?style=for-the-badge" alt="Linux, .deb"></a><br>
-<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.0/TwinDesk-2.5.0-x86_64.AppImage"><img src="https://img.shields.io/badge/Any_distro-AppImage-f0a30a?style=for-the-badge" alt="Linux, AppImage"></a><br>
-<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.0/twindesk-bin-2.5.0-1-x86_64.pkg.tar.zst"><img src="https://img.shields.io/badge/Arch-pkg.tar.zst-1793d1?style=for-the-badge" alt="Linux, Arch package"></a><br>
+<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.2/TwinDesk-2.5.2-amd64.deb"><img src="https://img.shields.io/badge/Debian_·_Ubuntu-.deb-d70a53?style=for-the-badge" alt="Linux, .deb"></a><br>
+<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.2/TwinDesk-2.5.2-x86_64.AppImage"><img src="https://img.shields.io/badge/Any_distro-AppImage-f0a30a?style=for-the-badge" alt="Linux, AppImage"></a><br>
+<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.2/twindesk-bin-2.5.2-1-x86_64.pkg.tar.zst"><img src="https://img.shields.io/badge/Arch-pkg.tar.zst-1793d1?style=for-the-badge" alt="Linux, Arch package"></a><br>
 <sub>NixOS: <code>nix run github:InukaAsith/TwinDesk</code> (<a href="#nixos--nix-flakes">more</a>)</sub>
 
 </td>
@@ -134,8 +134,8 @@ A native Rust input lane over UDP, a parallel file engine, hardware video. [How]
 
 **🤖 Android**<br><sub>10 or later, phones and tablets</sub>
 
-<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.0/TwinDesk-2.5.0.apk"><img src="https://img.shields.io/badge/Phone_app-.apk-3ddc84?style=for-the-badge" alt="Android app"></a><br>
-<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.0/TwinDesk-2.5.0-full.apk"><img src="https://img.shields.io/badge/Full_app-.apk-1b8a4c?style=for-the-badge" alt="Android full app"></a><br>
+<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.2/TwinDesk-2.5.2.apk"><img src="https://img.shields.io/badge/Phone_app-.apk-3ddc84?style=for-the-badge" alt="Android app"></a><br>
+<a href="https://github.com/InukaAsith/TwinDesk/releases/download/v2.5.2/TwinDesk-2.5.2-full.apk"><img src="https://img.shields.io/badge/Full_app-.apk-1b8a4c?style=for-the-badge" alt="Android full app"></a><br>
 <sub>The full app adds notifications, texts and Accessibility; the computer can install it for you over wireless debugging</sub>
 
 </td>
@@ -627,6 +627,11 @@ Everything below is for the curious and for people building TwinDesk themselves.
 On Linux, TwinDesk runs on both X11 and Wayland. On Wayland, the mouse and keyboard go through
 evdev and uinput (the Setup screen grants access once), screens are captured through the desktop
 portal, and the clipboard goes through wl-clipboard. A few things work a little differently:
+
+- **Input access on Wayland.** Reading `/dev/input` means reading every key typed, so it goes to
+  TwinDesk's helper alone: Setup's Fix installs a setgid `input` copy of the helper (the NixOS module a
+  wrapper) and never adds your account to the `input` group. General › Input access › Remove undoes it.
+  Details and the manual undo are in [docs/nixos.md](docs/nixos.md#1-wayland-mouse--keyboard-kvm).
 
 - **Shared folder.** Sharing uses Samba. The first time, one password prompt installs it if it's
   missing and adds a network-only account. The other computer's folder is connected with GVFS
