@@ -40,6 +40,7 @@ object Notify {
     const val ID_RING = 15 // the computer rang this phone: Stop
     const val ID_DIAL = 16 // a code from the computer (*#06#…): tap to open the dialer with it
     const val ID_MEDIA_DEL = 17 // Remove on the computer's Photos page, without All files access: tap for Android's confirmation
+    const val ID_PEER = 18 // Connect with Android (Peer.kt): a phone asks to connect, to pair, to see the screen
     const val ID_SOUND = 12 // the sound capture: asking for Start, then its service's own
     private const val ID_FILES_BASE = 1000
     private const val ID_COMPUTER_BASE = 100000
@@ -109,9 +110,9 @@ object Notify {
             h != null -> {
                 b.setContentTitle("Connected to ${h.name}")
                 b.setContentText(core.files.activeLine() ?: "Files, clipboard and notifications are shared")
-                // Three buttons at most: wireless debugging being off has its own notification (adbOff).
-                b.addAction(Notification.Action.Builder(null, "Send clipboard", action(ctx, ActionReceiver.SEND_CLIP, 11)).build())
-                b.addAction(Notification.Action.Builder(null, "Disconnect", action(ctx, ActionReceiver.DISCONNECT, 12)).build())
+                // The ones chosen in General › Notification buttons (three at most); wireless debugging
+                // being off has its own notification (adbOff).
+                QuickActions.actions(ctx, core).forEach { b.addAction(it) }
             }
             core.link.state == "connecting" -> b.setContentTitle("Connecting to ${core.link.host?.name ?: "your computer"}…")
             else -> {
@@ -121,7 +122,7 @@ object Notify {
                 if (near != null) b.addAction(Notification.Action.Builder(null, "Connect to ${near.name}", action(ctx, ActionReceiver.CONNECT, 13, near.id)).build())
             }
         }
-        b.addAction(Notification.Action.Builder(null, "Exit", action(ctx, ActionReceiver.EXIT, 15)).build())
+        if (h == null) b.addAction(Notification.Action.Builder(null, "Exit", action(ctx, ActionReceiver.EXIT, 15)).build())
         return b.build()
     }
 
@@ -459,6 +460,20 @@ object Notify {
     }
 
     fun cancelFclip(ctx: Context) = nm(ctx).cancel(ID_FCLIP)
+
+    // Connect with Android (Peer.kt): another phone wants something; tapping opens TwinDesk (or `open`).
+    fun peer(ctx: Context, title: String, text: String, open: PendingIntent? = null) = runCatching {
+        nm(ctx).notify(ID_PEER, Notification.Builder(ctx, CH_INVITE)
+            .setSmallIcon(R.drawable.ic_stat)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentIntent(open ?: openApp(ctx))
+            .setAutoCancel(true)
+            .build())
+    }.let { }
+
+    fun cancelPeer(ctx: Context) = runCatching { nm(ctx).cancel(ID_PEER) }.let { }
 
     // icon: the app's (from the computer), else TwinDesk's own shows.
     fun fromComputer(ctx: Context, key: String, app: String, title: String, body: String, computer: String, icon: android.graphics.Bitmap? = null) {

@@ -189,6 +189,10 @@ func handle(_ line: String) {
   case "clipboardWatch":
     pasteboardWatch.set(on: (msg["on"] as? Bool) ?? false)
     reply(id)
+  case "frontWatch": // ReZume: the app or window in front changed (FrontWatch.swift), so main looks only then
+    reply(id, ["ax": FrontWatch.shared.set(on: (msg["on"] as? Bool) ?? false)])
+  case "usbWatch": // a phone with USB debugging plugged in or out (UsbWatch.swift): events, not polling
+    reply(id, ["present": UsbWatch.shared.start()])
   case "clipboardInfo":
     reply(id, PasteboardWatch.info())
   case "audioCapture":
@@ -267,6 +271,9 @@ func handle(_ line: String) {
     reply(id)
   case "bleStop":
     BlePeripheral.shared.stop()
+    reply(id)
+  case "bleHold":
+    BlePeripheral.shared.hold()
     reply(id)
   case "bleSend":
     if let dev = msg["dev"] as? String, let b64 = msg["data"] as? String, let data = Data(base64Encoded: b64) {

@@ -48,7 +48,7 @@ class Server extends EventEmitter {
       }
     });
     this.https.listen(LISTEN_PORT, '0.0.0.0', () => this.emit('listening'));
-    this.tick = setInterval(() => this._liveness(), P.PING_MS);
+    this.tick = null; // the liveness timer: only while there are sockets (_arm), none on an idle tray
   }
 
   _onConnection(ws, req) {
@@ -69,6 +69,7 @@ class Server extends EventEmitter {
     if (isLoopback(ctx.address) && this.blePorts.has(req.socket.remotePort)) ctx.transport = 'ble';
     Object.assign(ws, { ctx, lastRx: now, transport: ctx.transport, address: ctx.address, blePort: ctx.transport === 'ble' ? req.socket.remotePort : 0 });
     this.sockets.add(ctx);
+    this._arm();
     ws.on('message', (data, isBinary) => this._onMessage(ws.ctx, data, isBinary, ws));
     ws.on('close', () => this._onSocketClose(ws));
     ws.on('error', (err) => console.error(`[server] socket ${ws.address}: ${err.message}`));
@@ -93,7 +94,7 @@ class Server extends EventEmitter {
     this.sockets.delete(ctx);
     if (this.current === ctx) {
       this.current = null;
-      if (ctx.os === P.OS.ANDROID && !ctx.released) this._phoneGrace(ctx.deviceId);
+      if (P.isPhoneOs(ctx.os) && !ctx.released) this._phoneGrace(ctx.deviceId);
     }
     this.emit('closed', ctx);
   }
@@ -158,6 +159,15 @@ class Server extends EventEmitter {
     this.emit('message', msg, ctx); // peer.js routes it by type
   }
 
+  // Pings and silence checks every PING_MS while any socket is open; with none, nothing wakes the app.
+  _arm() {
+    if (this.tick || this.closed) return;
+    this.tick = setInterval(() => {
+      this._liveness();
+      if (!this.sockets.size) { clearInterval(this.tick); this.tick = null; }
+    }, P.PING_MS);
+  }
+
   _liveness() {
     const now = Date.now();
     for (const ctx of this.sockets) {
@@ -205,14 +215,24 @@ class Server extends EventEmitter {
   }
 
   // Mark ctx authenticated; a newer client replaces the older one.
-  authenticate(ctx, { deviceId, name, os }, welcome) {
+  authenticate(ctx, who, welcome) {
+    // Fast files v2: the files engine starts on demand (shared/fx2.js) and its port goes in this
+    // welcome, so when it isn't listening yet (it usually is: someone nearby, the socket coming in
+    // started it) the welcome waits for it, a few tens of ms. Never long: without it, the fx way.
+    const wait = ctx.fxWanted && ctx.fx2Wanted && this.fxOn && !ctx.fx2Waited && this.fx2Wait ? this.fx2Wait(1500) : null;
+    if (wait) {
+      ctx.fx2Waited = true;
+      const go = () => { if (!ctx.authed && this.sockets.has(ctx) && ctx.ws.readyState === ctx.ws.OPEN) this.authenticate(ctx, who, welcome); };
+      return void wait.then(go, go);
+    }
+    const { deviceId, name, os } = who;
     if (this.current && this.current !== ctx) {
       const old = this.current;
       this.current = null;
       old.released = true; // taken over: a phone gets no grace
       // A computer a phone took over from waits and comes back when the phone lets go (busy);
       // one a computer took over from stays away until someone connects it again (replaced).
-      if (os === P.OS.ANDROID && old.os !== P.OS.ANDROID) this.fail(old, P.E.BUSY, `In use by ${name}`);
+      if (P.isPhoneOs(os) && !P.isPhoneOs(old.os)) this.fail(old, P.E.BUSY, `In use by ${name}`);
       else this.fail(old, P.E.REPLACED, old.deviceId === deviceId ? 'Another connection from this device replaced this one' : `${name} took over`);
     }
     ctx.authed = true;
@@ -234,7 +254,7 @@ class Server extends EventEmitter {
 
   // A phone holds the session (or just dropped it and may resume): computers are refused.
   phoneHolds() {
-    if (this.current && this.current.os === P.OS.ANDROID) return true;
+    if (this.current && P.isPhoneOs(this.current.os)) return true;
     return !!this.phoneGrace && Date.now() < this.phoneGrace.until;
   }
 
@@ -273,6 +293,7 @@ class Server extends EventEmitter {
     this.closed = true;
     clearTimeout(this.listenRetry);
     clearInterval(this.tick);
+    this.tick = null;
     clearTimeout(this.graceTimer);
     for (const ctx of this.sockets) {
       if (ctx.alt) ctx.alt.terminate();

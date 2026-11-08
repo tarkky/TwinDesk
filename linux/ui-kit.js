@@ -291,7 +291,7 @@ const UI = {
   peer(s) {
     const p = s && s.peer;
     const os = p ? p.os : 'linux';
-    const KIND = { mac: 'Mac', win: 'PC', linux: 'Linux', android: I18n.t('Phone') };
+    const KIND = { mac: 'Mac', win: 'PC', linux: 'Linux', android: I18n.t('Phone'), ios: 'iPhone' };
     const same = os === 'linux';
     // Device names everywhere: this computer by its own name,
     // the other computer by its name (or "the other computer" before anything was paired).
@@ -299,7 +299,7 @@ const UI = {
     const name = (p && p.name) || I18n.t('the other computer');
     const Name = name.charAt(0).toUpperCase() + name.slice(1);
     return {
-      os, same, me, name, Name, phone: os === 'android',
+      os, same, me, name, Name, phone: os === 'android' || os === 'ios', iphone: os === 'ios',
       kind: KIND[os],
       them: name, us: me, the: name, there: name, There: Name, // older templates
       toMe: name + ' → ' + me,
@@ -334,13 +334,15 @@ const UI = {
     const seg = UI.segmented([
       { value: 'fast', label: I18n.t('Fastest') },
       { value: 'smooth', label: I18n.t('Smooth') },
+      { value: 'steady', label: I18n.t('Steady') },
     ], (v) => UI.api.setMonitor({ pacing: v }));
     const row = UI.row(I18n.t('Playback'), '', [seg]);
     row.render = (s) => {
       const pace = (s.monitor && s.monitor.pacing) || 'fast';
       seg.set(pace);
-      row.setHint(pace === 'smooth' ? I18n.t('Even motion, about one frame later. The same on {name}')
-        : I18n.t('Each frame the moment it arrives. The same on {name}'));
+      row.setHint(pace === 'steady' ? I18n.t('The steadiest motion, paced as a web browser plays it, a few frames later. The same on {name}')
+        : pace === 'smooth' ? I18n.t('Even motion, about one frame later. The same on {name}')
+          : I18n.t('Each frame the moment it arrives. The same on {name}'));
     };
     return row;
   },
@@ -369,10 +371,12 @@ const UI = {
     return String(t).replace(/\{(\w+)\}/g, (m, k) => (k in p ? p[k] : m));
   },
 
-  isPhone: (s) => !!(s && s.peerSession && s.peerSession.os === 'android'), // s.session is the desktop's here
+  isPhone: (s) => !!(s && s.peerSession && (s.peerSession.os === 'android' || s.peerSession.os === 'ios')), // s.session is the desktop's here
+  // An iPhone or iPad as the peer: no adb, no screen, input or apps from it (iOS lets no app give them).
+  isIphone: (s) => !!(s && s.peerSession && s.peerSession.os === 'ios'),
 
   // Small device glyph by OS: 'mac' | 'win' | 'linux' | 'android'.
-  osClass: (os) => (os === 'mac' ? 'mac' : os === 'android' ? 'phone' : os === 'linux' ? 'pc linux' : 'pc'),
+  osClass: (os) => (os === 'mac' ? 'mac' : os === 'android' || os === 'ios' ? 'phone' : os === 'linux' ? 'pc linux' : 'pc'),
   // An app's icon in a grid: its own, else (none, or it doesn't load) TwinDesk's, light or dark as the appearance.
   appIcon(src) {
     const fallback = matchMedia('(prefers-color-scheme: dark)').matches ? 'assets/sidebar-icon@2x.png' : 'assets/sidebar-icon-light@2x.png';
@@ -381,7 +385,7 @@ const UI = {
     return img;
   },
   osIcon(os) {
-    return UI.el('span', { class: `os-ico ${UI.osClass(os)}`, attrs: { 'aria-label': os === 'mac' ? 'Mac' : os === 'linux' ? 'Linux' : os === 'android' ? 'Phone' : 'PC' } });
+    return UI.el('span', { class: `os-ico ${UI.osClass(os)}`, attrs: { 'aria-label': os === 'mac' ? 'Mac' : os === 'linux' ? 'Linux' : os === 'ios' ? 'iPhone' : os === 'android' ? 'Phone' : 'PC' } });
   },
 
   // Two equal direction cards, always Mac → PC then PC → Mac.

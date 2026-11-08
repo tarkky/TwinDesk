@@ -16,6 +16,9 @@ const { EventEmitter } = require('events');
 const P = require('../shared/protocol.js');
 
 const RETRY_MS = 2000;
+// Stopped with nobody to share to (no session, or sharing off): the hidden capture window goes after
+// this long. While a session is on and sharing is on it stays, so a viewer that opens again starts at once.
+const DROP_MS = 30000;
 // A phone over Wi-Fi: a high rate only fills the radio's queues (latency) without looking sharper
 // on a phone screen, and a smaller keyframe gets there sooner.
 const PHONE_MBPS = 16;
@@ -61,7 +64,7 @@ class Stream extends EventEmitter {
       const on = !!msg.accept;
       // A phone's viewer says how big it is: Extend becomes a screen of that shape.
       const c = this.server.current;
-      if (c && c.os === P.OS.ANDROID && on && msg.width > 0 && msg.height > 0) {
+      if (c && P.isPhoneOs(c.os) && on && msg.width > 0 && msg.height > 0) {
         this.phoneSize = { width: msg.width | 0, height: msg.height | 0 };
         this.displays.setOverride(this.phoneSize);
       }
@@ -74,7 +77,7 @@ class Stream extends EventEmitter {
       else this._setStatus(this.getSettings().sharing.on ? 'no viewer' : 'off');
     });
     server.on('closed', () => {
-      if (!server.current || server.current.os !== P.OS.ANDROID) {
+      if (!server.current || !P.isPhoneOs(server.current.os)) {
         this.phoneSize = null;
         this.displays.setOverride(null);
       }
@@ -138,8 +141,9 @@ class Stream extends EventEmitter {
   }
 
   _ensureWindow() {
+    clearTimeout(this.dropTimer);
     if (this.win && !this.win.isDestroyed()) return Promise.resolve();
-    this.win = new BrowserWindow({
+    const w = this.win = new BrowserWindow({
       show: false,
       webPreferences: {
         preload: path.join(__dirname, 'preload-capture.js'),
@@ -149,6 +153,7 @@ class Stream extends EventEmitter {
       },
     });
     this.win.webContents.on('render-process-gone', (_e, d) => {
+      if (this.win !== w) return; // closed on purpose (_drop)
       console.error(`[stream] capture window gone: ${d.reason}`);
       this.win = null;
       this._scheduleRetry();
@@ -215,7 +220,8 @@ class Stream extends EventEmitter {
       this._toWindow('start', {
         session: s, bitrateMbps: phone ? Math.min(PHONE_MBPS, set.bitrateMbps) : set.bitrateMbps, sourceId: src.id, width, height, audio,
         ice: (this.server.current && this.server.current.ice) || null, // a phone on the USB cable: through the relay
-        fps: Math.min(120, Math.max(30, Math.round(target.hz || 60))),
+        fps: ScreenCodec.fps(target.hz, set.sharing && set.sharing.fps), // Share screen › Frame rate
+        steady: !!(set.sharing && set.sharing.pace === 'steady'), // Playback › Steady (shared/screencodec.js)
         codec: ScreenCodec.mode(set.sharing && set.sharing.codec), // Share screen › Encoder
       });
     } catch (e) {
@@ -240,7 +246,7 @@ class Stream extends EventEmitter {
   }
 
   _phone() {
-    return !!(this.server.current && this.server.current.os === P.OS.ANDROID);
+    return !!(this.server.current && P.isPhoneOs(this.server.current.os));
   }
 
   _displaysChanged() {
@@ -259,6 +265,16 @@ class Stream extends EventEmitter {
     this._toWindow('stop', {});
     Object.assign(this.view, { fps: 0, mbps: 0 });
     this._setStatus(status);
+    clearTimeout(this.dropTimer);
+    if (this.win) this.dropTimer = setTimeout(() => this._drop(), DROP_MS);
+  }
+
+  // The capture window and its renderer, gone while there's nobody to share to.
+  _drop() {
+    if (this.active || !this.win || (this.server.current && this.getSettings().sharing.on)) return;
+    const w = this.win;
+    this.win = null;
+    if (!w.isDestroyed()) w.destroy();
   }
 
   // Sharing off: tell Windows too, so it shows "Mac is not sharing".

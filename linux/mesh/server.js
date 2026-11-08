@@ -54,6 +54,12 @@ class Server extends EventEmitter {
     this.https = https.createServer(this.tls);
     this.https.requestTimeout = 0; // not Node's 5-min cap on a whole request: fast files' PUTs (a phone's, a guest's) outlast it
     this.wss = new WebSocketServer({ server: this.https, maxPayload: P.MAX_PAYLOAD });
+    // A phone's own screen (an iPhone's Share Screen, Android's Mirroring › Native): its upload here.
+    this.https.on('request', (req, res) => {
+      if (require('../../shared/nativescreen.js').NativeScreen.request(req, res)) return;
+      res.writeHead(404);
+      res.end();
+    });
     this.wss.on('connection', (ws, req) => this._onConnection(ws, req));
     this.wss.on('error', () => {}); // ws repeats the server's errors here; listenError below reports them
     this.https.on('error', (err) => this.emit('listenError', err)); // e.g. EADDRINUSE: another copy listens
@@ -75,8 +81,8 @@ class Server extends EventEmitter {
     let best = null;
     for (const c of this.clients.values()) {
       if (!best) best = c;
-      else if ((best.os === P.OS.ANDROID) !== (c.os === P.OS.ANDROID)) {
-        if (c.os !== P.OS.ANDROID) best = c;
+      else if ((P.isPhoneOs(best.os)) !== (P.isPhoneOs(c.os))) {
+        if (!P.isPhoneOs(c.os)) best = c;
       } else if (c.authSeq > best.authSeq) best = c;
     }
     return best;
@@ -328,7 +334,7 @@ class Server extends EventEmitter {
 
   // Disconnect a phone on purpose (ctx: its client; default the primary client, when it is a phone).
   releasePhone(ctx = this.current) {
-    if (ctx && ctx.os === P.OS.ANDROID) {
+    if (ctx && P.isPhoneOs(ctx.os)) {
       ctx.released = true;
       this.fail(ctx, P.E.RELEASED, 'The computer disconnected the phone');
       setTimeout(() => ctx.ws.terminate(), 1000); // an older phone app never answers the close

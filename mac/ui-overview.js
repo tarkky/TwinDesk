@@ -83,6 +83,7 @@ UI.tab({
     const adb = UI.adbCard();
     const qrPair = UI.qrPairCard ? UI.qrPairCard() : null;
     const pairedList = el('div');
+    const webCard = UI.webConnCard ? UI.webConnCard() : null; // TwinDesk Web's paired devices (shared/ui-web.js)
 
     body.append(
       permCard,
@@ -92,6 +93,7 @@ UI.tab({
       hero,
       adb.el,
       UI.card(tr('Paired'), [pairedList]),
+      ...(webCard ? [webCard.el] : []),
     );
 
     let foundKey = '';
@@ -153,6 +155,7 @@ UI.tab({
     }
 
     const update = (s) => {
+      if (webCard) webCard.render(s);
       last = s;
       const p = UI.names(s);
       bleSw.set(!s.net || s.net.ble !== false);
@@ -191,9 +194,9 @@ UI.tab({
         const rows = s.found.map((dev) => {
           const online = c && c.id === dev.id;
           const known = pairedIds.has(dev.id);
-          const st = dev.os === 'android' ? null : rowState(s, dev, online); // a phone has its own popup
+          const st = dev.os === 'android' || dev.os === 'ios' ? null : rowState(s, dev, online); // a phone has its own popup
           const kind = known ? 'take' : dev.os === 'mac' ? 'pair' : 'invite';
-          const going = dev.os === 'android' && phoneGoing === dev.id;
+          const going = (dev.os === 'android' || dev.os === 'ios') && phoneGoing === dev.id;
           const label = online || going || (st && !st.fail) ? null : st ? tr('Retry') : known ? tr('Take over') : dev.os === 'mac' ? tr('Pair') : tr('Connect');
           const btn = label && UI.button(tr(label), () => go(dev, kind), `small${dev.invited || st ? ' primary' : ''}`);
           const match = st && st.code ? UI.button(st.allow ? tr('Allow') : tr('Codes match'), () => (st.allow ? api.pairRespond(true) : api.confirmGuestCode()), 'small primary') : null;

@@ -1,5 +1,11 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
 // Main process: lifecycle, windows, tray, IPC and the state pushed to the main window.
+// Launch: the compiled code of every module after this one is kept on disk (Node's compile cache).
+try {
+  const m = require('module');
+  if (typeof m.enableCompileCache === 'function') m.enableCompileCache();
+} catch {}
+const Engines = require('../shared/engines.js'); // General › Advanced › Engines in use
 const { lanType } = require('../shared/lantype.js'); // Wi-Fi or Ethernet for Overview (#140)
 const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, Notification, shell, globalShortcut, systemPreferences } = require('electron');
 const Look = require('../shared/look.js');
@@ -134,6 +140,7 @@ let about = null; // shared/about.js, read once for the About page
 let quitting = false;
 let discovery = null;
 let link = null;
+let iosNet = null; // shared/iosnet.js: iPhones on a USB cable
 let settings = null;
 let device = null;
 let screen = null;
@@ -184,6 +191,7 @@ const bleQuiet = wifiQuiet();
 let net = null; // Wi-Fi for a session through Bluetooth (netlink.js)
 let wifi = null; // this PC's Wi-Fi for it: hosting, joining (wifi.js)
 let lastMode = 'home';
+let web = null; // TwinDesk Web (shared/web/webwire.js): browsers and iPhones as devices of their own
 let fw = { checking: true, ok: null, message: 'Checking…' }; // firewall self-check
 // Started at sign-in (tray only), or by a pinned Mac app's shortcut (that app only).
 const startHidden = process.argv.includes('--hidden') || process.argv.some((a) => a.startsWith('--mac-app=') || a.startsWith('--phone-app='));
@@ -239,6 +247,11 @@ function start() {
   });
   link = new Peer(guest);
   link.setPlain(settings.files.plain === true); // Files › Encrypt file transfers
+  // The files engine (shared/fx2.js) stays up while another TwinDesk computer is on the network: a
+  // session with it then starts without waiting for it. Alone, it isn't running at all.
+  const fx2Nearby = () => { if (link.fx2) link.fx2.need('nearby', discovery.found.size > 0); };
+  discovery.on('change', fx2Nearby);
+  fx2Nearby();
   startHost(guest);
   link.onState(() => {
     discovery.wantProbes = link.snapshot().link.state !== 'connected'; // probe every 10 s only while not connected
@@ -384,6 +397,7 @@ function start() {
   };
   wake = new Wake({ link, settings, save: saveSettings, onChange: pushState, address: () => ownAddresses()[0] }); // Wake over the network
   const sender = new Sender(link); // every rtc2 video session we send (screen, app windows)
+  sender.on('stats', (_, s) => { screenStats = { codec: s.codec, encoder: s.encoder, at: Date.now() }; }); // Engines in use
   sender.codec = () => settings.pcScreen.codec; // Share screen › Encoder
   pcScreen = new PcScreen({ link, helper, sender, vdd, settings, inputAllowed: () => kvm.mode === 'home', onChange: pushState, needDriver: () => goTab('pc-mac') });
   pcApps = new PcApps({ link, helper, sender, settings, inputAllowed: () => kvm.mode === 'home', onChange: pushState });
@@ -411,6 +425,9 @@ function start() {
     },
   });
   updates.start();
+  // TwinDesk Web (web.js): an iPhone's (or any browser's) own pages here, beside the one session.
+  web = require('./web').setupWeb({ settings: () => settings, save: saveSettings, pushState, t, device: () => device, helper, smb, notifs, fileClip, vdd, pcScreen,
+    kvm: () => kvm, devctl: () => devctl, loadVcam });
   const ipc = setupIpc({ devctl: () => devctl, chats: () => chats, explorer: () => explorer, qrPair: qrPairView, adbQr: adbQrDo, link, discovery, screen, clip, kvm, sshd, fileDrop, smb, apps, sound, pcScreen, pcApps, peerApps, vdd, notifs, fileClip, wake, updates, settings, save: saveSettings, push: pushState, buildState,
     get rezume() { return rezume; }, loadReZume,
     get phone() { return phone; }, get phoneViews() { return phoneViews; }, get camShare() { return camShare; }, get vcam() { return vcam; }, get phoneRemote() { return phoneRemote; }, get nowPlaying() { return nowPlaying; }, get btAudio() { return btAudio; }, get phoneDrive() { return phoneDrive; }, get terminal() { return terminal; }, loadRemote, setCamera, loadNowPlaying, loadBtAudio, loadMic, loadTerminal, connectPhoneDev, cancelPhoneInvite, hub: loadHub,
@@ -458,7 +475,9 @@ async function startHost(guest) {
       helper, server,
       info: () => ({ id: device.id, name: device.name.slice(0, 40), os: P.OS.WIN, port: server.port, fp: id.fp }),
       enabled: () => !bleOff && (settings.net.ble || settings.net.blePc),
-      accept: (g) => (g.os === P.OS.ANDROID ? settings.net.ble : settings.net.blePc), // General's two Bluetooth switches
+      accept: (g) => (P.isPhoneOs(g.os) ? settings.net.ble : settings.net.blePc), // General's two Bluetooth switches
+      // Quiet on Wi-Fi with an iPhone or iPad in the session or linked: its link stays (the helper's bleHold).
+      hold: () => settings.net.ble && (iosNow() || bleHost.list().some((g) => g.os === P.OS.IOS)),
     });
     bleHost.on('change', pushState);
     discovery.extras.unshift(bleHost);
@@ -483,7 +502,7 @@ function startPhone(server, pairing) {
   setupHub(pl);
   phone.on('change', pushState);
   // The phone's Keyboard page names this PC's hotkey (double-tap = everything back here).
-  pl.on('client', (ctx) => ctx.os === P.OS.ANDROID && pl.sendToClient({ t: 'phone.mac', hotkey: P.hotkeyName(settings.keys.hotkey || P.HOTKEY_WIN, 'win') }));
+  pl.on('client', (ctx) => P.isPhoneOs(ctx.os) && pl.sendToClient({ t: 'phone.mac', hotkey: P.hotkeyName(settings.keys.hotkey || P.HOTKEY_WIN, 'win') }));
   phone.bridge = new PhoneBridge({ server: pl, phone, getSettings: () => settings, clipboard: clip });
   phone.bridge.on('save', saveSettings);
   // A phone on a USB cable: pairing, the session, screen and sound through it (no Wi-Fi needed).
@@ -493,6 +512,13 @@ function startPhone(server, pairing) {
   wired.on('change', pushState);
   phone.bridge.wired = wired;
   phone.wired = wired;
+  // An iPhone's or iPad's session through its USB cable (shared/iosnet.js: usbmuxd to the app's port):
+  // this server, the WebRTC relay (wired.js) and the files engine, nothing else.
+  iosNet = new (require('../shared/iosnet.js').IosNet)({
+    getId: () => device.id, getName: () => device.name,
+    allowed: (port) => port === server.port || port === wired.turnPort || (!!server.fx2Port && port === server.fx2Port()),
+  });
+  iosNet.on('change', () => { if (iosNet.view.devices.some((d) => d.app)) wired.relay(); pushState(); });
   phoneDrive = new PhoneDrive({ adb: phone.bridge.adb, bridge: phone.bridge, phone });
   phoneDrive.on('change', pushState);
   phone.bridge.on('change', () => {
@@ -513,10 +539,16 @@ function startPhone(server, pairing) {
   phoneViews.vcam = vcam;
   phoneServer = pl;
   loadNowPlaying(); // each only while it's on
+  // What plays on this computer, for the phone's Media page and its media notification (shared/pcnow.js).
+  new (require('../shared/pcnow.js').PcNow)({ server: pl, key: (code) => {
+    if (!helper) return;
+    helper.send('inject', { ev: { t: P.T.K_KEY_DOWN, code } });
+    helper.send('inject', { ev: { t: P.T.K_KEY_UP, code } });
+  } });
   loadBtAudio();
   phoneViews.on('change', pushState);
   // Remote off: its page hears so; on, PhoneRemote answers instead.
-  pl.on(`t:${P.T.REMOTE_HELLO}`, () => !phoneRemote && pl.current && pl.current.os === P.OS.ANDROID
+  pl.on(`t:${P.T.REMOTE_HELLO}`, () => !phoneRemote && pl.current && P.isPhoneOs(pl.current.os)
     && pl.sendToClient({ t: P.T.REMOTE_STATE, allowed: false, off: true, why: 'Remote is off on this computer: turn it on in TwinDesk’s Remote page there' }));
   loadRemote();
   viaWifi(phoneViews, 'openScreen', 'phone');
@@ -582,12 +614,22 @@ function loadBtAudio() {
 
 // Camera: the cameras of the two computers (shared/camshare.js; a phone's is phoneview.js
 // openCamera), and the running one's picture to the tab and the virtual camera (shared/vcam.js).
-function loadCamera() {
-  if (camShare || !settings.camera.on) return camShare;
-  const { CamShare } = require('../shared/camshare.js');
+// Camera › Virtual camera (shared/vcam.js, vcam.js): the running camera's picture also goes to a
+// camera apps can pick. Also loaded by itself for a web device's camera (TwinDesk Web).
+function loadVcam() {
+  if (vcam) return vcam;
   const { VirtualCam } = require('../shared/vcam.js');
   // On or off, the phone's Camera page says so (phone-bridge.js).
   vcam = new VirtualCam({ driver: require('./vcam'), cfg: () => settings.camera, save: saveSettings, onChange: pushState, onReady: () => phoneViews && phoneViews.bridge._tellPhone(), ui: () => mainWin });
+  if (phoneViews) phoneViews.vcam = vcam;
+  vcam.check();
+  return vcam;
+}
+
+function loadCamera() {
+  if (camShare || !settings.camera.on) return camShare;
+  const { CamShare } = require('../shared/camshare.js');
+  loadVcam();
   const computer = () => link.status.state === 'connected' && !(link.current && link.current.os === P.OS.ANDROID);
   camShare = new CamShare({
     getLanguage: () => i18n.locale,
@@ -598,8 +640,6 @@ function loadCamera() {
     peerName,
     onChange: pushState,
   });
-  if (phoneViews) phoneViews.vcam = vcam; // the phone may have started first
-  vcam.check();
   camShare.sendPolicy(); // connected already: the other computer hears whether it's shared
   return camShare;
 }
@@ -733,7 +773,7 @@ function loadTerminal() {
 function setupHub(pl) {
   phoneLink = pl;
   const anyOn = () => settings.hub.calls || settings.hub.messages || settings.hub.media || settings.hub.files || settings.hub.shareServe;
-  pl.on('client', (ctx) => ctx.os === P.OS.ANDROID && !hub && anyOn() && loadHub());
+  pl.on('client', (ctx) => P.isPhoneOs(ctx.os) && !hub && anyOn() && loadHub());
   // The phone shares a folder: loaded for it (its listener comes with it, so this one passes it on).
   pl.on(`t:${P.T.SHARE_OFFER}`, (m, ctx) => ctx && ctx.os === P.OS.ANDROID && !hub && loadHub().share && hub.share.onOffer(m));
   pl.on(`t:${P.T.SHARE_SET}`, (m, ctx) => ctx && ctx.os === P.OS.ANDROID && !hub && loadHub().share && hub.share.act('serve', { on: !!m.serve }));
@@ -767,7 +807,7 @@ function loadHub() {
   };
   hub.on('call', popup);
   hub.on('change', popup);
-  if (phoneLink.current && phoneLink.current.os === P.OS.ANDROID) hub.started();
+  if (phoneLink.current && P.isPhoneOs(phoneLink.current.os)) hub.started();
   return hub;
 }
 
@@ -813,6 +853,7 @@ function setupNet(guest) {
   net.on('dropped', () => pcScreen.mode !== 'off' && pcScreen.setMode('off')); // Back to Bluetooth on the phone: it can't carry the screen
   link.hold = (m) => net.holdOut(m, (x) => link.sendNow(x));
   link.tap = (m) => net.onMessage(m);
+  link.fx.active = () => net.touch('files'); // fast files on a link made for them keep it up, as file.chunk does
   link.on('welcome', () => {
     net.started();
     recheck();
@@ -862,10 +903,26 @@ function setupNet(guest) {
     if (phoneViews && !phoneViews.list().length && !pendingView) net.release('phone');
     if (!smb.drive && !smbWait) net.release('smb');
     applyQuiet(bleQuiet({ on: settings.net.bleWifiOff, current: () => link.current, onGroup: () => net.onGroup }));
+    inviteIos();
     const near = link.snapshot().link.state !== 'connected' && !link.hosting && !bleOff;
     bleGuest.scan(near && settings.net.blePc); // looking for a host only while there's no session
     if (blePhones) blePhones.scan(near && settings.net.ble); // … and for phones
   }, 2000);
+}
+
+// An iPhone or iPad as the session (its Bluetooth link is held through quiet: BleHost hold).
+const iosNow = () => !!link.current && link.current.os === P.OS.IOS;
+
+// No session, and an iPhone or iPad linked over Bluetooth (it links only to computers it's paired
+// with): invited now and then, which wakes TwinDesk there to come back (its Ble.swift).
+let iosInvitedAt = 0;
+function inviteIos() {
+  if (!bleHost || bleOff || link.current || Date.now() - iosInvitedAt < 20000) return;
+  for (const g of bleHost.list()) {
+    if (g.os !== P.OS.IOS) continue;
+    iosInvitedAt = Date.now();
+    bleHost.invite(g.id);
+  }
 }
 
 // The session on the same Wi-Fi a while (General's Turn off Bluetooth on Wi-Fi connections,
@@ -877,7 +934,7 @@ function applyQuiet(off) {
     console.log(`[ble] ${off ? 'off: the session is on the same Wi-Fi' : 'on again'}`);
     if (bleHost) bleHost.apply();
     pushState();
-  }
+  } else if (off && bleHost) bleHost.apply(); // an iPhone linked or gone while quiet: held or stopped
   if (!off) return;
   if (bleGuest) bleGuest.drop();
   if (blePhones) blePhones.stop();
@@ -1079,6 +1136,18 @@ function setupShows(miss) {
   return (!settings.setup.done && !fw.checking && miss.some((x) => !settings.setup.skipped.includes(x)));
 }
 
+// General › Advanced › Engines in use (shared/engines.js), while connected. screenStats: the
+// sender's last stats (a second apart while it shares).
+let screenStats = null;
+function enginesView() {
+  if (!link) return null;
+  const live = screenStats && Date.now() - screenStats.at < 5000 ? screenStats : null;
+  return Engines.snapshot({
+    current: link.current, il: link.il, lane: link.lane(), fx: link.fx, fx2: link.fx2, net: net ? net.view : null,
+    lan: lanType(link.current && link.current.address), screen: live,
+  });
+}
+
 function buildState() {
   const miss = missing();
   return {
@@ -1098,6 +1167,7 @@ function buildState() {
     monitor: settings.monitor,
     clipboard: { ...settings.clipboard, ...clip.view },
     camera: camShare ? { ...camShare.state, on: !!settings.camera.on } : { on: false }, // on: the switch (off, it stays loaded but stopped)
+    web: web ? web.view() : { cfg: { ...settings.web }, devices: [] }, // TwinDesk Web
     vcam: vcam ? vcam.view() : { checked: true, supported: true, on: false },
     remote: phoneRemote ? phoneRemote.view : phoneServer ? REMOTE_OFF : null,
     phoneMedia: nowPlaying ? nowPlaying.view : null,
@@ -1106,6 +1176,7 @@ function buildState() {
     ui: settings.ui,
     look: Look.view(settings.ui, systemPreferences),
     app: settings.app,
+    engines: enginesView(),
     encoder: require('./encoder').view(), // General › Advanced › Hardware encoder
     version: app.getVersion(),
     about: about || (about = aboutInfo(app)), // About page: this app and this computer
@@ -1124,7 +1195,7 @@ function buildState() {
     setup: { missing: miss, show: setupShows(miss) },
     phone: phone ? { ...phone.view, settings: settings.phone, ...phoneCtl() } : null,
     adbQr: adbQrState, // wireless debugging's pairing QR code (shared/ui-adbqr.js)
-    peerCtl: link.peerOs !== P.OS.ANDROID && devctl ? devctl.view : null, // a computer's controls on Overview
+    peerCtl: !P.isPhoneOs(link.peerOs) && devctl ? devctl.view : null, // a computer's controls on Overview
     mount: { ...(phoneDrive ? phoneDrive.view : {}), on: settings.mount.on },
     // Calls, Messages and Photos: the settings alone until the hub is loaded (setupHub).
     hub: hub ? hub.view : { ...settings.hub, connected: false },
@@ -1371,7 +1442,7 @@ function updateTray(s = buildState()) {
     if (after) after();
     pushState();
   };
-  const kind = (os) => (os === 'mac' ? 'Mac' : os === 'linux' ? 'Linux' : os === 'android' ? t('Phone') : 'PC');
+  const kind = (os) => (os === 'mac' ? 'Mac' : os === 'linux' ? 'Linux' : os === 'ios' ? 'iPhone' : os === 'android' ? t('Phone') : 'PC');
   tray.setContextMenu(Menu.buildFromTemplate(trayMenu.template({
     t,
     connected,
@@ -1397,7 +1468,7 @@ function updateTray(s = buildState()) {
     drag: { checked: settings.files.edgeDrag, set: (on) => set('files', { edgeDrag: on }, () => kvm.applyConfig()) },
     shortcuts: { label: t('Copy and Paste Files ({copy}, {paste})', { copy: CL.keysLabel(settings.files.copyKeys, 'win'), paste: CL.keysLabel(settings.files.pasteKeys, 'win') }), checked: settings.files.shortcuts, set: (on) => set('files', { shortcuts: on }, () => { kvm.applyConfig(); fileClip.apply(); }) },
     found: found.map((d) => ({ label: d.name + ' (' + kind(d.os) + ')', click: () => {
-      if (d.os === P.OS.ANDROID) return connectPhoneDev(d);
+      if (P.isPhoneOs(d.os)) return connectPhoneDev(d);
       discovery.clearInvite(d.id);
       link.startPairing({ address: d.address, port: d.port, macName: d.name, id: d.id });
       showMain();
@@ -1422,6 +1493,7 @@ function loadMic() {
 }
 
 app.on('before-quit', () => {
+  if (web) web.shutdown();
   if (mic) mic.shutdown();
   quitting = true;
   saveBounds();

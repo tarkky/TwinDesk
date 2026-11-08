@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
 const P = require('../../shared/protocol.js');
+const { NativeScreen } = require('../../shared/nativescreen.js');
 const { Adb } = require('../adb');
 const { Session, ACTION } = require('../scrcpy');
 const { KeyState, ANDROID } = require('../android-keys');
@@ -125,6 +126,8 @@ class PhoneBridge extends EventEmitter {
     server.on('closed', () => {
       if (!isPhone(server.current)) this._stopAll('');
     });
+    // An iPhone's Share Screen (its broadcast extension): to its window here (phoneview.js native).
+    server.on(`t:${T.PHONE_MIRROR_STATE}`, (m, ctx) => ctx && P.isPhoneOs(ctx.os) && m && NativeScreen.state(m));
     // The phone's sound without wireless debugging (Sound.kt there): asked for while adb can't carry
     // it; what comes plays in a hidden window (phoneview.js netSound).
     this.netSound = { asked: false, on: false, waiting: false, error: '' };
@@ -135,6 +138,15 @@ class PhoneBridge extends EventEmitter {
       this.emit('change');
     });
     server.on(`t:${T.PHONE_SOUND}`, (m, ctx) => isPhone(ctx) && this.netSound.asked && this.views && this.views.netAudio(m));
+    // An iPhone's microphone (its app captures it, phone.mic.want): into the same window kind as Android's.
+    this.iosMic = { asked: false, on: false, error: '' };
+    server.on(`t:${T.PHONE_MIC}`, (m, ctx) => ctx && ctx.os === P.OS.IOS && this.views && this.views.netMicAudio(m));
+    server.on(`t:${T.PHONE_MIC_STATE}`, (m, ctx) => {
+      if (!ctx || ctx.os !== P.OS.IOS) return;
+      Object.assign(this.iosMic, { on: m.on === true, error: typeof m.error === 'string' ? m.error.slice(0, 200) : '' });
+      this.emit('change');
+    });
+    server.on('client', () => Object.assign(this.iosMic, { asked: false, on: false, error: '' }));
     server.on('client', () => { soundReset(); this._sound(); });
     server.on('closed', () => { if (!isPhone(server.current)) soundReset(); this._sound(); });
     server.on('transport', () => this._sound());
@@ -143,6 +155,7 @@ class PhoneBridge extends EventEmitter {
 
   get view() {
     return {
+      iosMic: this.iosMic, // an iPhone's microphone: {asked, on, error}
       state: this.state, message: this.message, serial: this.serial, available: this.adb.available, canPair: this.canPair, inputBlocked: this.inputBlocked,
       via: this.via, // 'usb' | 'wifi' | null: how adb reaches the phone
       input: this.inputVia, inputMode: this.inputMode, // the mouse and keyboard: what they go through now, and the choice
@@ -218,6 +231,14 @@ class PhoneBridge extends EventEmitter {
     this.views.sound(want && adb && !net);
     const audio = this.getSettings().audio || {};
     this.views.mic(isPhone(c) && adb && !!audio.micReceive, audio.micOut || ''); // the phone's microphone, here
+    const iosMic = !!c && c.os === P.OS.IOS && c.transport !== 'ble' && !!audio.micReceive;
+    this.views.netMic(iosMic, audio.micOut || '');
+    if (iosMic !== this.iosMic.asked) {
+      this.iosMic.asked = iosMic;
+      if (!iosMic) Object.assign(this.iosMic, { on: false, error: '' });
+      if (c && c.os === P.OS.IOS) this.server.sendToClient({ t: T.PHONE_MIC_WANT, on: iosMic });
+      this.emit('change');
+    }
     if (net !== this.netSound.asked) {
       this.netSound.asked = net;
       if (!net) Object.assign(this.netSound, { on: false, waiting: false, error: '' });
@@ -733,6 +754,11 @@ class PhoneBridge extends EventEmitter {
   // ---- windows (phoneview.js) ----
 
   // Options for a new screen/app session, from settings.
+  // How the phone's screen comes: an iPhone's only through its Share Screen; an Android phone's through adb here.
+  get mirrorVia() {
+    return this.server.current && this.server.current.os === P.OS.IOS ? 'native' : 'adb';
+  }
+
   sessionOpts(kind, extra = {}) {
     const ph = this.getSettings().phone || {};
     const base = { video: true, control: true, maxFps: 60, videoBitRate: (ph.bitrateMbps || 8) * 1000000 };

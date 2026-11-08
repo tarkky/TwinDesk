@@ -50,7 +50,7 @@ const DEFAULT_SETTINGS = {
   // sharing and switch Extend/Mirror (screen.ctl). pace: playback of shared screens, both
   // directions, the same on both computers (pair.sync): 'fast' (shown the moment it arrives) |
   // 'smooth' (about one frame of buffer, even motion).
-  sharing: { on: false, displayId: null, audio: false, remote: true, pace: 'fast', codec: 'h264' }, // codec: Share screen › Encoder (shared/screencodec.js)
+  sharing: { on: false, displayId: null, audio: false, remote: true, pace: 'fast', codec: 'h264', fps: 0 }, // fps: frame rate cap, 0 = the display's refresh rate (stream.js) // codec: Share screen › Encoder (shared/screencodec.js)
   virtual: { enabled: true, width: 1920, height: 1080, hiDPI: false, hz: 60 },
   bitrateMbps: 30,
   streamInput: true, // accept mouse/keyboard from Monitor 2
@@ -68,7 +68,7 @@ const DEFAULT_SETTINGS = {
     linked: true, // mouse and keyboard sharing on (the hotkey's double-tap switches it); synced with the peer
     linkedBy: {}, // The last `linked` per paired device id, restored on connect
     gestures: true, // Trackpad gestures work on the other computer (synced per pair)
-    shakeHome: true, // shake this Mac's mouse while driving: the pointer comes home (the helper's Shake.swift)
+    shakeHome: false, // shake this Mac's mouse while driving: the pointer comes home (the helper's Shake.swift)
     syncPads: false, // every mouse and trackpad moves the one pointer; off: a computer's own takes it back (synced per pair)
     ble: true, // cursor sharing while the session runs through Bluetooth (synced per pair)
     hotkeySwitch: false, // keyboard only (mouse off): double-tap the hotkey to move the keyboard over and back
@@ -91,7 +91,7 @@ const DEFAULT_SETTINGS = {
   ui: { tab: 'overview', setupSkipped: '', setupDone: false, language: '', theme: 'system', accent: '' }, // theme/accent: General › Appearance
   app: { openAtLogin: false, keepAwake: true, hud: true, inputProtocol: 'udp' }, // inputProtocol: udp = tdv2 input lane, tcp = tdv1 // hud = popup when switching computers
   updates: { auto: true, notified: '', skipped: '' }, // check GitHub for new releases; notified = last version announced, skipped = version ignored
-  audio: { send: false, receive: false, muteLocal: false, volume: 1, phoneMedia: false, micSend: false, micReceive: false, micDevice: '', micOut: '' }, // Independent, both ways; phoneMedia: a phone's media controls on Overview
+  audio: { send: false, receive: false, muteLocal: false, engine: 'helper', volume: 1, phoneMedia: false, micSend: false, micReceive: false, micDevice: '', micOut: '' }, // Independent, both ways; phoneMedia: a phone's media controls on Overview
   rezume: require('../shared/rezume.js').DEFAULTS, // ReZume tab (shared/rezume.js): off until turned on; what goes, which ways, where it shows
   remote: { allow: false }, // Remote tab (shared/phone-remote.js): the phone's Remote page moves the pointer and types here
   camera: { on: false, share: false, device: '', virtual: false, rotate: 0, target: 'obs' }, // Camera tab (shared/camshare.js): this Mac's camera to the other computer, off until turned on; virtual: the running camera's picture also goes to the virtual camera (shared/vcam.js); rotate: its picture turned clockwise; target: the virtual camera it feeds, 'obs' (OBS Virtual Camera, the default) or 'twindesk'
@@ -117,13 +117,16 @@ const DEFAULT_SETTINGS = {
   wake: { peers: {} }, // {deviceId: {name, macs, address, at}} from wol.info, for Wake
   pairSync: {}, // {deviceId: {feature: {out, in}}} two-way switches per pair (pairsync.js)
   smb: { connectPc: false, sharing: false, folder: '', secret: '' }, // secret = safeStorage
+  // TwinDesk Web (shared/web/webhub.js): this Mac as a page for iPhones and browsers; off until turned on.
+  // screen / control / camera: what web devices may do; port: https there, http on port + 1.
+  web: { on: false, port: 47870, screen: true, control: true, camera: true, mic: true },
 };
 
 function loadSettings() {
   const s = read('settings.json', {});
   if (s.sharing) s.sharing.on = false; // screen sharing never starts by itself
   const out = { ...DEFAULT_SETTINGS, ...s };
-  for (const k of ['wake', 'sharing', 'virtual', 'kvm', 'keys', 'clipboard', 'ui', 'app', 'audio', 'terminal', 'files', 'smb', 'apps', 'receive', 'papps', 'notifs', 'updates', 'phone', 'mount', 'hub', 'camera', 'remote']) out[k] = { ...DEFAULT_SETTINGS[k], ...(s[k] || {}) };
+  for (const k of ['wake', 'sharing', 'virtual', 'kvm', 'keys', 'clipboard', 'ui', 'app', 'audio', 'terminal', 'files', 'smb', 'apps', 'receive', 'papps', 'notifs', 'updates', 'phone', 'mount', 'hub', 'camera', 'remote', 'web']) out[k] = { ...DEFAULT_SETTINGS[k], ...(s[k] || {}) };
   out.rezume = require('../shared/rezume.js').normalize(s.rezume);
   out.ui.language = require('../shared/i18n.js').savedLanguage(out.ui.language);
   { const Look = require('../shared/look.js'); out.ui.theme = Look.theme(out.ui.theme); out.ui.accent = Look.accent(out.ui.accent); }

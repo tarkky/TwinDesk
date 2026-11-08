@@ -14,7 +14,7 @@
     PROBE_MS: 10000, // broadcast probe while not connected
     PROBE_REPLY_MS: 1500, // a unicast probe without a reply by then = nobody there
     DEVICE_STALE_MS: 10000, // found device dropped after this much silence
-    OS: { MAC: 'mac', WIN: 'win', LINUX: 'linux', ANDROID: 'android' },
+    OS: { MAC: 'mac', WIN: 'win', LINUX: 'linux', ANDROID: 'android', IOS: 'ios' },
     // A phone is a full peer in the one session: it connects only when asked (the Mac's phone
     // tile, its own Connect button, an invite) or to resume a session that just dropped, and it
     // replaces the computer. Computers are refused (busy) while it holds the session and for
@@ -241,6 +241,9 @@
       PHONE_SOUND_WANT: 'phone.sound.want', // computer->phone {on}: its sound here without wireless debugging (playback capture, Start on the phone), while adb can't carry it
       PHONE_SOUND: 'phone.sound', // phone->computer {codec: 'opus'|'pcm', p: [base64]}: 20 ms each (Opus packets, or 48 kHz stereo s16le)
       PHONE_SOUND_STATE: 'phone.sound.state', // phone->computer {on, waiting (for Start on the phone), error, codec}
+      PHONE_MIC_WANT: 'phone.mic.want', // computer->phone {on}: its microphone here (an iPhone's app captures it; Android's goes through adb)
+      PHONE_MIC: 'phone.mic', // phone->computer {codec: 'pcm', p: [base64]}: 48 kHz stereo s16le, 20 ms each
+      PHONE_MIC_STATE: 'phone.mic.state', // phone->computer {on, error}
       // The phone's screen without wireless debugging (shared/nativescreen.js, Mirror.kt): the phone
       // captures it itself (one Start on the phone for the screen and its sound) and sends H.264 over
       // HTTPS to the session's port (POST /twindesk/mirror, header x-twindesk-mirror: key), in
@@ -251,6 +254,10 @@
       PHONE_MEDIA_WANT: 'phone.media.want', // computer->phone {on}: send phone.media (Audio › Media controls on Overview)
       PHONE_MEDIA: 'phone.media', // phone->computer {app, appName, title, artist, album, playing, duration, position, at, speed, next, prev, seek, art?} or {none, why?}; art (a data: URL) only when it changed
       PHONE_MEDIA_CTL: 'phone.media.ctl', // computer->phone {a: 'play'|'pause'|'toggle'|'next'|'prev'|'seek', pos?}
+      // …and the other way: what plays on the computer, for the phone's Media page and its media notification (shared/pcnow.js, PcMedia.kt):
+      PC_MEDIA_WANT: 'pc.media.want', // phone->computer {on}: send pc.media while on
+      PC_MEDIA: 'pc.media', // computer->phone {title, artist, album, app, playing} or {none: true}
+      PC_MEDIA_CTL: 'pc.media.ctl', // phone->computer {a: 'play'|'pause'|'toggle'|'next'|'previous'}
       // The phone as the computer's remote (its Remote page: touchpad, keyboard, gamepad), phone->computer.
       // Relative like k.*, applied only while the computer lets the phone control it (Windows for now):
       REMOTE_HELLO: 'remote.hello', // phone->computer: the Remote page opened (the computer answers remote.state)
@@ -503,6 +510,10 @@
   // Dev: TWINDESK_PING_MS pings the session more often, for finer RTT numbers
   // in the log's [link] line. Only the ping interval changes; the silence limits stay.
   if (typeof process !== 'undefined' && process.env && Number(process.env.TWINDESK_PING_MS) >= 50) P.PING_MS = Math.min(P.PING_MS, Number(process.env.TWINDESK_PING_MS));
+
+  // A phone holds the session the same way whichever it is (it connects when asked, takes over from a
+  // computer, gets the grace to resume). Android's extras (adb, scrcpy, its hub) check OS.ANDROID itself.
+  P.isPhoneOs = (os) => os === P.OS.ANDROID || os === P.OS.IOS;
 
   if (typeof module !== 'undefined' && module.exports) module.exports = P;
   else root.MacShareProtocol = P;

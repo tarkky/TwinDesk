@@ -159,6 +159,7 @@ UI.tab({
     let devicesKey = '';
 
     const pairedList = el('div');
+    const webCard = UI.webConnCard ? UI.webConnCard() : null; // TwinDesk Web's paired devices (shared/ui-web.js)
     body.append(
       UI.card('', [addrRow, ipRow]),
       UI.card(t('Found nearby'), [discRow, foundList, ...bleRows], { actions: [refresh] }),
@@ -166,6 +167,7 @@ UI.tab({
       adbCard,
       pair.el,
       UI.card(t('Paired'), [pairedList]),
+      ...(webCard ? [webCard.el] : []),
     );
 
     let last = null;
@@ -173,6 +175,7 @@ UI.tab({
     let pairedKey = '';
     const render = () => last && update(last);
     const update = (s) => {
+      if (webCard) webCard.render(s);
       last = s;
       bleSw.set(!s.net || s.net.ble !== false);
       blePcSw.set(!!s.net && s.net.blePc === true);
@@ -291,7 +294,7 @@ UI.tab({
           const online = up.has(dev.id);
           // A Mac hosts; with a PC or Linux the one who clicks is the guest. A phone is asked to pair.
           // Another computer can be paired while others are connected.
-          const btn = online || isKnown ? null : UI.button(dev.os === 'mac' || dev.os === 'android' ? t('Pair') : t('Connect'), () => api.pair(dev.id), 'small' + (dev.invited ? ' primary' : ''));
+          const btn = online || isKnown ? null : UI.button(dev.os === 'mac' || dev.os === 'android' || dev.os === 'ios' ? t('Pair') : t('Connect'), () => api.pair(dev.id), 'small' + (dev.invited ? ' primary' : ''));
           if (btn) btn.disabled = busy;
           // Paired: Take over (the computer we're a guest of: a takeover hello; one that connects to us:
           // invited, and its hello takes the session from whoever has it).

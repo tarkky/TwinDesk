@@ -11,6 +11,7 @@ const path = require('path');
 const { BrowserWindow, ipcMain, session, desktopCapturer, webContents } = require('electron');
 const { EventEmitter } = require('events');
 const P = require('../../shared/protocol.js');
+const ScreenCodec = require('../../shared/screencodec.js');
 const { loopback } = require('../audiohub.js');
 
 const RETRY_MS = 2000;
@@ -78,7 +79,7 @@ class Stream extends EventEmitter {
       const on = !!msg.accept;
       // A phone's viewer says how big it is: Extend becomes a screen of that shape.
       const c = this.server.current;
-      if (c && c.os === P.OS.ANDROID && on && msg.width > 0 && msg.height > 0) {
+      if (c && P.isPhoneOs(c.os) && on && msg.width > 0 && msg.height > 0) {
         this.phoneSize = { width: msg.width | 0, height: msg.height | 0 };
         this.displays.setOverride(this.phoneSize);
       }
@@ -91,7 +92,7 @@ class Stream extends EventEmitter {
       else this._setStatus(this.getSettings().sharing.on ? 'no viewer' : 'off');
     });
     server.on('closed', () => {
-      if (!server.current || server.current.os !== P.OS.ANDROID) {
+      if (!server.current || !P.isPhoneOs(server.current.os)) {
         this.phoneSize = null;
         this.displays.setOverride(null);
       }
@@ -242,7 +243,8 @@ class Stream extends EventEmitter {
       this._toWindow('start', {
         session: s, bitrateMbps: phone ? Math.min(PHONE_MBPS, set.bitrateMbps) : set.bitrateMbps, sourceId: src.id, width, height, audio,
         ice: (this.server.current && this.server.current.ice) || null, // a phone on the USB cable: through the relay
-        fps: Math.min(120, Math.max(30, Math.round(target.hz || 60))),
+        fps: ScreenCodec.fps(target.hz, set.sharing && set.sharing.fps), // Share screen › Frame rate
+        steady: !!(set.sharing && set.sharing.pace === 'steady'), // Playback › Steady (shared/screencodec.js)
       });
     } catch (e) {
       console.error(`[stream] start failed: ${e.message}`);
@@ -264,7 +266,7 @@ class Stream extends EventEmitter {
   }
 
   _phone() {
-    return !!(this.server.current && this.server.current.os === P.OS.ANDROID);
+    return !!(this.server.current && P.isPhoneOs(this.server.current.os));
   }
 
   _displaysChanged() {

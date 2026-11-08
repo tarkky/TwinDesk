@@ -19,6 +19,7 @@ const P = require('../shared/protocol.js');
 const I18n = require('../shared/i18n.js');
 const { Session, ACTION, TYPE } = require('./scrcpy');
 const { NativeScreen } = require('../shared/nativescreen.js');
+const iosusb = require('./iosusb.js'); // an iPhone's screen over its cable
 const { KeyState, ANDROID } = require('./android-keys');
 const chat = require('../shared/phonechat.js');
 const { DockStub, addToDock } = require('./dockstub');
@@ -94,7 +95,7 @@ class PhoneViews extends EventEmitter {
   // audio-only session capturing the phone's mic, in a hidden window that plays it into the
   // TwinDesk Microphone (Linux) or a virtual audio cable (phoneview-renderer.js picks it).
   mic(on, out = '') {
-    const open = [...this.views.values()].find((v) => v.kind === 'mic');
+    const open = [...this.views.values()].find((v) => v.kind === 'mic' && !v.net);
     if (open && on && open.sink !== out) this.close(open.id); // another output picked: start again
     else if (open && on) return;
     if (on && this.bridge.serial) {
@@ -108,6 +109,21 @@ class PhoneViews extends EventEmitter {
     const open = [...this.views.values()].find((v) => v.kind === 'netsound');
     if (on && !open) this._open({ kind: 'netsound', title: this._i18n().t('Phone sound'), titleKey: 'Phone sound', width: 200, height: 100, hidden: true });
     else if (!on && open) this.close(open.id);
+  }
+
+  // An iPhone's microphone (its app captures it, phone.mic.want): the same hidden window as the
+  // Android one above, fed what comes through the session (netMicAudio) instead of an adb session.
+  netMic(on, out = '') {
+    const open = [...this.views.values()].find((v) => v.kind === 'mic' && v.net);
+    if (open && on && open.sink !== out) this.close(open.id);
+    else if (open && on) return;
+    if (on) this._open({ kind: 'mic', net: true, title: this._i18n().t('Phone microphone'), titleKey: 'Phone microphone', width: 200, height: 100, hidden: true, sink: out });
+    else if (open) this.close(open.id);
+  }
+
+  netMicAudio(m) {
+    const p = { codec: 'pcm', p: Array.isArray(m.p) ? m.p.filter((x) => typeof x === 'string').slice(0, 20) : [] };
+    for (const v of this.views.values()) if (v.kind === 'mic' && v.net) this._send(v, 'phoneview:netaudio', p);
   }
 
   netAudio(m) {
@@ -139,9 +155,25 @@ class PhoneViews extends EventEmitter {
     const w = Math.round(h * Math.min(d.w, d.h) / Math.max(d.w, d.h));
     const name = (this.server.current && this.server.current.name) || this._i18n().t('Phone');
     const titleKey = (this.server.current && this.server.current.name) ? '' : 'Phone';
+    // An iPhone: its cable when it's on one (macOS's own capture, nothing to tap), else its Share Screen.
+    if (this.server.current && this.server.current.os === 'ios') return void this.openIosScreen({ title: name, titleKey, width: w, height: h });
     // Mirroring › Native (or Automatic without wireless debugging): the phone shares it itself.
     const native = this.bridge.mirrorVia === 'native';
     this._open({ kind: 'screen', native, title: name, titleKey, width: w, height: h, opts: this.bridge.sessionOpts('screen') });
+  }
+
+  // An iPhone's or iPad's screen: over USB when one is on the cable (any, paired or not: it needs no
+  // app), else asked of the connected iPhone (its Share Screen, Meet-style).
+  async openIosScreen(o = {}) {
+    if ([...this.views.values()].some((v) => v.kind === 'screen')) return this.openScreen();
+    const usb = await iosusb.list();
+    const work = screen.getPrimaryDisplay().workAreaSize;
+    const h = o.height || Math.min(860, work.height - 80);
+    const pad = ((this.phone && this.phone.info) || {}).platform === 'ipados'; // an iPad: 3:4 until its picture says (the window takes its shape)
+    const w = o.width || Math.round(h * (pad ? 3 / 4 : 9 / 19.5));
+    const opts = { maxSize: 0, videoBitRate: 12000000 };
+    if (usb.length) return void this._open({ kind: 'screen', usb: usb[0].id, title: o.title || usb[0].name, titleKey: '', width: w, height: h, opts });
+    if (this.server.current && this.server.current.os === 'ios') this._open({ kind: 'screen', native: true, title: o.title || this.server.current.name, titleKey: o.titleKey || '', width: w, height: h, opts: this.bridge.sessionOpts('screen') });
   }
 
   // The phone's camera (Camera's switch, or the phone's Camera page; scrcpy's camera source, Android
@@ -294,8 +326,8 @@ class PhoneViews extends EventEmitter {
     return I18n.create(I18n.resolveLanguage(settings.ui && settings.ui.language, app.getLocale()));
   }
 
-  _open({ kind, app, title, titleKey = '', titleName = '', width, height, opts, hidden = false, sink = '', native = false }) {
-    if (!this.bridge.serial && kind !== 'netsound' && !native) {
+  _open({ kind, app, title, titleKey = '', titleName = '', width, height, opts, hidden = false, sink = '', native = false, net = false, usb = '' }) {
+    if (!this.bridge.serial && kind !== 'netsound' && !net && !native && !usb) {
       // Through Bluetooth: the phone's hotspot first (main.js), then this window.
       if (kind !== 'mic' && this.onNoAdb && this.onNoAdb({ kind, app, title, titleKey, titleName, width, height, opts, hidden })) return;
       return this.bridge.emit('popup', 'home', 'Set up wireless debugging on the Phone page first');
@@ -306,7 +338,7 @@ class PhoneViews extends EventEmitter {
       titleBarStyle: 'hiddenInset', backgroundColor: '#000000',
       webPreferences: { preload: path.join(__dirname, 'preload-phoneview.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
     });
-    const v = { id, kind, app, title, win, sink, native, session: null, keys: new KeyState(), size: null, ready: false, queue: [], screenOff: false, eaten: new Set() };
+    const v = { id, kind, app, title, win, sink, native, net, usb, session: null, keys: new KeyState(), size: null, ready: false, queue: [], screenOff: false, eaten: new Set() };
     this._send(v, 'phoneview:opts', this._opts(v));
     this.views.set(id, v);
     if (kind === 'app') setImmediate(() => this._stubs());
@@ -337,7 +369,7 @@ class PhoneViews extends EventEmitter {
       this.emit('change');
     });
     this.emit('change');
-    if (kind !== 'netsound') this._start(v, opts).catch((e) => {
+    if (kind !== 'netsound' && !net) this._start(v, opts).catch((e) => {
       console.log(`[phone] ${kind} window: ${e.message}`);
       this._send(v, 'phoneview:status', { error: e.message, errorKey: e.messageKey, errorVars: e.messageVars });
     });
@@ -351,9 +383,9 @@ class PhoneViews extends EventEmitter {
   }
 
   async _start(v, opts) {
-    const s = v.native ? new NativeScreen(this.server, opts) : new Session(this.bridge.adb, this.bridge.serial, opts);
-    const via = v.native ? null : this.bridge.via;
-    if (v.native) setImmediate(() => this.bridge._sound()); // its sound, when it plays it
+    const s = v.usb ? new iosusb.IosUsbScreen({ ...opts, id: v.usb }) : v.native ? new NativeScreen(this.server, opts) : new Session(this.bridge.adb, this.bridge.serial, opts);
+    const via = v.native || v.usb ? null : this.bridge.via;
+    if (v.native && !v.usb) setImmediate(() => this.bridge._sound()); // its sound, when it plays it
     if (v.native) s.on('waiting', () => this._send(v, 'phoneview:status', { error: 'Tap Start on the phone to share its screen', errorKey: 'Tap Start on the phone to share its screen' }));
     v.session = s;
     s.on('size', (size) => {

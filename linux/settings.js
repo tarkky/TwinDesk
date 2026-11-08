@@ -10,7 +10,7 @@ const { normalizeFolder } = require('../shared/received.js');
 // The keys that can be held to move a window to the other computer (the helper grabs with them).
 const MOVE_KEYS = ['ControlRight', 'ControlLeft', 'ShiftRight', 'ShiftLeft', 'AltRight', 'AltLeft', 'MetaRight', 'MetaLeft'];
 
-const TABS = ['phone', 'overview', 'connection', 'mirror', 'papps', 'calls', 'messages', 'media', 'pfiles', 'mac-pc', 'pc-mac', 'cursor', 'keyboard', 'clipboard', 'notifications', 'files', 'mount', 'terminal', 'audio', 'camera', 'remote', 'apps', 'rezume', 'multi', 'general', 'about'];
+const TABS = ['phone', 'overview', 'connection', 'mirror', 'papps', 'calls', 'messages', 'media', 'pfiles', 'mac-pc', 'pc-mac', 'cursor', 'keyboard', 'clipboard', 'notifications', 'files', 'mount', 'terminal', 'audio', 'camera', 'remote', 'apps', 'rezume', 'multi', 'web', 'airplay', 'general', 'about'];
 
 const OLD_TABS = { display: 'mac-pc', receive: 'mac-pc', share: 'pc-mac' }; // older names
 
@@ -74,7 +74,7 @@ function normalize(s) {
       linkedBy: kvm.linkedBy && typeof kvm.linkedBy === 'object'
         ? Object.fromEntries(Object.entries(kvm.linkedBy).filter(([, v]) => typeof v === 'boolean').slice(0, 50)) : {},
       gestures: bool(kvm.gestures, true), // Trackpad gestures work on the other computer (pair.sync 'gestures')
-      shakeHome: bool(kvm.shakeHome, true), // shake this computer's mouse while driving: the pointer comes home (the helper's shake)
+      shakeHome: bool(kvm.shakeHome, false), // shake this computer's mouse while driving: the pointer comes home (the helper's shake)
       syncPads: bool(kvm.syncPads, false), // every mouse and trackpad moves the one pointer; off: this PC's own takes it back (pair.sync 'syncPads')
       hotkeySwitch: bool(kvm.hotkeySwitch, false), // keyboard only (Cursor off): double-tap moves the keyboard over and back
       ble: bool(kvm.ble, true), // cursor sharing while the session runs through Bluetooth (pair.sync 'ble')
@@ -101,13 +101,23 @@ function normalize(s) {
       volume: Math.round(num(mon.volume, 1, 0, 1) * 100) / 100,
       mute: bool(mon.mute, false),
       // Playback of shared screens, both directions, the same on both computers (pair.sync
-      // 'pace'): 'fast' (default, shown the moment it is decoded) | 'smooth' (about a frame of buffer)
-      pacing: mon.pacing === 'smooth' && (s.rev || 0) >= 8 ? 'smooth' : 'fast', // rev 8: back to Fastest once
+      // 'pace'): 'fast' (default, shown the moment it is decoded) | 'smooth' (about a frame of buffer) |
+      // 'steady' (no zero playout delay on the stream: WebRTC paces it itself, as a web browser plays it)
+      pacing: ['smooth', 'steady'].includes(mon.pacing) && (s.rev || 0) >= 8 ? mon.pacing : 'fast', // rev 8: back to Fastest once
       framegen: bool(mon.framegen, false), // in-between frames on the GPU (shared/framegen.js), off by default
     },
     // Remote tab (shared/phone-remote.js): the phone's Remote page moves the pointer and types here
     // Real gamepad (pad): its sticks and buttons as a controller here, off until turned on
     remote: { allow: bool((s.remote || {}).allow, was), pad: bool((s.remote || {}).pad, false) },
+    // TwinDesk Web (shared/web/webwire.js): off until turned on; what new web devices may do.
+    web: (() => {
+      const w = s.web || {};
+      const port = Number(w.port);
+      return { on: bool(w.on, false), port: Number.isInteger(port) && port >= 1024 && port < 65000 ? port : 47870,
+        screen: bool(w.screen, true), control: bool(w.control, true), camera: bool(w.camera, true), mic: bool(w.mic, true), pad: bool(w.pad, false),
+        airplay: bool(w.airplay, false), // Receive AirPlay (shared/airplay), off until turned on
+        airplayMusic: bool(w.airplayMusic, true), airplaySound: bool(w.airplaySound, true), airplayFull: bool(w.airplayFull, false) }; // its switches
+    })(),
     // ReZume tab (shared/rezume.js): off until turned on; what goes, which ways, where it shows
     rezume: require('../shared/rezume.js').normalize(s.rezume),
     // Camera tab (shared/camshare.js): this computer's camera to the other one, off until turned
@@ -167,8 +177,9 @@ function normalize(s) {
     },
     pcScreen: { // Display › PC → Mac; Off/Mirror/Extend itself is never saved
       monitor: typeof pcs.monitor === 'string' ? pcs.monitor : '', // Electron display id for Mirror ('' = main)
-      mbps: [10, 20, 30, 50].includes(pcs.mbps) ? pcs.mbps : 30, // same presets as the Mac
-      maxHeight: [0, 1080, 1440].includes(pcs.maxHeight) ? pcs.maxHeight : 1080, // stream size (0 = full pixels)
+      mbps: [10, 20, 30, 50, 80].includes(pcs.mbps) ? pcs.mbps : 30, // same presets as the Mac
+      maxHeight: [0, 1080, 1440, 2160].includes(pcs.maxHeight) ? pcs.maxHeight : 1080, // stream size (0 = full pixels)
+      fps: [0, 30, 60].includes(pcs.fps) ? pcs.fps : 0, // frame rate cap (0 = the display's refresh rate)
       extendSize: ['mac', '1920x1080', '2560x1440', '3840x2160'].includes(pcs.extendSize) ? pcs.extendSize : 'mac', // the virtual monitor
       sound: bool(pcs.sound, false), // the screen's sound in the same session
       input: bool(pcs.input, true), // the Mac's mouse and keyboard drive this PC
@@ -237,7 +248,7 @@ function pairSync(v) {
     for (const [f, d] of Object.entries(feats).slice(0, 10)) {
       if (f === 'values') {
         out[id].values = {};
-        if (d && ['fast', 'smooth'].includes(d.pace)) out[id].values.pace = d.pace;
+        if (d && ['fast', 'smooth', 'steady'].includes(d.pace)) out[id].values.pace = d.pace;
         if (d && typeof d.gestures === 'boolean') out[id].values.gestures = d.gestures;
         if (d && typeof d.keyboard === 'boolean') out[id].values.keyboard = d.keyboard; // with a phone
         if (d && typeof d.reverseScroll === 'boolean') out[id].values.reverseScroll = d.reverseScroll;

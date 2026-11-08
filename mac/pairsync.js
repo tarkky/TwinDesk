@@ -30,7 +30,7 @@ const FEATURES = {
 // Shared values, the same on both computers (no direction): key -> settings path + allowed values.
 const VALUES = {
   rezume: { path: ['rezume', 'on'], allowed: [true, false], feature: 'rezume' }, // only where the app has ReZume
-  pace: { path: ['sharing', 'pace'], allowed: ['fast', 'smooth'] },
+  pace: { path: ['sharing', 'pace'], allowed: ['fast', 'smooth', 'steady'] },
   gestures: { path: ['kvm', 'gestures'], allowed: [true, false] },
   syncPads: { path: ['kvm', 'syncPads'], allowed: [true, false] }, // one pointer for every mouse (kvm.js 'local')
   ble: { path: ['kvm', 'ble'], allowed: [true, false] }, // cursor sharing over Bluetooth (kvm.js)
@@ -103,7 +103,7 @@ class PairSync {
   // The shared values with this peer: the phone-only ones only with a phone.
   _values() {
     const c = this.server.current;
-    const phone = !!c && c.os === P.OS.ANDROID;
+    const phone = !!c && P.isPhoneOs(c.os);
     return Object.fromEntries(Object.entries(VALUES).filter(([, d]) => (phone || !d.phone) && (!d.feature || this.features[d.feature])));
   }
 

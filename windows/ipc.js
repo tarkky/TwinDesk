@@ -35,7 +35,7 @@ function setupIpc(ctx) {
 
   const pairWith = (d) => {
     discovery.clearInvite(d.id);
-    if (d.os === P.OS.ANDROID) return ctx.connectPhoneDev(d); // a phone has no server to pair with
+    if (P.isPhoneOs(d.os)) return ctx.connectPhoneDev(d); // a phone has no server to pair with
     link.startPairing({ address: d.address, port: d.port, macName: d.name, id: d.id }); // id: one met over Bluetooth
   };
   handle('pair', (target) => {
@@ -80,7 +80,7 @@ function setupIpc(ctx) {
     if (typeof id !== 'string') return;
     const d = discovery.get(id) || discovery.near(id);
     if (!d) return;
-    if (d.os === P.OS.ANDROID) return ctx.connectPhoneDev(d);
+    if (P.isPhoneOs(d.os)) return ctx.connectPhoneDev(d);
     link.expect(id);
     discovery.invite(d.address);
   });
@@ -110,7 +110,7 @@ function setupIpc(ctx) {
   handle('checkUpdates', () => ctx.updates.check(true));
   handle('openUpdate', () => ctx.updates.open());
   handle('openLink', (key) => (key === 'logs' ? require('../shared/applog.js').open() : Object.hasOwn(LINKS, key) && shell.openExternal(LINKS[key]))); // About page: only its own links, and the log folder
-  handle('setMonitor', (partial) => change('monitor', partial, () => screen.applyAudio()));
+  handle('setMonitor', (partial) => change('monitor', partial, () => { screen.applyAudio(); pcScreen.apply(); })); // apply(): Playback › Steady takes a new session (pcscreen.js)
   handle('setClipboard', (partial) => change('clipboard', partial, () => clip.applySettings()));
   handle('copyHistory', (index) => clip.copyHistory(Number(index)));
   handle('clearHistory', () => clip.clearHistory());
@@ -299,7 +299,7 @@ function setupIpc(ctx) {
   // pairsync.js applies a value the other computer changed, with the same side effects.
   const AFTER = {
     clipboard: () => clip.applySettings(),
-    monitor: () => screen.applyAudio(), // pacing (pair.sync 'pace')
+    monitor: () => { screen.applyAudio(); pcScreen.apply(); }, // pacing (pair.sync 'pace'); Steady: a new session
     notifs: () => notifs.applySettings(),
     audio: () => sound.apply(),
     kvm: () => kvm.applyConfig(),

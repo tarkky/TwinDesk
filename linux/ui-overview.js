@@ -93,13 +93,17 @@ UI.tab({
     const qrPair = UI.qrPairCard ? UI.qrPairCard() : null;
 
     const pairedList = el('div');
+    const webCard = UI.webConnCard ? UI.webConnCard() : null; // TwinDesk Web's paired devices (shared/ui-web.js)
+    const airplay = UI.airplayPlaying ? UI.airplayPlaying() : null; // music an iPhone plays here (AirPlay)
     body.append(
+      ...(airplay ? [airplay.el] : []),
       UI.card('', [addrRow, ipRow]),
       UI.card(t('Found nearby'), [discRow, foundList, ...bleRows], { actions: [refresh] }),
       ...(qrPair ? [qrPair.el] : []),
       hero,
       adb.el,
       UI.card(t('Paired'), [pairedList]),
+      ...(webCard ? [webCard.el] : []),
     );
 
     let last = null;
@@ -156,6 +160,8 @@ UI.tab({
       return { busy: true, text: mine.kind === 'take' ? t('Taking over…') : t('Connecting…') };
     }
     const update = (s) => {
+      if (webCard) webCard.render(s);
+      if (airplay) airplay.update(s);
       last = s;
       bleSw.set(!s.net || s.net.ble !== false);
       blePcSw.set(!!s.net && s.net.blePc === true);
@@ -237,12 +243,12 @@ UI.tab({
         const rows = s.found.map((dev) => {
           const isKnown = known.has(dev.id);
           const online = dev.id === live;
-          const st = dev.os === 'android' ? null : rowState(s, dev, online); // a phone has its own card
+          const st = dev.os === 'android' || dev.os === 'ios' ? null : rowState(s, dev, online); // a phone has its own card
           const pairIt = () => go(dev, 'pair', () => api.pair(dev.id));
           // A Mac hosts; with a PC or another Linux computer the one who clicks is the guest (L4).
           // A phone is asked to pair.
           const btn = online || isKnown || (st && !st.fail) ? null
-            : UI.button(st ? t('Retry') : dev.os === 'mac' || dev.os === 'android' ? t('Pair') : t('Connect'), pairIt, 'small' + (dev.invited || st ? ' primary' : ''));
+            : UI.button(st ? t('Retry') : dev.os === 'mac' || dev.os === 'android' || dev.os === 'ios' ? t('Pair') : t('Connect'), pairIt, 'small' + (dev.invited || st ? ' primary' : ''));
           if (btn) btn.disabled = (busy && !st) || connected;
           // Paired: Take over (the computer we're a guest of: a takeover hello; one that connects to us:
           // invited, and its hello takes the session from whoever has it).
