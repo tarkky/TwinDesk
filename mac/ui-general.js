@@ -18,7 +18,7 @@ UI.tab({
     const { el, api } = UI;
     const t = (...args) => I18n.t(...args);
     const language = UI.select([
-      { value: 'en', label: 'English' }, { value: 'zh-CN', label: '简体中文' }, { value: 'ru', label: 'Русский' }, { value: 'tr', label: 'Türkçe' },
+      { value: 'en', label: 'English' }, { value: 'zh-CN', label: '简体中文' }, { value: 'ru', label: 'Русский' }, { value: 'tr', label: 'Türkçe' }, { value: 'pt-BR', label: 'Português (Brasil)' },
     ], (v) => api.setLanguage(v));
     language.set(I18n.locale);
     const PERMS = [
@@ -53,6 +53,11 @@ UI.tab({
     const blePcSw = UI.switch((v) => api.setNet({ blePc: v }), { label: t('Bluetooth with computers') });
     const blePcRow = UI.row(t('Bluetooth with computers'), '', [blePcSw]);
     // Bluetooth off altogether while the session is on the same Wi-Fi (blepolicy.js wifiQuiet).
+    // Tailscale (#161, shared/tailnet.js): reaching a paired device away from its network.
+    const tailSw = UI.switch((v) => api.setNet({ tailscale: v }), { label: t('Connect through Tailscale') });
+    const tailRow = UI.row(t('Connect through Tailscale'), '', [tailSw]);
+    const tailHere = UI.row(t('This computer on Tailscale'), '', []);
+    const tailHow = UI.row(t('How to set it up'), t('To connect away from home, also from a phone on mobile data: install Tailscale on both devices and sign in to the same account. Pair them once on the same network, or with Connect by address and the other one’s Tailscale address (100.x.y.z). Afterwards, while Tailscale is on, TwinDesk reconnects through it when the other device isn’t on this network.'), []);
     const bleWifiSw = UI.switch((v) => api.setNet({ bleWifiOff: v }), { label: t('Turn off Bluetooth on Wi-Fi connections') });
     const bleWifiRow = UI.row(t('Turn off Bluetooth on Wi-Fi connections'), '', [bleWifiSw]);
     const shareRow = UI.row(t('TwinDesk in the Share menu'), t('Share › TwinDesk sends files to the other computer'),
@@ -73,6 +78,7 @@ UI.tab({
     });
 
     // Theme and accent colour (shared/look.js, shared/ui-look.js).
+    const styleRow = UI.styleRow((v) => api.setLook({ style: v })); // Glass or Simple (shared/ui-glass.css)
     const themeRow = UI.themeRow((v) => api.setLook({ theme: v }));
     const accentRow = UI.accentRow((v) => api.setLook({ accent: v }));
     // One page that scrolls, its sections listed beside it; Permissions first.
@@ -100,6 +106,7 @@ UI.tab({
         UI.row(t('Keep the display awake'), t('While connected'), [awakeSw]),
       ]),
       UI.card(t('Appearance'), [
+        styleRow,
         themeRow,
         accentRow,
         UI.row(t('Show a popup when switching'), t('When the mouse and keyboard move between devices'), [hudSw]),
@@ -107,10 +114,11 @@ UI.tab({
         media.el,
       ]),
       UI.card(t('Language'), [
-        UI.row(t('Language'), t('Changing the language reloads this window.'), [language]),
+        UI.row(t('Language'), t('Changing the language restarts TwinDesk.'), [language]),
       ]),
       UI.card(t('Overview'), partRows),
       UI.card(t('Network and Bluetooth'), [bleRow, blePcRow, bleWifiRow, wakeRow, shareRow]),
+      UI.card(t('Tailscale'), [tailRow, tailHere, tailHow]),
       UI.card(t('This computer'), [deviceRow, helperRow]),
       UI.card(t('Connections'), [pingRow]),
       UI.card(t('Advanced'), [protoRow, ...engines.rows]),
@@ -124,6 +132,7 @@ UI.tab({
         protoSel.set(proto);
         protoRestart.hidden = proto === protoStart;
       }
+      styleRow.render(s.look && s.look.style);
       themeRow.render(s.look && s.look.theme);
       accentRow.render(s.look);
       sections.spy();
@@ -157,6 +166,9 @@ UI.tab({
         bleSw.set(s.net.ble);
         blePcSw.set(s.net.blePc === true);
         bleWifiSw.set(s.net.bleWifiOff !== false);
+        tailSw.set(s.net.tailscale !== false);
+        tailRow.setHint(s.net.tailscale === false ? t('Off: only this network, Bluetooth and the cable') : t('When the other device isn’t on this network, TwinDesk tries its Tailscale address'));
+        tailHere.setHint((s.net.tailnet || []).length ? s.net.tailnet.join(' · ') : t('Not on Tailscale now'));
         bleWifiRow.setHint(s.net.bleWifiOff === false ? t('Bluetooth stays on beside the Wi-Fi, the way back if it drops')
           : s.net.bleOff ? t('Off now: the session is on the same Wi-Fi. Bluetooth comes back when it ends')
             : t('On the same Wi-Fi network (not Wi-Fi Direct), Bluetooth goes off until the session ends. With a computer, phones can’t find this one meanwhile'));

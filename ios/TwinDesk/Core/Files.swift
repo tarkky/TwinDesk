@@ -5,6 +5,7 @@
 // Files › On My \(Device.word) › TwinDesk › Received (UIFileSharingEnabled).
 import Foundation
 import CryptoKit
+import UIKit
 
 final class Files: Feature {
     struct Batch: Identifiable {
@@ -17,6 +18,7 @@ final class Files: Feature {
         var done = 0
         var ok = true
         var finished = false
+        var cancelled = false
         var at = Date()
         var progress: Double { bytes > 0 ? min(1, Double(got) / Double(bytes)) : (finished ? 1 : 0) }
     }
@@ -31,6 +33,8 @@ final class Files: Feature {
         var pulling = false
         var heldEnd: JSON?
         var fx2Hashes: [String]? // fx2: the ranges' hashes, once every one is in (file.end {fx2} must match)
+        var stop2: (() -> Void)? // the fx2 fetch under way
+        var tries = 0 // which fetch is the live one (an older one's end is ignored)
         init(id: String, batch: String, name: String, rel: String, size: Int64, url: URL, handle: FileHandle) {
             self.id = id; self.batch = batch; self.name = name; self.rel = rel; self.size = size; self.url = url; self.handle = handle
         }
@@ -38,15 +42,37 @@ final class Files: Feature {
 
     private final class Outgoing {
         let id: String, url: URL, name: String, size: Int64, batch: String
-        var state = "offered"
+        var state = "offered" // offered, accepted, sending, cancelled
+        var stop: (() -> Void)? // the transfer under way (fx2's ranges, fx's upload)
         init(id: String, url: URL, name: String, size: Int64, batch: String) {
             self.id = id; self.url = url; self.name = name; self.size = size; self.batch = batch
         }
     }
 
     private(set) var batches: [Batch] = [] // newest first, for the Files page
-    private var incoming: [String: Incoming] = [:]
-    private var outgoing: [Outgoing] = []
+    private var incoming: [String: Incoming] = [:] { didSet { keepRunning() } }
+    private var outgoing: [Outgoing] = [] { didSet { keepRunning() } }
+    // While a file goes either way, iOS is asked to keep the app running (a background task, about
+    // 30 s once off screen): a file sent from the computer's Share menu or Send files while this
+    // screen is off was never pulled (the app suspended: the computer's 10 s wait for file.pull ran
+    // out) and its file.chunk stopped when the session dropped.
+    private var task: UIBackgroundTaskIdentifier = .invalid
+    var busy: Bool { !incoming.isEmpty || !outgoing.isEmpty }
+    private func keepRunning() {
+        let busy = self.busy
+        if busy, task == .invalid {
+            task = UIApplication.shared.beginBackgroundTask(withName: "TwinDesk files") { [weak self] in self?.letGo() }
+        } else if !busy {
+            // Done off screen: onto Bluetooth now (Core.backgrounded waited for the files).
+            if task != .invalid { DispatchQueue.main.async { if !Core.shared.inFront { Core.shared.backgrounded() } } }
+            letGo()
+        }
+    }
+    private func letGo() {
+        guard task != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(task)
+        task = .invalid
+    }
     private var expected: Set<String> = [] // batches asked for (fclip.paste)
     private var fxBroken = false
     private var fx2Broken = false // fx2 failed before a byte went: the fx way for the rest of the session
@@ -163,6 +189,7 @@ final class Files: Feature {
 
     private func chunk(_ m: JSON) {
         guard let f = incoming[m.str("id", max: 128)] else { return }
+        if f.pulling && f.stop2 != nil && f.got == 0 { drop2(f) } // the computer gave up on fx2 (no bytes in time): its chunks instead
         if f.pulling { return abort(f.id, "out of order", tell: true) }
         guard let d = Data(base64Encoded: m.str("data", max: Proto.fileChunkBytes * 2)), m.int("seq") == f.seq,
               f.got + Int64(d.count) <= f.size else { return abort(f.id, "out of order", tell: true) }
@@ -202,6 +229,7 @@ final class Files: Feature {
     private func pull(_ m: JSON) {
         let id = m.str("id", max: 128)
         if m.has("fx2") { return pull2(id, m.int64("size", -1)) }
+        if let f = incoming[id], f.pulling, f.stop2 != nil, f.got == 0 { drop2(f) } // fx2 given up on by the computer: fx now
         guard let f = incoming[id], !fxBroken, !f.pulling, f.got == 0, f.seq == 0,
               let req = core.link.fxRequest(id, method: "GET") else {
             core.send(msg(Proto.T.filePull, ["id": id, "failed": true]))
@@ -241,6 +269,21 @@ final class Files: Feature {
         task.resume()
     }
 
+    // The computer gave up on the fx2 fetch before a byte came (fastfile.js PULL_MS) and went the fx or
+    // the chunk way: that fetch is stopped and forgotten, the file afresh for the new way. Before,
+    // a still-waiting fetch made the fallback fail too ("out of order"): the first send failed.
+    private func drop2(_ f: Incoming) {
+        NSLog("TwinDesk: fast file (fx2) %@: the computer went another way", f.name)
+        f.tries += 1
+        let stop = f.stop2
+        f.stop2 = nil
+        f.pulling = false
+        fx2Broken = true // as the computer: the fx way for the rest of the session
+        stop?()
+        try? f.handle.truncate(atOffset: 0)
+        try? f.handle.seek(toOffset: 0)
+    }
+
     // file.pull {fx2, size}: its ranges fetched at once, each written at its offset. {failed, fx2}
     // when we can't (before a byte): the computer sends it the fx way.
     private func pull2(_ id: String, _ size: Int64) {
@@ -250,12 +293,15 @@ final class Files: Feature {
             return
         }
         f.pulling = true
-        Fx2.get(to, id: id, url: f.url, size: f.size, progress: { [weak self] n in
-            guard let self = self, self.incoming[f.id] === f else { return }
+        f.tries += 1
+        let attempt = f.tries
+        f.stop2 = Fx2.get(to, id: id, url: f.url, size: f.size, progress: { [weak self] n in
+            guard let self = self, self.incoming[f.id] === f, f.tries == attempt else { return }
             self.addGot(f.batch, n)
         }) { [weak self] r in
-            guard let self = self else { return }
+            guard let self = self, f.tries == attempt else { return } // dropped: the computer went another way
             f.pulling = false
+            f.stop2 = nil
             guard self.incoming[f.id] === f else { return }
             switch r {
             case .success(let hs):
@@ -337,7 +383,11 @@ final class Files: Feature {
         let target = dest.appendingPathComponent(url.lastPathComponent)
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        if (try? fm.moveItem(at: url, to: target)) == nil { try? fm.copyItem(at: url, to: target) }
+        // Ours (Inbox, a temporary copy): moved. Anyone else's (opened in place from the Files app,
+        // LSSupportsOpeningDocumentsInPlace): copied, the original stays where it is.
+        let home = URL(fileURLWithPath: NSHomeDirectory()).resolvingSymlinksInPath().path
+        let mine = url.resolvingSymlinksInPath().path.hasPrefix(home + "/") || url.path.hasPrefix(FileManager.default.temporaryDirectory.path)
+        if !mine || (try? fm.moveItem(at: url, to: target)) == nil { try? fm.copyItem(at: url, to: target) }
         if fm.fileExists(atPath: target.path) { pendingShares.append(target) }
     }
 
@@ -400,8 +450,9 @@ final class Files: Feature {
             self.pump()
         }
         if !fxBroken, !fx2Broken, let to = core.link.fx2Target() {
-            Fx2.put(to, id: f.id, url: f.url, size: f.size, progress: { [weak self] n in self?.addGot(f.batch, n) }) { [weak self] r in
+            f.stop = Fx2.put(to, id: f.id, url: f.url, size: f.size, progress: { [weak self] n in self?.addGot(f.batch, n) }) { [weak self] r in
                 guard let self = self else { return }
+                if f.state == "cancelled" { return done() }
                 switch r {
                 case .success(let hs):
                     self.core.send(msg(Proto.T.fileEnd, ["id": f.id, "sha256": Fx2.joined(hs), "fx2": hs]))
@@ -431,8 +482,10 @@ final class Files: Feature {
                     var r = req
                     r.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
                     r.setValue(String(f.size), forHTTPHeaderField: "Content-Length")
+                    if f.state == "cancelled" { return done() }
                     let task = self.core.link.urlSession.uploadTask(with: r, fromFile: f.url) { _, res, err in
                         DispatchQueue.main.async {
+                            if f.state == "cancelled" { return done() }
                             let code = (res as? HTTPURLResponse)?.statusCode ?? 0
                             if err == nil && (200..<300).contains(code) {
                                 self.addGot(f.batch, f.size)
@@ -445,6 +498,7 @@ final class Files: Feature {
                             }
                         }
                     }
+                    f.stop = { task.cancel() }
                     task.resume()
                 }
             }
@@ -464,7 +518,7 @@ final class Files: Feature {
             }
             defer { try? r.close() }
             while true {
-                if !self.core.link.connected { DispatchQueue.main.async(execute: done); return }
+                if !self.core.link.connected || f.state == "cancelled" { DispatchQueue.main.async(execute: done); return }
                 while self.core.link.queued() > 1 << 20 { usleep(5000) }
                 let d = r.readData(ofLength: Proto.fileChunkBytes)
                 if d.isEmpty { break }
@@ -482,6 +536,23 @@ final class Files: Feature {
         }
     }
 
+    // Files › Cancel on a batch on its way: each of its files stopped and the computer told
+    // (file.cancel); the batch ends as cancelled.
+    func cancel(_ batch: String) {
+        guard let i = batches.firstIndex(where: { $0.id == batch && $0.dir == "out" && !$0.finished }) else { return }
+        for f in outgoing where f.batch == batch {
+            let was = f.state
+            f.state = "cancelled"
+            f.stop?()
+            core.send(msg(Proto.T.fileCancel, ["id": f.id]))
+            if was != "sending" { outgoing.removeAll { $0 === f } } // a sending one leaves when its transfer stops
+        }
+        batches[i].finished = true
+        batches[i].ok = false
+        batches[i].cancelled = true
+        core.changed()
+    }
+
     private static func hashFile(_ url: URL) -> String? {
         guard let r = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? r.close() }
@@ -496,7 +567,7 @@ final class Files: Feature {
 
     private func outDone(_ m: JSON) {
         let id = m.str("batch", max: 128)
-        guard let i = batches.firstIndex(where: { $0.id == id }) else { return }
+        guard let i = batches.firstIndex(where: { $0.id == id }), !batches[i].cancelled else { return }
         batches[i].finished = true
         batches[i].ok = m.bool("ok")
         batches[i].done = batches[i].count

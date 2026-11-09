@@ -52,7 +52,7 @@ const SCHEMA = {
   receive: { on: bool, fullScreen: bool, input: bool, framegen: bool },
   sharing: { remote: bool, pace: oneOf(['fast', 'smooth', 'steady'], 'fast'), fps: oneOf([0, 30, 60], 0) },
   papps: { on: bool },
-  phone: { sound: bool, bitrateMbps: (v) => Math.round(clamp(2, 40, 8)(v)), maxSize: oneOf([0, 1920, 1600, 1280, 1024], 0), wallpaper: bool, input: oneOf(['adb', 'phone'], 'adb'), inputPicked: bool, enterSends: bool, arrowSwipe: bool },
+  phone: { sound: bool, bitrateMbps: (v) => Math.round(clamp(2, 40, 8)(v)), maxSize: oneOf([0, 1920, 1600, 1280, 1024], 0), wallpaper: bool, input: oneOf(['adb', 'phone'], 'adb'), inputPicked: bool, enterSends: bool, arrowSwipe: bool, uhid: bool },
   mount: { on: bool },
   clipboard: {
     enabled: bool, send: bool, receive: bool, mode: oneOf(['switch', 'instant'], 'instant'),
@@ -478,6 +478,8 @@ function setupIpc(ctx) {
       if (typeof partial.ble === 'boolean') settings.net.ble = partial.ble;
       if (typeof partial.blePc === 'boolean') settings.net.blePc = partial.blePc;
       if (typeof partial.bleWifiOff === 'boolean') settings.net.bleWifiOff = partial.bleWifiOff; // blepolicy.js wifiQuiet
+      if (typeof partial.tailscale === 'boolean') settings.net.tailscale = partial.tailscale; // shared/tailnet.js
+      if (typeof partial.bleInput === 'boolean') settings.net.bleInput = partial.bleInput; // shared/bleinput.js
       save();
       ctx.ble.apply();
       if (partial.blePc === false && ctx.bleLook) ctx.bleLook.look(false); // computers off: stop looking now, not at the next tick
@@ -592,10 +594,11 @@ function setupIpc(ctx) {
       if (r && typeof r === 'object' && r.chat) return void ((ctx.chats && ctx.chats()) && (ctx.chats && ctx.chats()).reply(String(r.chat), r.text, r.image)); // a chat app's conversation (shared/chats.js)
       if (r && typeof r === 'object' && ctx.notifs && ctx.notifs.reply) ctx.notifs.reply(String(r.id || ''), r.text);
     },
-    // General › Appearance: { theme } and/or { accent } ('' follows the system); local only.
+    // General › Appearance: { style }, { theme } and/or { accent } ('' follows the system); local only.
     setLook(o) {
       if (!o || typeof o !== 'object') return;
       const Look = require('../../shared/look.js');
+      if (typeof o.style === 'string') settings.ui.style = Look.style(o.style);
       if (typeof o.theme === 'string') settings.ui.theme = Look.theme(o.theme);
       if (typeof o.accent === 'string') settings.ui.accent = Look.accent(o.accent);
       store.saveSettings(settings);
@@ -626,7 +629,7 @@ function setupIpc(ctx) {
     },
     relaunch() {
       app.relaunch();
-      app.exit(0);
+      app.quit(); // not exit: before-quit sends the cursor home and lets the helper release input
     },
     setMulti(on) {
       require('../multi').set(on === true); // Multi-device off: TwinDesk restarts one to one

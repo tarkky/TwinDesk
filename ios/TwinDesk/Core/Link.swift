@@ -1,7 +1,10 @@
 // TwinDesk — Copyright (C) 2026 inukaasith. GPL-3.0, see LICENSE.
 // The iPhone's side of the session, as android/…/Link.kt: a WSS client with the computer's
 // certificate pinned (its SHA-256 is the identity), pairing as the initiator (numeric comparison,
-// or Allow only with a QR code's nonce), hello, liveness. One socket; no Bluetooth fallback.
+// or Allow only with a QR code's nonce), hello, liveness. The session moves between the network and
+// a Bluetooth pipe without ending (move: hello {resume} on a second socket, which takes over once the
+// computer says welcome {resumed}), so what's under way on it (a file the computer holds back until
+// the session is on Wi-Fi) carries on.
 import Foundation
 
 struct PairState: Equatable {
@@ -54,6 +57,13 @@ final class Link: NSObject, URLSessionWebSocketDelegate {
     private var timeout: TimeInterval { viaBle ? 20 : Proto.timeout }
     private(set) var fx2Port: UInt16 = 0 // the computer's files engine (Fx2.swift), 0: none
     private var queuedBytes = 0 // sent but not yet written (file sending waits while it is high)
+    // Resume (move): the session's key from welcome, and the socket being opened to take over.
+    private var resumeKey = "" { didSet { resumeLock.lock(); hasKey = !resumeKey.isEmpty; resumeLock.unlock() } }
+    private var hasKey = false
+    private let resumeLock = NSLock()
+    // The computer said how to resume this session (any thread).
+    var resumable: Bool { resumeLock.lock(); defer { resumeLock.unlock() }; return hasKey }
+    private var pending: (task: URLSessionWebSocketTask, address: String, ble: Bool, done: (Bool) -> Void)?
     private let qLock = NSLock()
 
     // Quiet links (shared/quiet.js, #143): while nothing is live here and the computer says the same
@@ -123,6 +133,68 @@ final class Link: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    // The session onto another path (the network, or a Bluetooth pipe on 127.0.0.1) without ending it.
+    // done(false): it stays where it was (the path didn't open in time, or nothing to resume).
+    func move(to address: String, port: UInt16, ble: Bool, _ done: @escaping (Bool) -> Void) {
+        q.async {
+            guard self.state == "connected", self.mode == "session", !self.resumeKey.isEmpty, self.host != nil else {
+                return DispatchQueue.main.async { done(false) }
+            }
+            self.dropPending(false)
+            let a = address.contains(":") ? "[\(address)]" : address
+            guard !address.isEmpty, port > 0, let url = URL(string: "wss://\(a):\(port)") else { return DispatchQueue.main.async { done(false) } }
+            let t = self.session.webSocketTask(with: url)
+            t.maximumMessageSize = Proto.maxPayload
+            self.pending = (t, address, ble, done)
+            t.resume()
+            self.receivePending(t)
+            self.q.asyncAfter(deadline: .now() + (ble ? 20 : 8)) {
+                if self.pending?.task === t { NSLog("TwinDesk: the move to %@ didn’t answer in time", address); self.dropPending(false) }
+            }
+        }
+    }
+
+    private func dropPending(_ ok: Bool) {
+        guard let p = pending else { return }
+        pending = nil
+        if !ok { p.task.cancel(with: .goingAway, reason: nil) }
+        DispatchQueue.main.async { p.done(ok) }
+    }
+
+    private func receivePending(_ t: URLSessionWebSocketTask) {
+        t.receive { [weak self] r in
+            guard let self = self else { return }
+            self.q.async {
+                guard let p = self.pending, p.task === t else { return }
+                guard case .success(let m) = r else { return self.dropPending(false) }
+                var text: String?
+                if case .string(let s) = m { text = s } else if case .data(let d) = m { text = String(data: d, encoding: .utf8) }
+                guard let o = text.flatMap(decodeJSON) else { return self.receivePending(t) }
+                if o.str("t") == Proto.T.welcome, (o["resumed"] as? Bool) == true { return self.promote(t) }
+                if o.str("t") == Proto.T.error { return self.dropPending(false) }
+                self.receivePending(t)
+            }
+        }
+    }
+
+    // welcome {resumed}: the computer sends on the new socket from now on; so do we. The old one closes.
+    private func promote(_ t: URLSessionWebSocketTask) {
+        guard let p = pending, p.task === t, state == "connected" else { return dropPending(false) }
+        let old = ws
+        ws = t
+        address = p.address
+        viaBle = p.ble
+        lastRx = Date()
+        quietSince = nil
+        saidIdle = false
+        receive(t)
+        old?.cancel(with: .normalClosure, reason: nil)
+        NSLog("TwinDesk: the session moved to %@", p.ble ? "Bluetooth" : p.address)
+        dropPending(true)
+        sayIdle()
+        changed()
+    }
+
     func disconnect() {
         q.async {
             if self.state == "connected" { self.raw(msg(Proto.T.bye)) }
@@ -132,10 +204,11 @@ final class Link: NSObject, URLSessionWebSocketDelegate {
     }
 
     // nonce: from the computer's QR code: no code to compare, only Allow there.
-    func startPairing(address: String, port: UInt16, name: String, nonce: String = "") {
+    // ble: through a Bluetooth pipe on 127.0.0.1 (the longer timeout).
+    func startPairing(address: String, port: UInt16, name: String, nonce: String = "", ble: Bool = false) {
         q.async {
             self.closeSocket()
-            self.viaBle = false
+            self.viaBle = ble
             self.host = nil
             self.pairNonce = nonce
             self.pair = PairState(phase: "connecting", address: address, port: port, name: name, qr: !nonce.isEmpty)
@@ -184,7 +257,12 @@ final class Link: NSObject, URLSessionWebSocketDelegate {
         pinFp = fp
         self.address = address
         let h = address.contains(":") ? "[\(address)]" : address
-        guard let url = URL(string: "wss://\(h):\(port)") else { return }
+        // No address (a computer never seen on a network): nothing to open; URLSession throws on a URL
+        // without a host.
+        guard !address.isEmpty, port > 0, let url = URL(string: "wss://\(h):\(port)"), url.host?.isEmpty == false else {
+            ws = nil
+            return q.async { self.onClose("No address for the computer") }
+        }
         let t = session.webSocketTask(with: url)
         t.maximumMessageSize = Proto.maxPayload
         ws = t
@@ -248,6 +326,12 @@ final class Link: NSObject, URLSessionWebSocketDelegate {
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        if let p = pending, webSocketTask === p.task, let h = host {
+            let hello = msg(Proto.T.hello, ["v": Proto.version, "id": store.deviceId, "name": store.deviceName, "os": Proto.os,
+                                            "token": h.token, "resume": resumeKey])
+            if let s = encodeJSON(hello) { webSocketTask.send(.string(s)) { _ in } }
+            return
+        }
         guard webSocketTask === ws else { return }
         lastRx = Date()
         if mode == "pair" {
@@ -269,6 +353,7 @@ final class Link: NSObject, URLSessionWebSocketDelegate {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let p = pending, task === p.task { return dropPending(false) }
         guard task === ws else { return }
         onClose(lastCode == "identity" ? "identity" : error?.localizedDescription)
     }
@@ -336,7 +421,7 @@ final class Link: NSObject, URLSessionWebSocketDelegate {
         let name = m.str("macName", max: 64)
         let h = Computer(id: id, name: name.isEmpty ? p.name : name, os: m.str("os").isEmpty ? "mac" : m.str("os"),
                      address: p.address, port: p.port, fp: seenFp, token: token, lastSeen: Date().timeIntervalSince1970)
-        store.putHost(h, list)
+        store.putHost(findable(h), list)
         pair = nil
         mode = "session"
         host = h
@@ -345,17 +430,34 @@ final class Link: NSObject, URLSessionWebSocketDelegate {
         hello()
     }
 
+    // What's saved of a computer reached through the cable or a Bluetooth pipe (127.0.0.1, and the
+    // pipe's own port): where it was last seen on a network instead, else 127.0.0.1 on the session's
+    // port (the cable's, if it's plugged in). Saving the pipe's address made every later Connect go
+    // to it, off the cable too, until the computer was forgotten and paired again.
+    private func findable(_ h: Computer) -> Computer {
+        guard h.address == "127.0.0.1" else { return h }
+        var w = h
+        if let old = store.host(h.id, list), old.address != "127.0.0.1", !old.address.isEmpty {
+            w.address = old.address
+            w.port = old.port
+        } else {
+            w.port = Proto.port
+        }
+        return w
+    }
+
     private func onWelcome(_ m: JSON) {
         guard mode == "session", state != "connected", var h = host else { return }
         helloTimer?.cancel()
         let name = m.str("macName", max: 64)
         if !name.isEmpty { h.name = name }
         h.lastSeen = Date().timeIntervalSince1970
-        if address != "127.0.0.1" { h.address = address } // the cable's address isn't where to find it next time
+        if address != "127.0.0.1" { h.address = address }
         host = h
-        store.putHost(h, list)
+        store.putHost(findable(h), list)
         if list == "hosts" { store.lastHostId = h.id }
         rttMs = nil
+        resumeKey = m.str("resume", max: 64)
         let fx = m.str("fx", max: 64)
         fxToken = Proto.isHex(fx, min: 32, max: 32) ? fx : ""
         let p2 = m.obj("fx2")?["port"] as? NSNumber
@@ -457,6 +559,8 @@ final class Link: NSObject, URLSessionWebSocketDelegate {
         ws = nil
         fxToken = ""
         fx2Port = 0
+        resumeKey = ""
+        dropPending(false)
         if mode == "pair" {
             if let p = pair, p.phase != "failed" {
                 pairFailed(p.phase == "connecting" ? "Couldn’t connect to \(p.address)\(failure.map { " (\($0))" } ?? "")." : "The connection closed.")
@@ -480,6 +584,8 @@ final class Link: NSObject, URLSessionWebSocketDelegate {
         ws = nil
         fxToken = ""
         fx2Port = 0
+        resumeKey = ""
+        dropPending(false)
         let wasConnected = state == "connected"
         if wasConnected { state = "idle" }
         w?.cancel(with: .normalClosure, reason: nil)
@@ -496,10 +602,11 @@ final class Link: NSObject, URLSessionWebSocketDelegate {
 
     // ---- fast files (fx): the file's bytes as one HTTPS stream on the session's port ----
 
-    // A request for /twindesk/fx/<id>, or nil when fast files can't be used (no token, a group network).
+    // A request for /twindesk/fx/<id>, or nil when fast files can't be used (no token, Bluetooth). On
+    // the network, the cable, a Wi-Fi Direct group or a hotspot (this phone's or the computer's) alike,
+    // as the computers' fastfile.js usable(); anything wrong before a byte: file.chunk (Files.swift).
     func fxRequest(_ id: String, method: String) -> URLRequest? {
         guard state == "connected", !viaBle, !fxToken.isEmpty, let h = host else { return nil }
-        if Proto.groupNets.contains(where: { address.hasPrefix($0) }) { return nil }
         let a = address.contains(":") ? "[\(address)]" : address
         let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         guard let url = URL(string: "https://\(a):\(h.port)\(Proto.fxPath)\(enc)") else { return nil }
@@ -510,10 +617,10 @@ final class Link: NSObject, URLSessionWebSocketDelegate {
         return r
     }
 
-    // Where fast files v2 go (Fx2.swift), or nil when they can't (no engine there, a group network).
+    // Where fast files v2 go (Fx2.swift), or nil when they can't (no engine there, Bluetooth). Anything
+    // wrong before a byte: the fx way, then file.chunk (Files.swift).
     func fx2Target() -> Fx2.To? {
         guard state == "connected", !viaBle, !fxToken.isEmpty, fx2Port > 0, let h = host, !h.fp.isEmpty else { return nil }
-        if Proto.groupNets.contains(where: { address.hasPrefix($0) }) { return nil }
         return Fx2.To(host: address, port: fx2Port, fp: h.fp, token: fxToken)
     }
 

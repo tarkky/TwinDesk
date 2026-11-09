@@ -127,6 +127,10 @@ class Core private constructor(val ctx: Context) : Link.Events {
 
     // General › Connections › Reconnect in the background (on): a session that dropped by accident is
     // taken up again with TwinDesk closed. Off: only once TwinDesk is opened (foreground()).
+    // General › Tailscale (Tailnet.kt): on unless switched off.
+    var tailscale: Boolean
+        get() = store.flag("tailscale", true)
+        set(on) { store.setFlag("tailscale", on); changed() }
     var reconnectBg: Boolean
         get() = store.flag("reconnectBg", true)
         set(on) { store.setFlag("reconnectBg", on); changed() }
@@ -138,7 +142,7 @@ class Core private constructor(val ctx: Context) : Link.Events {
         link.wake()
         val h = resumeLater ?: return
         resumeLater = null
-        if (link.connected || link.state == "connecting" || link.pair != null) return
+        if (link.connected || link.state == "connecting" || link.pair != null || peer.connected) return
         val known = store.hosts().find { it.id == h.id } ?: return
         Log.i("TwinDesk", "opened: reconnecting to ${known.name}")
         bg.execute { connect(known) }
@@ -162,7 +166,7 @@ class Core private constructor(val ctx: Context) : Link.Events {
         val want = bleOn && ble.allowed() && ble.radioOn && (!link.connected || link.ble)
         ble.scan(want)
         if (!bleOn && ble.found.isNotEmpty()) ble.stop()
-        serve.advertise(bleOn && serve.allowed() && ble.radioOn && !link.connected)
+        serve.advertise(bleOn && serve.allowed() && ble.radioOn && !link.connected && !peer.connected) // a phone holds the session: computers wait
         if (!bleOn && serve.found.isNotEmpty()) serve.stop()
         val h = link.host
         if (link.connected && !link.ble) screen.onWifi()
@@ -233,14 +237,26 @@ class Core private constructor(val ctx: Context) : Link.Events {
             }
             return
         }
+        // Not seen on this network: every other Connect through Tailscale, when both are on it (#161).
+        // The address is for this attempt only (a copy); discovery puts the network's back.
+        if (seen == null && tailscale) {
+            tailTurn = !tailTurn
+            val t = Tailnet.address(h)
+            if (tailTurn && t != null && t != h.address && Tailnet.onIt()) {
+                Log.i("TwinDesk", "${h.name} isn’t on this network: through Tailscale")
+                link.connect(h.copy(address = t))
+                return
+            }
+        }
         link.connect(h)
     }
+    @Volatile private var tailTurn = false
 
     // A PC opened a pipe on its own (its Pair or Connect, an invite): a paired one connects through
     // it now, an unpaired one is shown as an invite (Pair asks it for a pipe again).
     private fun onServeOpen(f: Found, port: Int): Boolean {
         val h = store.hosts().find { it.id == f.id }
-        if (h == null || link.connected || link.state == "connecting" || link.pair != null) {
+        if (h == null || link.connected || link.state == "connecting" || link.pair != null || peer.connected) {
             if (h == null) onInvite(f.copy(invited = true))
             return false
         }
@@ -254,6 +270,7 @@ class Core private constructor(val ctx: Context) : Link.Events {
     // WiredReceiver): take the session through the cable, also from a Wi-Fi session with it. Not
     // paired with it yet: pair through the cable (no Wi-Fi needed), then the session follows.
     fun connectWired(id: String, port: Int, nonce: String, name: String) {
+        if (peer.connected) { Log.i("TwinDesk", "USB: ${name.ifEmpty { id }} found, but another phone is connected"); return }
         val h = store.hosts().find { it.id == id }
         if (h == null) {
             if (link.pair != null && link.pair?.phase != "failed") { Log.i("TwinDesk", "USB: already pairing"); return }
@@ -273,22 +290,24 @@ class Core private constructor(val ctx: Context) : Link.Events {
     @Volatile private var wiredNonce = ""
 
     // The computer's pairing QR code, scanned here (QrActivity): the first of its addresses that
-    // answers, then pairing with its nonce (only Allow there, as on the cable), or a computer already
-    // paired connects at that address. false: none of them answers from this network.
+    // answers, then pairing with its nonce (only Allow there, as on the cable). A computer already
+    // paired connects where discovery sees it or at its stored address; only when neither answers,
+    // at the code's address for this one attempt, never stored: a browsable link can't re-point it,
+    // and the session pins the computer's certificate, so another machine there fails.
+    // false: none of them answers from this network.
     fun connectQr(id: String, addrs: List<String>, port: Int, nonce: String, name: String): Boolean {
-        val address = addrs.firstOrNull { a ->
-            runCatching { java.net.Socket().use { s -> s.connect(java.net.InetSocketAddress(a, port), 800) }; true }.getOrDefault(false)
-        } ?: return false
-        val h = store.hosts().find { it.id == id }
+        val answers = { a: String, p: Int ->
+            runCatching { java.net.Socket().use { s -> s.connect(java.net.InetSocketAddress(a, p), 800) }; true }.getOrDefault(false)
+        }
         resumeUntil = 0
-        if (h != null) {
-            Log.i("TwinDesk", "QR: connecting to ${h.name} at $address")
-            h.address = address
-            h.port = port
-            store.putHost(h)
-            connect(h)
+        store.hosts().find { it.id == id }?.let { h ->
+            val use = if (discovery.found[h.id] != null || answers(h.address, h.port)) h
+                else addrs.firstOrNull { answers(it, port) }?.let { h.copy(address = it, port = port) } ?: h
+            Log.i("TwinDesk", "QR: connecting to ${h.name}")
+            connect(use)
             return true
         }
+        val address = addrs.firstOrNull { answers(it, port) } ?: return false
         Log.i("TwinDesk", "QR: pairing with ${name.ifEmpty { id }} at $address")
         invite?.let { discovery.clearInvite(it.id) }
         invite = null
@@ -348,6 +367,8 @@ class Core private constructor(val ctx: Context) : Link.Events {
     private fun onInvite(f: Found) {
         val h = store.hosts().find { it.id == f.id }
         if (h != null) {
+            // A phone holds the session (one at a time): the computer waits; Connect here takes it back.
+            if (peer.connected) { Log.i("TwinDesk", "invite from ${f.name}: a phone holds the session"); return }
             Log.i("TwinDesk", "invite from ${f.name}: connecting")
             if (link.host?.id == h.id && (link.state == "connected" || link.state == "connecting")) return
             if (!f.address.startsWith("ble:") && !f.address.startsWith("blp:")) {
@@ -375,6 +396,8 @@ class Core private constructor(val ctx: Context) : Link.Events {
         Log.i("TwinDesk", "session with ${host.name}")
         resumeUntil = 0
         Notify.cancelInvite(ctx)
+        // One session: a phone's ends (Peer.started ends ours the other way).
+        if (peer.connected) { Log.i("TwinDesk", "ending the phone session for ${host.name}"); peer.disconnect() }
         // Tells the computer which of its USB devices this is (its screen and input use that one).
         if (link.wired) link.send(JSONObject().put("t", "phone.wired").put("nonce", wiredNonce))
         // Paired through the cable: its network address once discovery has seen it.
@@ -416,7 +439,7 @@ class Core private constructor(val ctx: Context) : Link.Events {
 
     private fun resume() {
         val h = resumeHost ?: return
-        if (System.currentTimeMillis() > resumeUntil || link.connected || link.state == "connecting" || link.pair != null) return
+        if (System.currentTimeMillis() > resumeUntil || link.connected || link.state == "connecting" || link.pair != null || peer.connected) return
         if (inBackground()) { resumeLater = h; return }
         Log.i("TwinDesk", "resuming the session with ${h.name}")
         val until = resumeUntil

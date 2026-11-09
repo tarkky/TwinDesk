@@ -7,6 +7,7 @@
 
 const { EventEmitter } = require('events');
 const P = require('../../shared/protocol.js');
+const { PairFails } = require('../../shared/pairfail.js');
 const store = require('./store');
 
 const HEX = (n) => new RegExp(`^[0-9a-f]{${n}}$`);
@@ -21,6 +22,7 @@ class Pairing extends EventEmitter {
     this.id = identity;
     this.paired = this.store.read('paired.json', []);
     this.pending = null; // {ctx, id, name, commit, nm, nw, code, confirmed, allowed, timer}
+    this.fails = new PairFails(); // failed pairings per address: a lockout after too many (#136)
     server.on('preauth', (ctx, msg) => this._onMessage(ctx, msg));
     server.on('closed', (ctx) => this._onClosed(ctx));
   }
@@ -43,6 +45,9 @@ class Pairing extends EventEmitter {
   }
 
   forget(id) {
+    // A pairing from it still going would add it straight back when it finishes: it ends here.
+    const p = this.pending;
+    if (p && p.id === id) { this._clear(); this.server.fail(p.ctx, P.E.PAIR_REFUSED, 'The pairing was forgotten'); }
     this.paired = this.paired.filter((x) => x.id !== id);
     this._save();
     this.server.closeDevice(id, P.E.BAD_TOKEN, 'This Mac forgot the pairing');
@@ -85,12 +90,16 @@ class Pairing extends EventEmitter {
 
     const p = this.pending;
     if (msg.t === P.T.PAIR_START) {
+      if (this.fails.locked(ctx.address)) {
+        return this.server.fail(ctx, P.E.PAIR_REFUSED, 'Too many failed pairing attempts from this address; wait a few minutes and try again');
+      }
       if (p && p.ctx !== ctx) return this.server.fail(ctx, P.E.BUSY, 'Another pairing is in progress');
       if (p) return this.server.fail(ctx, P.E.BAD_MESSAGE, 'Pairing already started');
       if (msg.v !== P.PROTOCOL_VERSION) {
         return this.server.fail(ctx, P.E.VERSION_MISMATCH, `Mac speaks protocol v${P.PROTOCOL_VERSION}`);
       }
       if (typeof msg.id !== 'string' || !msg.id || typeof msg.commit !== 'string' || !HEX(64).test(msg.commit)) {
+        this.fails.fail(ctx.address);
         return this.server.fail(ctx, P.E.BAD_MESSAGE, 'pair.start needs id and commit');
       }
       const nm = P.randomHex(16);
@@ -135,6 +144,7 @@ class Pairing extends EventEmitter {
         this.emit('change');
         return this._maybeFinish();
       case P.T.PAIR_CANCEL:
+        this.fails.fail(p.ctx.address); // a cancel after an accepted start counts toward the lockout
         this._clear();
         ctx.ws.close();
         return;
@@ -151,6 +161,7 @@ class Pairing extends EventEmitter {
     this.paired = this.paired.filter((x) => x.id !== p.id);
     this.paired.push({ id: p.id, name: p.name, os: p.os, tokenHash: P.sha256Hex(token), pairedAt: now, lastSeen: now });
     this._save();
+    this.fails.clear(p.ctx.address);
     this.server.send(p.ctx, { t: P.T.PAIR_OK, token, macId: this.id.macId, macName: this.id.macName, os: P.OS.MAC, mesh: 1 });
     console.log(`[pairing] paired with ${p.name} (${p.id})`);
     this._clear();
@@ -172,6 +183,7 @@ class Pairing extends EventEmitter {
     ctx.mesh = !!msg.mesh; // the device speaks the mesh (docs/mesh.md): it gets the roster
     this.server.authenticate(ctx, { deviceId: e.id, name: e.name, os: e.os || P.OS.WIN }, {
       t: P.T.WELCOME, v: P.PROTOCOL_VERSION, macId: this.id.macId, macName: this.id.macName, os: P.OS.MAC, mesh: 1,
+      tail: require('../../shared/tailnet.js').mine(), // its Tailscale addresses, for reconnecting away from this network (#161)
     });
     this.emit('change');
   }
@@ -179,6 +191,7 @@ class Pairing extends EventEmitter {
   _abort(code, message) {
     const p = this.pending;
     if (!p) return;
+    this.fails.fail(p.ctx.address); // a denial, a wrong code, a timeout: all count toward the lockout
     this._clear();
     this.server.fail(p.ctx, code, message);
   }
@@ -191,7 +204,10 @@ class Pairing extends EventEmitter {
   }
 
   _onClosed(ctx) {
-    if (this.pending && this.pending.ctx === ctx) this._clear();
+    if (this.pending && this.pending.ctx === ctx) {
+      this.fails.fail(ctx.address); // a socket dropped mid-pairing counts like a cancel
+      this._clear();
+    }
     if (ctx.authed && ctx.deviceId) this.touch(ctx.deviceId);
     this.emit('change');
   }

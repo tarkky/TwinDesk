@@ -30,6 +30,7 @@ function render(locale) {
     mediaControlsRow: () => ({ el: el('media'), update() {} }),
     enginesRows: () => ({ rows: [], update() {} }), // shared/ui-engines.js
     // shared/ui-look.js
+    styleRow: () => Object.assign(el('row'), { render() {} }),
     themeRow: () => Object.assign(el('row'), { render() {} }),
     accentRow: () => Object.assign(el('row'), { render() {} }),
     sections: (cards) => Object.assign(el('sections', {}, cards), { spy() {} }),
@@ -50,7 +51,7 @@ function render(locale) {
   assert.strictEqual(selectors.length, 2, 'General and Setup both expose the language selector');
   for (const selector of selectors) {
     assert.strictEqual(selector.value, locale);
-    assert.deepStrictEqual(Array.from(selector.options, (o) => o.label), ['English', '简体中文', 'Русский', 'Türkçe']);
+    assert.deepStrictEqual(Array.from(selector.options, (o) => o.label), ['English', '简体中文', 'Русский', 'Türkçe', 'Português (Brasil)']);
     selector.change(locale === 'en' ? 'zh-CN' : 'en');
   }
   assert.strictEqual(calls.filter(([key]) => key === 'setLanguage').length, 2);

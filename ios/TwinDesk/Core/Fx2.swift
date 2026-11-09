@@ -46,14 +46,27 @@ enum Fx2 {
     }
 
     // Our file, PUT in its ranges at once. progress and done come on the main queue.
-    static func put(_ to: To, id: String, url: URL, size: Int64, progress: @escaping (Int64) -> Void, done: @escaping Done) {
-        Job(to, id: id, url: url, size: size, put: true, progress: progress, done: done).start()
+    // Returns its stop (Cancel on the Files page): done then fails with "cancelled".
+    @discardableResult
+    static func put(_ to: To, id: String, url: URL, size: Int64, progress: @escaping (Int64) -> Void, done: @escaping Done) -> () -> Void {
+        let j = Job(to, id: id, url: url, size: size, put: true, progress: progress, done: done)
+        j.start()
+        return { j.cancel() }
     }
 
     // The computer's file, its ranges fetched at once into `url` (truncated to `size` first).
-    static func get(_ to: To, id: String, url: URL, size: Int64, progress: @escaping (Int64) -> Void, done: @escaping Done) {
-        Job(to, id: id, url: url, size: size, put: false, progress: progress, done: done).start()
+    // Returns its stop (the computer went another way): done then fails with "cancelled".
+    @discardableResult
+    static func get(_ to: To, id: String, url: URL, size: Int64, progress: @escaping (Int64) -> Void, done: @escaping Done) -> () -> Void {
+        let j = Job(to, id: id, url: url, size: size, put: false, progress: progress, done: done)
+        j.start()
+        return { j.cancel() }
     }
+
+    // Nothing through by then (a connection or TLS handshake that hangs: NWConnection has no timeout
+    // of its own): an early failure, so the file goes the fx way at once. Under the computer's own
+    // 10 s (fastfile.js PULL_MS), which otherwise gives up first while this one still waits.
+    static let firstByteSeconds: Double = 7
 
     private final class Job {
         let to: To, id: String, url: URL, size: Int64, put: Bool
@@ -83,7 +96,13 @@ enum Fx2 {
                 try? fh.close()
             }
             for r in plan { open(r) }
+            q.asyncAfter(deadline: .now() + Fx2.firstByteSeconds) { [weak self] in
+                guard let self = self, !self.ended, self.moved == 0 else { return }
+                self.fail("no answer in \(Int(Fx2.firstByteSeconds)) s")
+            }
         }
+
+        func cancel() { fail("cancelled") }
 
         private func fail(_ why: String) {
             q.async {
