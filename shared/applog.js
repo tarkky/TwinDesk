@@ -5,7 +5,8 @@
 // folder, %APPDATA%\MacShare\logs, ~/.config/MacShare/logs), kept to 5 MB × 3 (TwinDesk.log, .1.log,
 // .2.log). Crashes
 // (an uncaught exception or rejection here, a window's renderer or another Electron process gone)
-// go to crash.log as well, and the app goes on as before. With TWINDESK_LINK_STATS=1, while connected,
+// go to crash.log as well (1 MB × 2: crash.log, crash.1.log; the same crash again is a count), and
+// the app goes on as before. With TWINDESK_LINK_STATS=1, while connected (to link-stats.log, not TwinDesk.log),
 // once every 30 s, one line on the link: round trip p50/p95/p99/max, the input lane's (shared/inputlane.js) when it's
 // up, pointer moves a second, bytes queued on the socket, and how long the main thread's event loop
 // was held up (p99 and max: garbage collection, sync writes, IPC).
@@ -23,12 +24,15 @@ let maxBytes = 5 * 1024 * 1024;
 const KEEP = 3; // TwinDesk.log and two older ones
 const LEVELS = ['log', 'info', 'warn', 'error', 'debug'];
 const STATS_MS = 30000;
+let crashMax = 1024 * 1024; // crash.log, then crash.1.log: two files at most, whatever loops
 
 let folder = '';
 let fd = null; // TwinDesk.log, written in order with crash()'s lines (a stream's end() is too late to rename on Windows)
 let size = 0;
 let started = false;
 let terminal = console.error.bind(console); // the console before start(): the terminal only
+let consoleDead = false; // its pipe is gone (no terminal when launched from the menu): nothing more goes out to it
+const crashes = new Map(); // kind + the first line of the stack -> how often it came back, and when it started
 
 function dir() {
   return folder;
@@ -78,13 +82,56 @@ function write(line) {
   }
 }
 
-// What went wrong, at once and whatever happens next (crash.log and TwinDesk.log).
+// A tenth, hundredth, thousandth time: one line, not one line per crash.
+function milestone(n) {
+  while (n >= 10 && n % 10 === 0) n /= 10;
+  return n === 1;
+}
+
+// The EPIPE of a pipe nobody reads arrives as an 'error' event on the stream, asynchronously, not
+// as a throw the caller could catch: left unanswered it becomes an uncaughtException, and that is
+// what closed the loop (crash() wrote to the same dead terminal).
+function watchPipe(stream) {
+  if (!stream || typeof stream.on !== 'function') return;
+  stream.on('error', (e) => {
+    if (e && e.code === 'EPIPE') {
+      consoleDead = true;
+      return;
+    }
+    throw e; // anything else still goes through crash()
+  });
+}
+
+// crash.log (what people send with a bug report) is kept to crashMax × 2 (crash.log, crash.1.log),
+// TwinDesk.log keeps the same line under its own cap.
+function crashLine(line) {
+  const f = path.join(folder, 'crash.log');
+  try {
+    if (fs.statSync(f).size + Buffer.byteLength(line) > crashMax) fs.renameSync(f, path.join(folder, 'crash.1.log'));
+  } catch (_) { /* not there yet */ }
+  try { fs.appendFileSync(f, line); } catch (_) { /* no folder */ }
+  write(line);
+}
+
+// What went wrong, at once and whatever happens next (crash.log and TwinDesk.log). The same crash,
+// over and over, is one line and then a count: a loop must not fill the disk by itself.
 function crash(kind, detail) {
   const text = detail instanceof Error ? detail.stack || String(detail) : typeof detail === 'string' ? detail : util.inspect(detail);
-  const line = `${stamp()} [crash] ${kind}: ${text}\n`;
-  try { fs.appendFileSync(path.join(folder, 'crash.log'), line); } catch (_) { /* no folder */ }
-  try { if (fd !== null) fs.writeSync(fd, line); } catch (_) { /* best effort */ }
-  try { terminal(line.trimEnd()); } catch (_) { /* no terminal */ }
+  const at = stamp();
+  const key = `${kind}: ${text.split('\n')[0]}`;
+  const seen = crashes.get(key);
+  if (seen) {
+    seen.count++;
+    if (milestone(seen.count)) crashLine(`${at} [crash] ${key} (repeated ${seen.count} times since ${seen.first})\n`);
+    return;
+  }
+  crashes.set(key, { count: 1, first: at });
+  const line = `${at} [crash] ${kind}: ${text}\n`;
+  crashLine(line);
+  // Not on the terminal it is reporting about: that write is what came back as another crash.
+  if (!consoleDead) {
+    try { terminal(line.trimEnd()); } catch (_) { consoleDead = true; /* no terminal */ }
+  }
 }
 
 // opts.maxBytes: a smaller file, for tests.
@@ -92,6 +139,7 @@ function start(app, opts = {}) {
   if (started) return;
   started = true;
   if (opts.maxBytes) maxBytes = opts.maxBytes;
+  if (opts.crashBytes) crashMax = opts.crashBytes;
   try {
     folder = app.getPath('logs');
   } catch (_) {
@@ -104,10 +152,14 @@ function start(app, opts = {}) {
     fd = null;
   }
   terminal = console.error.bind(console);
+  watchPipe(process.stdout);
+  watchPipe(process.stderr);
   for (const level of LEVELS) {
     const orig = console[level].bind(console);
     console[level] = (...args) => {
-      try { orig(...args); } catch (_) { /* no terminal (EPIPE) */ }
+      if (!consoleDead) {
+        try { orig(...args); } catch (_) { consoleDead = true; /* no terminal (EPIPE) */ }
+      }
       try { write(`${stamp()} ${level === 'log' || level === 'info' ? '' : level.toUpperCase() + ' '}${util.format(...args)}\n`); } catch (_) { /* best effort */ }
     };
   }
@@ -135,6 +187,19 @@ function open() {
 
 function pct(sorted, p) {
   return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p + 0.5))];
+}
+
+// The link line goes to its own file (link-stats.log, 1 MB × 2), apart from TwinDesk.log's events (#143:
+// a log full of measurements hid what happened). Before start() (no folder): the console.
+function statsLine(line) {
+  if (!folder) return void console.log(line);
+  const f = path.join(folder, 'link-stats.log');
+  try {
+    let n = 0;
+    try { n = fs.statSync(f).size; } catch (_) { /* none yet */ }
+    if (n > crashMax) fs.renameSync(f, path.join(folder, 'link-stats.1.log'));
+    fs.appendFileSync(f, `${stamp()} ${line}\n`);
+  } catch (_) { /* a full disk: no stats */ }
 }
 
 // The link line every 30 s while connected (sample: see above). Moves: shared/kvm-moves.js counts them.
@@ -172,7 +237,7 @@ function linkStats(sample, everyMs = STATS_MS, sampleMs = 1000) {
       const lane = ls.length ? `, lane p50 ${ls[Math.floor((ls.length - 1) / 2)].toFixed(1)} ms / max ${ls[ls.length - 1].toFixed(1)} ms` : '';
       const perSec = Math.round((KvmMoves.count - moves) / ((now - since) / 1000));
       const lp = loop && loop.count ? `, loop p99 ${(loop.percentile(99) / 1e6).toFixed(1)} ms / max ${(loop.max / 1e6).toFixed(1)} ms` : '';
-      console.log(`[link] ${rtt}${lane}, kvm moves ${perSec}/s, queued max ${queuedMax} bytes${lp}`);
+      statsLine(`[link] ${rtt}${lane}, kvm moves ${perSec}/s, queued max ${queuedMax} bytes${lp}`);
     }
     if (loop) loop.reset();
     rtts = [];
