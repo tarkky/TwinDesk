@@ -20,12 +20,15 @@
     --nav-hover: rgba(255, 255, 255, 0.06); --shadow: none; --sidebar: #2b2b2e;
   }
 }
+/* Flag emoji in the language picker: Windows has no flag glyphs (it shows "GB"), and not every Linux
+   has an emoji font. Only the regional-indicator letters use it. Twemoji art, CC-BY 4.0. */
+@font-face { font-family: "TwinDesk Flags"; src: url("../shared/lang/flags.woff2") format("woff2"); unicode-range: U+1F1E6-1F1FF; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0; display: flex; overflow: hidden; background: var(--sidebar); color: var(--text);
-  font: 13px/1.4 system-ui, "Ubuntu", "Cantarell", "Noto Sans", sans-serif; user-select: none;
+  font: 13px/1.4 "TwinDesk Flags", system-ui, "Ubuntu", "Cantarell", "Noto Sans", sans-serif; user-select: none;
 }
 button, input, select { font: inherit; color: inherit; }
 
@@ -312,3 +315,8 @@ input[type="text"]:focus, input[type="search"]:focus { outline: none; box-shadow
 @media (prefers-color-scheme: dark) {
   .app-mark { background-image: image-set(url(assets/sidebar-icon@1x.png) 1x, url(assets/sidebar-icon@2x.png) 2x, url(assets/sidebar-icon@3x.png) 3x, url(assets/sidebar-icon@4x.png) 4x); }
 }
+
+/* A dropdown's list is drawn by the system from the option's own colours: the Glass style's controls
+   are see-through, which left it white with white text in dark mode. Solid colours for the list. */
+select option, select optgroup { background-color: #ffffff; color: #1d1d1f; }
+@media (prefers-color-scheme: dark) { select option, select optgroup { background-color: #2c2c2e; color: #f5f5f7; } }
