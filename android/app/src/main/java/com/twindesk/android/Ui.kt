@@ -166,6 +166,7 @@ object Ico {
     val cursor = lineIcon("cursor", "M5 3l10 6-4.5 1.2L8.5 15z")
     val keyboard = lineIcon("keyboard", "M2.5 6h15v8h-15z M5.5 9h1 M8.5 9h1 M11.5 9h1 M14.5 9h0 M6.5 11.5h7")
     val rezume = lineIcon("rezume", "M2 4.5h8v6H2z M1 12.5h10 M13.5 6.5h4.5v10h-4.5z M15.2 14.5h1.1 M3.5 16h6 M8 14.4l1.6 1.6L8 17.6")
+    val deck = lineIcon("deck", "M3 3h6v6H3z M11 3h6v6h-6z M3 11h6v6H3z M11 11h6v6h-6z")
     val remote = lineIcon("remote", "M6.5 6.5h7a4 4 0 0 1 4 4v1.5a2.8 2.8 0 0 1-5 1.7L11.4 12H8.6l-1.1 1.7a2.8 2.8 0 0 1-5-1.7v-1.5a4 4 0 0 1 4-4z M6 8.5v3 M4.5 10h3 M13 9.5h0 M14.5 11h0")
     val clipboard = lineIcon("clipboard", "M6 4h8v13H6z M8 3h4v2.5H8z M8 9h4 M8 12h4")
     val files = lineIcon("files", "M3 5h5l1.5 2H17v9H3z")
@@ -200,6 +201,10 @@ object Ico {
     val pencil = lineIcon("pencil", "M4 16l1-4 8.5-8.5 3 3L8 15z M11.5 5.5l3 3")
     val plus = lineIcon("plus", "M10 4.5v11 M4.5 10h11")
     val minus = lineIcon("minus", "M5 10h10")
+    val close = lineIcon("close", "M5 5l10 10 M15 5 5 15")
+    // Clipboard and notification history: a clock with a list.
+    val search = lineIcon("search", "M8.5 3.5a5 5 0 1 1 0 10a5 5 0 1 1 0-10z M12.2 12.2 16.5 16.5")
+    val history = lineIcon("history", "M10 3a7 7 0 1 1-6.6 4.7 M3 3.5v4h4 M10 6.5V10l2.5 2")
     val left = lineIcon("left", "M12.5 4.5 7 10l5.5 5.5")
     val right = lineIcon("right", "M7.5 4.5 13 10l-5.5 5.5")
     val shield = lineIcon("shield", "M10 2.5l6 2.5v4.5c0 4-2.7 6.7-6 8-3.3-1.3-6-4-6-8V5z M7.5 10l2 2 3.5-3.5")
