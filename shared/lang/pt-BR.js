@@ -3,6 +3,14 @@
   if (typeof module === 'object' && module.exports) module.exports = messages;
   else (root.TwinDeskLanguages = root.TwinDeskLanguages || {})["pt-BR"] = messages;
 })(typeof globalThis !== 'undefined' ? globalThis : this, {
+  "Follow Size ({width} × {height})": "Seguir tamanho ({width} × {height})",
+  "Set text and app sizes for this screen in Windows Settings › System › Display.": "Ajuste o tamanho de textos e aplicativos desta tela em Configurações do Windows › Sistema › Tela.",
+  "Width": "Largura",
+  "Custom size": "Tamanho personalizado",
+  "Height": "Altura",
+  "Width and height in pixels, from 320 to 7680 each.": "Largura e altura em pixels, de 320 a 7680 cada.",
+  "Desktop pixels on the extra screen.": "Dimensões em pixels da área de trabalho na tela extra.",
+  "Limits video height, preserving aspect ratio. Full size sends the original pixels.": "Limita a altura do vídeo, mantendo a proporção. Tamanho original envia os pixels originais.",
   " (hw)": " (hw)",
   " (main)": " (principal)",
   " (not set up yet)": " (ainda não configurado)",
@@ -1518,7 +1526,7 @@
   "Use the phone as this computer’s touchpad, keyboard or gamepad.": "Use o celular como touchpad, teclado ou controle de jogo deste computador.",
   "Use this PC’s own mouse for the administrator prompt or lock screen": "Usar o mouse deste PC na solicitação de administrador ou na tela de bloqueio",
   "Use this window as an extra screen of the other computer": "Usar esta janela como tela extra do outro computador",
-  "Use two computers as one desk": "Use dois computadores como uma só mesa",
+  "All your computers and phones as one desk": "Todos os seus computadores e celulares como uma só mesa",
   "Use {me} as a second screen for {name}.": "Use {me} como segunda tela de {name}.",
   "Use {me}’s mouse and keyboard on {name}": "Usar o mouse e o teclado de {me} em {name}",
   "Use {name}’s mouse and keyboard on {me}": "Usar o mouse e o teclado de {name} em {me}",

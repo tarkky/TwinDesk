@@ -9,15 +9,33 @@ switches on only when both sides have it ([how that's decided](docs/capabilities
 Numbers like (#143) are [issues and pull requests](https://github.com/InukaAsith/TwinDesk/issues).
 Everyone who sent code, reported a problem or tested is thanked under their version.
 
-## 3.1.1 (unreleased)
+## 3.2.0 (unreleased)
+
+The first release since 3.0.0: what was going to be 3.1.1, and everything under 3.1.0 below, which
+was never released on its own.
 
 ### New
 
+- **The tour in Multi-device:** someone new to TwinDesk gets the same tour in Multi-device as in
+  one-to-one (how to install TwinDesk on the other device, pair it, and what each page does), with a
+  last stop on the Multi-device page. After an update, What's new shows there too. Both are in
+  General › Tutorial.
+- **Every edition on one release:** the installers, TwinDesk Portable and the Full KVM builds
+  (Windows and Linux) are all on the 3.2.0 release. The updater takes your own edition's file: Full
+  KVM updates to Full KVM, Portable to Portable, and the normal app never to either.
+- **What's new for 3.2:** the list after updating covers everything since 3.0, including TwinDesk
+  Drive, the monitor map and the touchpad gestures.
 - **TwinDesk Drive** (File Sharing): one folder kept the same on your computers, with no cloud.
   Each keeps its own copy and works offline; they swap what changed when they connect. A file
   changed on two at once keeps both, one as "(conflict from …)", and deleted files go to the Trash
   or Recycle Bin. Off until you turn it on, and nothing of it runs until then
-  ([how it works](docs/drive.md)). Mac, Windows and Linux in one-to-one mode for now.
+  ([how it works](docs/drive.md)). Mac, Windows and Linux, one-to-one and Multi-device: in
+  Multi-device every connected computer syncs, and a change passes on to the ones it didn't reach.
+- **Multi-device catches up with one-to-one:** ReZume with any one device of the mesh, picked on the
+  ReZume page and the same on both (picking a computer picks this one there; the one either was
+  with before lets go). Mouse and keyboard over Bluetooth between Macs and Windows PCs. Pages that are
+  switched off in General › Modules aren't loaded, and their tray menus go. The Connection page has the
+  full wireless debugging card, and Windows and Linux open in the right Style.
 - **The monitor map in Multi-device** (#225): every device's monitors in one picture, arranged by
   dragging. The pointer crosses only where monitors touch, keeps its place along the edge, and goes
   through an offline device to the next one. Phones hang off a computer's edge, and red shows where
@@ -25,14 +43,53 @@ Everyone who sent code, reported a problem or tested is thanked under their vers
 - **Linux touchpad driving another device** (#222): tap to click with one, two or three fingers,
   two-finger scrolling and pinch, read from the desktop's own settings (GNOME, KDE, Hyprland, Sway,
   niri). A pinch reaches an Android phone as two fingers.
+- **Pick which Mac display an Android phone mirrors** (#221), from the Screen page or the viewer's
+  toolbar. One-to-one only; if that monitor goes, another one is shown.
+- **A custom size for Extend** (Windows, #226): any width and height from 320 to 7680, and a
+  Resolution that follows it, so the other side gets exactly the extra screen.
 - **Overview cards end level** (#224): cards side by side are as tall as each other.
+- **The Full KVM page in every build** (Windows, Linux): with its own icon and an animation of it at
+  work. The normal build shows what it does and says it's only in the Full KVM builds; none of Full
+  KVM's service or helpers are in it. Full KVM is also a module now (General › Modules).
+- **TwinDesk Portable** (Windows): one .exe that runs without installing. Run normally it does
+  everything that needs no administrator (PORTABLE · LIMITED beside the name); run as administrator,
+  also the firewall, folder sharing, Wake on LAN and SSH keys of administrators (PORTABLE · FULL).
+  Drivers, OpenSSH Server, the calls' sound and Full KVM need the installed TwinDesk. General ›
+  Portable says which is which.
 
 ### Fixes
 
+- **Arrange looks like Search:** the sidebar's Arrange popup has the same deeper dim and solid panel
+  as Search instead of a blur over the window, in one-to-one and Multi-device.
+- **Full KVM at the login screen** (Windows): after signing out, a computer connected but the pointer
+  didn't move. The service never told the machine node its helper was ready.
+- **Full KVM at the login screen after pairing again** (Windows): a computer paired again (or a
+  device forgotten, or the map changed) while signed in couldn't connect after signing out: the login
+  screen still had the pairings from when System-wide was turned on, and one the other side refused
+  was forgotten there for good. The service now takes them again from your TwinDesk at each sign-out,
+  and the login screen never forgets a pairing itself.
+- **Coming back to a PC with two monitors** (mesh and one-to-one): with a MacBook under the main
+  monitor, the pointer could come back on the second monitor, or in the middle of the screen after a
+  fast move. It now comes back on the edge that touches the device it left, where it left.
+- **Full KVM** stays at the bottom of the sidebar with Multi-device, General and About; Arrange
+  doesn't move it.
+- **General's Portable** showed in the list beside the page on an installed TwinDesk, which has no
+  Portable card. A card that's hidden has no link there now.
 - **Clipboard:** copying the same text again after the other side copied something sends it again
-  (#223).
+  (#223), on the computers and now on Android and iPhone too (#227).
+- **Pinch on Android** from a Mac trackpad or a Linux touchpad (#228): pinching in did nothing,
+  because the two fingers started closer than Android needs to see a pinch. They now start far
+  enough apart, a long pinch keeps zooming, and it works without wireless debugging too.
+- **Phone keyboard layout in Multi-device:** the Phone page on Linux and Windows now has **Type as
+  a hardware keyboard**, so an AZERTY or other layout reaches an Android phone as it is (#188).
 
-## 3.1.0 (unreleased)
+### Thanks
+
+Code from [@alexfoxtm](https://github.com/alexfoxtm) (#221, #227, #228) and
+[@youyouhdhd](https://github.com/youyouhdhd) (#226).
+Reported by [@ElMahaster](https://github.com/ElMahaster) (#188).
+
+## 3.1.0 (not released: in 3.2.0)
 
 ### New
 

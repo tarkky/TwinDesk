@@ -3,6 +3,14 @@
   if (typeof module === 'object' && module.exports) module.exports = messages;
   else (root.TwinDeskLanguages = root.TwinDeskLanguages || {})["tr"] = messages;
 })(typeof globalThis !== 'undefined' ? globalThis : this, {
+  "Follow Size ({width} × {height})": "Boyutu izle ({width} × {height})",
+  "Set text and app sizes for this screen in Windows Settings › System › Display.": "Bu ekranın metin ve uygulama boyutlarını Windows Ayarları › Sistem › Ekran bölümünden ayarlayın.",
+  "Width": "Genişlik",
+  "Custom size": "Özel boyut",
+  "Height": "Yükseklik",
+  "Width and height in pixels, from 320 to 7680 each.": "Genişlik ve yükseklik, her biri 320–7680 piksel.",
+  "Desktop pixels on the extra screen.": "Ek ekrandaki masaüstünün piksel boyutları.",
+  "Limits video height, preserving aspect ratio. Full size sends the original pixels.": "En boy oranını koruyarak video yüksekliğini sınırlar. Tam boyut, özgün pikselleri gönderir.",
   " (hw)": " (donanım)",
   " (main)": " (ana)",
   " (not set up yet)": " (henüz ayarlanmadı)",
@@ -1526,7 +1534,7 @@
   "Use the phone as this computer’s touchpad, keyboard or gamepad.": "Telefonu bu bilgisayarın dokunmatik yüzeyi, klavyesi veya oyun kumandası olarak kullanın.",
   "Use this PC’s own mouse for the administrator prompt or lock screen": "Yönetici istemi veya kilit ekranı için bu PC'nin kendi faresini kullan",
   "Use this window as an extra screen of the other computer": "Bu pencereyi diğer bilgisayarın ek ekranı olarak kullan",
-  "Use two computers as one desk": "İki bilgisayarı tek masa gibi kullanın",
+  "All your computers and phones as one desk": "Tüm bilgisayarlarınızı ve telefonlarınızı tek masa gibi kullanın",
   "Use {me} as a second screen for {name}.": "{me} cihazını {name} için ikinci ekran olarak kullanın.",
   "Use {me}’s mouse and keyboard on {name}": "{me} faresini ve klavyesini {name} üzerinde kullan",
   "Use {name}’s mouse and keyboard on {me}": "{name} faresini ve klavyesini {me} üzerinde kullan",

@@ -200,6 +200,7 @@ function start() {
   device = loadDevice();
   settings = normalize(store.read('settings.json', {}));
   modulesAtStart = settings.modules.off; // fixed for this run: the window's scripts are
+  require('../shared/edition.js').moduleOff(modulesAtStart.includes('fullkvm')); // General › Modules › Full KVM, before the helper is made
   require('../shared/inputlane.js').setLaneProtocol(settings.app.inputProtocol); // General › Advanced, before any lane binds
   // Quiet links (#143): an idle session stops pinging every second; General › Advanced › Keep pinging.
   require('../shared/quiet.js').use(() => !!(settings && settings.app && settings.app.keepPinging === true));
@@ -446,11 +447,15 @@ function start() {
 }
 
 // The Wayland backend can't ask the compositor for the monitors: tell it ours (logical px).
+let sentScreens = '';
 function sendScreens() {
   if (!helper || (helper.kvmBackend || helper.backend) !== 'uinput') return; // ours on Wayland, or the Full KVM service's
   const { screen: displays } = require('electron');
   const primary = displays.getPrimaryDisplay().id;
   const list = displays.getAllDisplays().map((d) => [d.bounds.x, d.bounds.y, d.bounds.width, d.bounds.height, d.id === primary ? 1 : 0].join(',')).join(';');
+  // In the log once per change: where the pointer may go is only what this says (#183).
+  if (list !== sentScreens) console.log('[kvm] Wayland monitors (x,y,w,h,primary):', list);
+  sentScreens = list;
   helper.send('screens', { list });
 }
 

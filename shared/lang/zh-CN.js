@@ -3,6 +3,13 @@
   if (typeof module === 'object' && module.exports) module.exports = messages;
   else (root.TwinDeskLanguages = root.TwinDeskLanguages || {})["zh-CN"] = messages;
 })(typeof globalThis !== 'undefined' ? globalThis : this, {
+  "Follow Size ({width} × {height})": "跟随尺寸（{width} × {height}）",
+  "Set text and app sizes for this screen in Windows Settings › System › Display.": "文字和应用大小可在 Windows 设置 › 系统 › 显示中调整。",
+  "Width": "宽度",
+  "Height": "高度",
+  "Width and height in pixels, from 320 to 7680 each.": "宽度和高度分别填写，单位为像素，范围为 320–7680。",
+  "Desktop pixels on the extra screen.": "决定扩展桌面的像素尺寸。",
+  "Limits video height, preserving aspect ratio. Full size sends the original pixels.": "限制视频高度，保持宽高比；选择“原始分辨率”可传输原始像素。",
   " (hw)": "（硬件）",
   " (main)": "（主屏幕）",
   " (not set up yet)": "（尚未设置）",
@@ -324,6 +331,7 @@
   "Cursor sharing on": "光标共享已开启",
   "Cursor unlocked": "光标已解锁",
   "Customize": "自定义",
+  "Custom size": "自定义尺寸",
   "Data saver (4 Mb/s)": "节省流量（4 Mb/s）",
   "Data saver · 4 Mb/s": "省流量 · 4 Mb/s",
   "Decline": "拒接",
@@ -1526,7 +1534,7 @@
   "Use the phone as this computer’s touchpad, keyboard or gamepad.": "将手机用作此电脑的触控板、键盘或手柄。",
   "Use this PC’s own mouse for the administrator prompt or lock screen": "请使用本机鼠标操作管理员权限提示或锁屏界面",
   "Use this window as an extra screen of the other computer": "将此窗口用作另一台电脑的扩展屏幕",
-  "Use two computers as one desk": "让两台电脑共用一个工作台",
+  "All your computers and phones as one desk": "让你的所有电脑和手机共用一个工作台",
   "Use {me} as a second screen for {name}.": "将 {me} 用作 {name} 的第二块屏幕。",
   "Use {me}’s mouse and keyboard on {name}": "使用 {me} 的鼠标和键盘控制 {name}",
   "Use {name}’s mouse and keyboard on {me}": "使用 {name} 的鼠标和键盘控制 {me}",

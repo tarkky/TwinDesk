@@ -4,6 +4,18 @@ Branch `twindesk-full-kvm-v3.1.1`. The mouse and keyboard of the mesh reach ever
 Linux computer: UAC prompts, the lock screen, Ctrl+Alt+Del, windows run as administrator, polkit
 dialogs, and (System-wide) the login screen after a restart or sign-out. Chosen on the **Full KVM** tab.
 
+## The tab in every build
+
+`shared/ui-fullkvm.js` is the tab on Windows and Linux in every build, with a picture of it at work at
+the bottom (`FeatureArt.picture('fullkvm')`, `shared/feature-art.js`). The Full KVM build's preload
+gives it `window.tdFullKvm` and the choice works. The normal build has no preload, service, agent or
+helper of Full KVM (`shared/fullkvm/` and the platform's `fullkvm/` aren't in it): the tab shows the
+same choice, unusable, under a card saying it's only in the Full KVM builds, with a link to them.
+
+It's a module (Settings › General › Modules › Full KVM). Off, the page isn't loaded and the app doesn't
+connect to the service (`shared/edition.js` `moduleOff`, read before the helper is made). A service that
+is installed stays installed: Off / Signed in / Always is changed on the tab, before switching it off.
+
 ## Why the app alone can't
 
 - **Windows.** The helper runs as the signed-in user. A UAC prompt, the lock screen and Ctrl+Alt+Del
@@ -77,8 +89,14 @@ Both need an administrator once (UAC on Windows, pkexec on Linux), from the tab'
   - On Windows the app stages the copy in its own temp folder, with the certificate's passphrase
     unsealed (DPAPI is the user's; LOCAL SERVICE couldn't open it) and its displays
     (`fullkvm-displays.json`); `--apply` copies it and the app deletes the stage.
-  - Pairing changes made later reach the machine node the next time System-wide is turned on (to do:
-    copy them again on their own).
+  - Pairing changes made later (pairing again, forgetting, the map): on Windows, before the node starts
+    at the login screen, the service copies the pairing files (`paired*.json`, `pairing*.json`,
+    `multi.json`, `settings.json`) again from the TwinDesk of whoever was just signed in, only when its
+    `device.json` has the machine copy's id, and only plain files they (or administrators) own: no links
+    or junctions, 1 MB at most. The certificate isn't copied again. On Linux, the next time System-wide
+    is turned on (to do).
+  - The node never writes or removes the pairing files (`headless.js` pairStore): nobody can pair at
+    the login screen, so a host's `bad_token` (it was paired again meanwhile) mustn't forget it for good.
 
 ## Security
 
@@ -109,6 +127,9 @@ Both need an administrator once (UAC on Windows, pkexec on Linux), from the tab'
   `TwinDesk-FullKVM-Setup-…` and uses `installer-fullkvm.nsh` (stop/start the service around an
   update, `--apply off` on uninstall). No Store package for this build.
 - `windows/fullkvm/manager.js`, `preload.js`: the tab's state and modes (as Linux's).
+- At the login screen (nobody signed in) the first agent starts on `Default` and moves to `Winlogon`
+  before it's ready: the service passes the client the first `ready` from whichever agent says it,
+  and only after that keeps a new agent's `ready` to itself (replaying the settings to it).
 - A dev checkout: the service runs `twindesk-fullkvm.exe` from the checkout as SYSTEM, so use it on a
   test machine only (installed, it lives under Program Files, which only administrators can change).
 5. Multi-device test with the Mac and the Ubuntu VM: lock screen, polkit prompt, greeter.

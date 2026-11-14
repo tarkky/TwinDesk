@@ -3,6 +3,13 @@
   if (typeof module === 'object' && module.exports) module.exports = messages;
   else (root.TwinDeskLanguages = root.TwinDeskLanguages || {})["en"] = messages;
 })(typeof globalThis !== 'undefined' ? globalThis : this, {
+  "Follow Size ({width} × {height})": "Follow Size ({width} × {height})",
+  "Set text and app sizes for this screen in Windows Settings › System › Display.": "Set text and app sizes for this screen in Windows Settings › System › Display.",
+  "Width": "Width",
+  "Height": "Height",
+  "Width and height in pixels, from 320 to 7680 each.": "Width and height in pixels, from 320 to 7680 each.",
+  "Desktop pixels on the extra screen.": "Desktop pixels on the extra screen.",
+  "Limits video height, preserving aspect ratio. Full size sends the original pixels.": "Limits video height, preserving aspect ratio. Full size sends the original pixels.",
   " (hw)": " (hw)",
   " (main)": " (main)",
   " (not set up yet)": " (not set up yet)",
@@ -324,6 +331,7 @@
   "Cursor sharing on": "Cursor sharing on",
   "Cursor unlocked": "Cursor unlocked",
   "Customize": "Customize",
+  "Custom size": "Custom size",
   "Data saver (4 Mb/s)": "Data saver (4 Mb/s)",
   "Data saver · 4 Mb/s": "Data saver · 4 Mb/s",
   "Decline": "Decline",
@@ -1526,7 +1534,7 @@
   "Use the phone as this computer’s touchpad, keyboard or gamepad.": "Use the phone as this computer’s touchpad, keyboard or gamepad.",
   "Use this PC’s own mouse for the administrator prompt or lock screen": "Use this PC’s own mouse for the administrator prompt or lock screen",
   "Use this window as an extra screen of the other computer": "Use this window as an extra screen of the other computer",
-  "Use two computers as one desk": "Use two computers as one desk",
+  "All your computers and phones as one desk": "All your computers and phones as one desk",
   "Use {me} as a second screen for {name}.": "Use {me} as a second screen for {name}.",
   "Use {me}’s mouse and keyboard on {name}": "Use {me}’s mouse and keyboard on {name}",
   "Use {name}’s mouse and keyboard on {me}": "Use {name}’s mouse and keyboard on {me}",

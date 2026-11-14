@@ -395,6 +395,29 @@ function setupIpc(ctx) {
     openSharingSettings() {
       shell.openExternal('x-apple.systempreferences:com.apple.Sharing-Settings.extension');
     },
+    // File Sharing › TwinDesk Drive (shared/drive-host.js createMesh): loaded when turned on, and only then.
+    setDrive(on) {
+      const d = on ? ctx.loadDrive() : ctx.getDrive();
+      if (d) d.setOn(!!on).then(pushState, pushState);
+      else { settings.drive.on = false; save(); }
+    },
+    async pickDriveFolder() {
+      const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'], buttonLabel: t('Use This Folder') });
+      if (r.canceled || !r.filePaths[0]) return;
+      actions.setDriveFolder(r.filePaths[0]);
+    },
+    resetDriveFolder() {
+      actions.setDriveFolder('');
+    },
+    setDriveFolder(f) {
+      const d = ctx.getDrive();
+      if (d) d.setFolder(f).then(pushState, pushState);
+      else { settings.drive.folder = f; save(); }
+    },
+    openDriveFolder() {
+      const d = ctx.getDrive();
+      if (d) shell.openPath(d.folder());
+    },
     setFiles(partial) {
       setGroup('files', partial);
       if (partial && ('shortcuts' in partial || 'copyKeys' in partial || 'pasteKeys' in partial)) ctx.fileClip.apply();
@@ -609,6 +632,7 @@ function setupIpc(ctx) {
       else ctx.loadRezume();
     },
     rezumeDo(m) {
+      if (m && m.a === 'with' && ctx.rzSolo) return void ctx.rzSolo.choose(typeof m.id === 'string' ? m.id.slice(0, 64) : ''); // the device ReZume is with (shared/rezume-solo.js)
       const r = ctx.rezume();
       if (!r || !m) return;
       if (m.a === 'take') r.take();

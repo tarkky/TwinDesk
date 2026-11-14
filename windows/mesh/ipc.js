@@ -189,6 +189,25 @@ function setupIpc(ctx) {
     Object.keys(p).forEach((k) => p[k] === undefined && delete p[k]);
     change('files', p, () => { smb.applyMount(); kvm.applyConfig(); fileClip.apply(); });
   });
+  // File Sharing › TwinDesk Drive (shared/drive-host.js createMesh): loaded when turned on, and only then.
+  handle('setDrive', async (on) => {
+    const d = on === true ? ctx.loadDrive() : ctx.getDrive();
+    if (d) await d.setOn(on === true);
+    else { settings.drive.on = false; ctx.save(); }
+    ctx.push();
+  });
+  const setDriveFolder = async (f) => {
+    const d = ctx.getDrive();
+    if (d) await d.setFolder(f);
+    else { settings.drive.folder = f; ctx.save(); }
+    ctx.push();
+  };
+  handle('pickDriveFolder', async () => {
+    const r = await dialog.showOpenDialog(BrowserWindow.getFocusedWindow(), { properties: ['openDirectory', 'createDirectory'] });
+    if (!r.canceled && r.filePaths[0]) await setDriveFolder(r.filePaths[0]);
+  });
+  handle('resetDriveFolder', () => setDriveFolder(''));
+  handle('openDriveFolder', () => { const d = ctx.getDrive(); if (d) shell.openPath(d.folder()); });
   // Send files (paths from the drop zone or Choose…), notifications.
   const sendFiles = (paths) => {
     const list = (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && path.win32.isAbsolute(p)).slice(0, 1000);
@@ -264,6 +283,7 @@ function setupIpc(ctx) {
   // ReZume tab (shared/rezume.js): loaded when it's first turned on; here only with one phone (shared/rezume-solo.js).
   handle('setReZume', (m) => change('rezume', m && typeof m === 'object' ? m : {}, () => (ctx.rezume ? ctx.rezume.apply() : ctx.loadReZume())));
   handle('rezumeDo', (m) => {
+    if (m && m.a === 'with' && ctx.rezumeWith) return void ctx.rezumeWith(typeof m.id === 'string' ? m.id.slice(0, 64) : ''); // the device ReZume is with (shared/rezume-solo.js)
     const h = ctx.rezume;
     if (!h || !m) return;
     if (m.a === 'take') h.take();

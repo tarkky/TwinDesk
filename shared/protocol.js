@@ -212,8 +212,8 @@
       CAM_ICE: 'cam.ice', // either way {from: 'send'|'view', candidate}
       CAM_STATE: 'cam.state', // sharer->viewer {status: 'starting'|'live'|'failed'|'refused', error?}
       SCREEN_POLICY: 'screen.policy', // either, viewer->sharer {accept, width?, height?}: a viewer is open and wants the picture (senders capture only while it is true)
-      SCREEN_CTL: 'screen.ctl', // either, viewer->sharer {share?, mode?: 'mirror'|'extend', close?}: start/stop or switch the other's sharing; close (with share false: the phone viewer's Close) stops it even without remote
-      SCREEN_STATE: 'screen.state', // either, sharer->viewer {on, mode, remote, modes}: what this side shares; remote = it takes screen.ctl
+      SCREEN_CTL: 'screen.ctl', // either, viewer->sharer {share?, mode?: 'mirror'|'extend', displayId?, close?}: start/stop or switch the other's sharing. displayId (optional, one-to-one Mac) mirrors that real display; absent, or mode extend, keeps today's path. An unknown id does not change which screen is shared. A pick while this Mac's apps hold the virtual display is not stored. Multi-device ignores displayId: one capture and one input target are shared, and a per-device off or display choice is the owner's. close (with share false: the phone viewer's Close) stops it even without remote
+      SCREEN_STATE: 'screen.state', // either, sharer->viewer {on, mode, remote, modes, displays?, displayId?}: what this side shares; remote = it takes screen.ctl. displays (optional, one-to-one) are the real screens, omitted while apps hold the virtual display and omitted in Multi-device; displayId is the one mirrored now, and is omitted while extending
       PAIR_SYNC: 'pair.sync', // either {feature, dir: 'out'|'in', on} | {key, value} (shared value, e.g. pace) | {all: {feature: {out, in}, values: {key: value}}} (host, after welcome): two-way switches shared per pair, dirs from the sender's side
       WOL_INFO: 'wol.info', // either {macs: ['aa:bb:cc:dd:ee:ff'], address}: how to wake this computer over the network
       SMB_OFFER: 'smb.offer', // sharer->other {share, user, password, port}
@@ -310,6 +310,9 @@
       RZ_OFFER: 'rz.offer',
       RZ_CLEAR: 'rz.clear', // sender->receiver {id}: nothing to go on with any more
       RZ_TAKE: 'rz.take', // receiver->sender {id}: taken; a doc's file follows as file.offer drop 'rezume', batch 'rz-<id>' (only to a side that asked); a window's are streamed
+      // Multi-device: which device ReZume is with, the same on both (shared/rezume-solo.js). {on: true, at}: "I picked you"
+      // (at: when, ms); {on: false}: "not any more". Said again as the two connect ({on: true, at, again: true}): the newer pick wins.
+      RZ_PARTNER: 'rz.partner',
       RZ_DONE: 'rz.done', // sender->receiver {id, ok, why?}: a doc or window that couldn't be sent (gone, too big, not let through); ok: a window went
       PHONE_SEND: 'phone.send', // computer->phone: clicks the active app's Send button
       PHONE_ACTIVE_APP: 'phone.activeApp', // phone->computer {pkg}: current foreground package

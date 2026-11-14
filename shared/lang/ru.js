@@ -3,6 +3,14 @@
   if (typeof module === 'object' && module.exports) module.exports = messages;
   else (root.TwinDeskLanguages = root.TwinDeskLanguages || {})["ru"] = messages;
 })(typeof globalThis !== 'undefined' ? globalThis : this, {
+  "Follow Size ({width} × {height})": "Как в поле «Размер» ({width} × {height})",
+  "Set text and app sizes for this screen in Windows Settings › System › Display.": "Настройте размер текста и приложений для этого экрана в Параметры Windows › Система › Дисплей.",
+  "Width": "Ширина",
+  "Custom size": "Произвольный размер",
+  "Height": "Высота",
+  "Width and height in pixels, from 320 to 7680 each.": "Ширина и высота в пикселях, от 320 до 7680 каждая.",
+  "Desktop pixels on the extra screen.": "Размер рабочего стола дополнительного экрана в пикселях.",
+  "Limits video height, preserving aspect ratio. Full size sends the original pixels.": "Ограничивает высоту видео с сохранением пропорций. Исходный размер передаёт исходные пиксели.",
   " (hw)": " (апп.)",
   " (main)": " (основной)",
   " (not set up yet)": " (ещё не настроено)",
@@ -1526,7 +1534,7 @@
   "Use the phone as this computer’s touchpad, keyboard or gamepad.": "Используйте телефон как тачпад, клавиатуру или геймпад этого компьютера.",
   "Use this PC’s own mouse for the administrator prompt or lock screen": "Использовать собственную мышь этого ПК для запроса администратора или экрана блокировки",
   "Use this window as an extra screen of the other computer": "Использовать это окно как дополнительный экран другого компьютера",
-  "Use two computers as one desk": "Два компьютера как один рабочий стол",
+  "All your computers and phones as one desk": "Все ваши компьютеры и телефоны как один рабочий стол",
   "Use {me} as a second screen for {name}.": "Используйте {me} как второй экран для {name}.",
   "Use {me}’s mouse and keyboard on {name}": "Использовать мышь и клавиатуру {me} на {name}",
   "Use {name}’s mouse and keyboard on {me}": "Использовать мышь и клавиатуру {name} на {me}",
