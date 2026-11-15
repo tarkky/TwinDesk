@@ -211,6 +211,10 @@ function normalize(s) {
       enterSends: bool(ph.enterSends, true),
       uhid: bool(ph.uhid, false), // Type as a hardware keyboard (shared/uhidkbd.js)
       arrowSwipe: bool(ph.arrowSwipe, false),
+      // Mirroring over wireless debugging: past adbd straight over the Wi-Fi (scrcpy.js), and the
+      // encoder's low-latency profile.
+      direct: bool(ph.direct, false),
+      lowLatency: bool(ph.lowLatency, false),
     },
     // Bluetooth for devices not on this network (blepipe.js, netlink.js): with phones (ble), with computers (blePc);
     // bleWifiOff: none at all while the session is on the same Wi-Fi (blepolicy.js wifiQuiet)
@@ -223,11 +227,11 @@ function normalize(s) {
     hub: {
       calls: bool(hub.calls, false), messages: bool(hub.messages, false), media: bool(hub.media, false), files: bool(hub.files, false),
       callAudio: bool(hub.callAudio, true), btDevices: btDevices(hub.btDevices),
+      callPause: bool(hub.callPause, false), // pause what plays here during a call (shared/callpause.js)
       // Shared folders (shared/foldershare.js), both ways, off until switched on.
       shareMount: bool(hub.shareMount, false), shareServe: bool(hub.shareServe, false), shareFolder: typeof hub.shareFolder === 'string' ? hub.shareFolder.slice(0, 1000) : '',
     },
     macApps: { on: bool(mca.on, false) }, // The other computer's apps open here (pair.sync 'apps' in) // The Mac may open this PC's apps (it shows them only if it accepts)
-      callPause: bool(hub.callPause, false), // pause what plays here during a call (shared/callpause.js)
     // Setup screen: shown once. done: everything was ready, or 'Skip for now' was pressed; after that
     // General and Display show what's missing (a firewall that changes with the network, a helper
     // that restarts, a phone connecting don't bring the screen back).

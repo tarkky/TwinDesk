@@ -16,11 +16,14 @@ TwinDesk's own look.
 
 ### New
 
-- **TwinDesk pop-ups** (Notifications › Showing here): a phone's notifications in TwinDesk's own
-  small window, the default on Windows and Linux. Reply is typed right in it, the app's own buttons
+- **TwinDesk pop-ups** (Notifications › Showing here › Pop-ups): a phone's notifications in
+  TwinDesk's own small window, if you pick it. Reply is typed right in it, the app's own buttons
   (Mark as read, Mute…) are there, a picture shows when the notification has one, a one-time code
   has Copy, and a download or a timer fills its bar in place instead of a new notification each time.
-  On a Mac the system's notifications stay the default; either can be picked on every computer.
+  The system's notifications stay the default everywhere, as the lightest: with them the phone
+  sends no pictures or progress.
+- **Buttons on Linux's own notifications:** the phone app's buttons and a one-time code's Copy, as
+  on a Mac (through notify-send 0.7.9 or later; without it, the plain notification as before).
 - **Each app its own way:** Show, No pop-ups (only in Recent) or Hide for each phone app.
 - **Pause pop-ups on a schedule:** from one time to another, overnight too. Notifications still go
   in Recent and Messages.
@@ -40,6 +43,13 @@ TwinDesk's own look.
   light, zoom in and out, and Snapshot for the picture as it shows.
 - **Keep on top:** a pin in the toolbar of the phone's screen, the phone's camera and a computer's
   shared screen keeps that window over the others.
+- **Skip adbd** (Mirroring, off unless you switch it on): over Wi-Fi the phone's screen, sound and input go straight to
+  this computer, encrypted, instead of through wireless debugging's adbd and adb server. Its
+  biggest gain is while adb is busy: with a big file going to the phone, a tap showed up in about
+  90 ms instead of 210 ms (400 ms at the slow end). If the phone can't be reached directly, it goes
+  through wireless debugging as before. Over USB nothing changes.
+- **Low latency** (Mirroring, off): asks the phone's video encoder to send each frame as soon as
+  it's ready. Some phones ignore it.
 
 ### Fixes
 
