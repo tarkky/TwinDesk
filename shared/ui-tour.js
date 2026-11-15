@@ -27,6 +27,14 @@
   // What's new, newest first: shown once when the app's version starts with `v` (3.1.0, 3.1.2…).
   const NEWS = [
     { v: '3.2', items: [
+      ['TwinDesk pop-ups', 'A phone’s notifications in TwinDesk’s own pop-ups: Reply right there, the app’s buttons, pictures, a one-time code’s Copy and progress that fills in place. In Notifications › Showing here.'],
+      ['Each app its own way', 'Show, No pop-ups or Hide for each phone app, pop-ups paused on a schedule, and codes copied by themselves, kept out of the clipboard’s history.'],
+      ['Messages', 'Pictures of the people you write to, a search box, Delete, a choice of chat apps, and no more “Sending video…” chats.'],
+      ['Albums in Photos', 'Your phone’s albums beside its photos, with covers and counts, and Open or Open with… for a photo.'],
+      ['The player', 'The media card stays small: its chevron slides open back and forward 10 s, the volume and where the sound plays, tinted by the artwork.'],
+      ['Calls pause the music', 'A call on the phone pauses what plays on this computer, and it plays again when the call ends. In Calls › Sound.'],
+      ['Camera', 'Mirror, 720p to 4K, the light, zoom and a snapshot for the phone’s camera.'],
+      ['Keep on top', 'The phone’s screen and a computer’s shared screen can stay over your other windows: the pin in their toolbar.'],
       ['Deck', 'Tiles on your phone that run shortcuts, media, sound, brightness and Bluetooth on this computer, full screen, with widgets and a window space to arrange your windows.'],
       ['TwinDesk Drive', 'One folder kept the same on your computers, with no cloud. Each keeps its own copy and works offline. Off until you turn it on, in File Sharing.'],
       ['Multi-device, out of beta', 'Every computer and phone at once, now with fast files, Camera, Remote, the Deck, ReZume, Drive and a tour of its own.'],
@@ -40,6 +48,8 @@
       ['Modules', 'Switch off the pages you don’t use in General › Modules. They aren’t even loaded.'],
       ['TwinDesk iPhone', 'Install the iPhone app with your own Apple ID from this computer, and keep it refreshed. Opt in.'],
       ['A tour of TwinDesk', 'For someone new: how to install it on the other device, connect, and what each page does. In General › Tutorial, in Multi-device too.'],
+      ['Hold a key to cross', 'Pick a key on the Mouse page: the pointer leaves this computer at the edge only while you hold it. On every computer, in Multi-device too.'],
+      ['Emergency return', 'A shortcut that brings the mouse and keyboard home and turns sharing off, whatever the other computer is doing. Set it on the Mouse page.'],
     ], changes: [
       ['Pointer home on the right monitor', 'Coming back to a computer with two monitors, the pointer comes back on the edge it left from, also after a fast move.'],
       ['Clipboard', 'Copying the same text again after the other side copied something sends it again, on computers, Android and iPhone.'],
