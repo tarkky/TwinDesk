@@ -33,15 +33,17 @@ function setupIpc(ctx) {
   // Calls, Messages and Photos (shared/phonehub.js, loaded the first time it's used).
   handle('hub', (r) => ctx.phoneHub().act(r));
 
-  const pairWith = (d) => {
+  // via: one of its routes (Found nearby lists each network it is on), else the best one.
+  const pairWith = (d, via) => {
     discovery.clearInvite(d.id);
     if (P.isPhoneOs(d.os)) return ctx.connectPhoneDev(d); // a phone has no server to pair with
-    link.startPairing({ address: d.address, port: d.port, macName: d.name, id: d.id }); // id: one met over Bluetooth
+    const address = via && (d.routes || []).some((r) => r.address === via) ? via : d.address;
+    link.startPairing({ address, port: d.port, macName: d.name, id: d.id, route: via && address === via ? via : '' }); // id: one met over Bluetooth
   };
-  handle('pair', (target) => {
+  handle('pair', (target, via) => {
     if (typeof target !== 'string' || !target.trim()) return;
     const found = discovery.get(target) || discovery.near(target);
-    if (found) return pairWith(found);
+    if (found) return pairWith(found, typeof via === 'string' ? via : '');
     const m = /^\s*([^\s:]+)(?::(\d{1,5}))?\s*$/.exec(target);
     if (!m) return;
     const port = m[2] ? Number(m[2]) : P.PORT;
@@ -157,6 +159,11 @@ function setupIpc(ctx) {
   handle('setMonitor', (partial) => change('monitor', partial, () => { screen.applyAudio(); pcScreen.apply(); })); // apply(): Playback › Steady takes a new session (pcscreen.js)
   handle('setClipboard', (partial) => change('clipboard', partial, () => clip.applySettings()));
   handle('copyHistory', (index) => clip.copyHistory(Number(index)));
+  handle('openClip', (index) => { // Recent's Open / Email / Call (shared/clipact.js): from the app's own copy
+    const h = (clip.history || [])[Number(index)];
+    const a = h && !h.image && require('../../shared/clipact.js').of(h.text);
+    if (a) shell.openExternal(a.url);
+  });
   handle('clearHistory', () => clip.clearHistory());
   handle('setTab', (tab) => change('ui', { tab }));
   handle('setChats', (on) => { change('ui', { chats: on === true }); if (ctx.chats && ctx.chats()) ctx.chats().sync(); }); // Messages: WhatsApp, Telegram and Instagram there too
@@ -185,7 +192,7 @@ function setupIpc(ctx) {
   handle('setFiles', (partial) => {
     // shareOn/shareFolder only change through share()/unshare()
     const p = partial && typeof partial === 'object' ? { dropToMac: partial.dropToMac, mountMac: partial.mountMac, acceptFromMac: partial.acceptFromMac, edgeDrag: partial.edgeDrag,
-      shortcuts: partial.shortcuts, copyKeys: partial.copyKeys, pasteKeys: partial.pasteKeys } : {};
+      shortcuts: partial.shortcuts, copyKeys: partial.copyKeys, pasteKeys: partial.pasteKeys, outboxHours: [0, 1, 24, 168].includes(partial.outboxHours) ? partial.outboxHours : undefined, clipReceived: typeof partial.clipReceived === 'boolean' ? partial.clipReceived : undefined } : {};
     Object.keys(p).forEach((k) => p[k] === undefined && delete p[k]);
     change('files', p, () => { smb.applyMount(); kvm.applyConfig(); fileClip.apply(); });
   });
@@ -211,7 +218,7 @@ function setupIpc(ctx) {
   // Send files (paths from the drop zone or Choose…), notifications.
   const sendFiles = (paths) => {
     const list = (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && path.win32.isAbsolute(p)).slice(0, 1000);
-    if (list.length) fileDrop.sendBatch(list, 'send');
+    if (list.length) fileDrop.send(list); // now, or when the device is back (shared/outbox.js)
   };
   handle('sendFiles', sendFiles);
   handle('chooseSendFiles', async () => {
@@ -244,6 +251,9 @@ function setupIpc(ctx) {
   handle('removeShare', () => smb.unshare());
   handle('openMacDrive', () => (smb.drive ? shell.openPath(smb.drive + '\\') : smb.openOverWifi && smb.openOverWifi())); // through Bluetooth: Wi-Fi Direct first
   handle('cancelDrop', () => fileDrop.cancel());
+  handle('pauseSend', (batch) => typeof batch === 'string' && fileDrop.pause(batch));
+  handle('resumeSend', (id) => typeof id === 'string' && fileDrop.resume(id));
+  handle('forgetSend', (id) => typeof id === 'string' && fileDrop.forget(id));
   handle('clearFiles', () => ctx.clearFiles && ctx.clearFiles());
   // With another PC the apps come through peerapps.js (no Monitor 2 or Start pinning).
   const pcPeer = () => link.peerOs !== P.OS.MAC; // a PC or a Linux computer
@@ -318,7 +328,7 @@ function setupIpc(ctx) {
     return r.canceled || !r.filePaths.length ? '' : r.filePaths[0];
   });
   handle('deckRun', (a) => { const d = ctx.deck && ctx.deck(); return d && a && typeof a === 'object' ? d.exec(a).then(() => ({ ok: true }), (e) => ({ ok: false, why: e.message })) : { ok: false }; }); // Try
-  handle('deckState', () => { const d = ctx.deck && ctx.deck(); return d ? d.state().catch(() => ({})) : {}; }); // sound devices, Bluetooth devices, displays
+  handle('deckState', (o) => { const d = ctx.deck && ctx.deck(); return d ? d.state(false, o === 'mix').catch(() => ({})) : {}; }); // sound devices, Bluetooth devices, displays
   // Remote tab: each phone's Remote page here (shared/perphone.js phoneRemote).
   handle('setRemote', (m) => {
     if (!m || typeof m !== 'object') return;

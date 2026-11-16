@@ -84,7 +84,7 @@ function normalize(s) {
     // hotkey: double-tap = mouse and keyboard home. lockKeys: cursor lock on/off (shared/cursorlock.js)
     keys: { swapCtrlCmd: bool(keys.swapCtrlCmd, true), hotkey: P.HOTKEYS.includes(keys.hotkey) ? keys.hotkey : P.HOTKEY_WIN, lockKeys: CL.validKeys(keys.lockKeys, CL.DEFAULT_KEYS.linux), emergencyKeys: Crossing.emergency(keys.emergencyKeys) }, // emergencyKeys: everything home, sharing off (#178)
     // hud: popup when switching computers. inputProtocol: udp = tdv2 input lane (default), tcp = tdv1
-    app: { hud: bool(appS.hud, true), inputProtocol: appS.inputProtocol === 'tcp' ? 'tcp' : 'udp', keepPinging: appS.keepPinging === true }, // keepPinging: General › Advanced (shared/quiet.js)
+    app: { hud: bool(appS.hud, true), inputProtocol: appS.inputProtocol === 'tcp' ? 'tcp' : 'udp', keepPinging: appS.keepPinging === true, localApi: appS.localApi === true }, // localApi: General › Local API (shared/localapi.js) // keepPinging: General › Advanced (shared/quiet.js)
     // New releases on GitHub (shared/updates.js); notified = the last version announced, skipped = version ignored
     updates: { auto: bool(up.auto, true), notified: typeof up.notified === 'string' ? up.notified.slice(0, 40) : '', skipped: typeof up.skipped === 'string' ? up.skipped.slice(0, 40) : '', install: up.install === true }, // install: install new versions by themselves (shared/selfupdate.js)
     clipboard: {
@@ -159,6 +159,8 @@ function normalize(s) {
     },
     files: {
       dropToMac: bool(files.dropToMac, false),
+      clipReceived: bool(files.clipReceived, false), // Put received files on the clipboard (filerecv.js)
+      outboxHours: [0, 1, 24, 168].includes(files.outboxHours) ? files.outboxHours : 24, // Keep files to send (shared/outbox.js), 0 = off
       shareOn: bool(files.shareOn, false), // set only by a successful share setup (smb.js)
       shareFolder: typeof files.shareFolder === 'string' ? files.shareFolder : '',
       mountMac: bool(files.mountMac, false),
@@ -218,7 +220,7 @@ function normalize(s) {
     },
     // Bluetooth for devices not on this network (blepipe.js, netlink.js): with phones (ble), with computers (blePc);
     // bleWifiOff: none at all while the session is on the same Wi-Fi (blepolicy.js wifiQuiet)
-    net: { ble: bool(nt.ble, true), blePc: bool(nt.blePc, false), bleWifiOff: bool(nt.bleWifiOff, true), hotspots: hotspots(nt.hotspots), keepWifi: bool(nt.keepWifi, true), tailscale: bool(nt.tailscale, true), bleInput: bool(nt.bleInput, false) }, // tailscale: shared/tailnet.js; bleInput: shared/bleinput.js
+    net: { ble: bool(nt.ble, true), blePc: bool(nt.blePc, false), bleWifiOff: bool(nt.bleWifiOff, true), hotspots: hotspots(nt.hotspots), keepWifi: bool(nt.keepWifi, true), tailscale: bool(nt.tailscale, true), bleInput: bool(nt.bleInput, false), relay: require('../shared/relay.js').clean(nt.relay) }, // relay: your own (shared/relay.js), none by default // tailscale: shared/tailnet.js; bleInput: shared/bleinput.js
     mount: { on: bool(mt.on, false) }, // the phone as a drive (phonedrive.js), only when Mount is clicked
     drive: { on: bool(dr.on, false), folder: typeof dr.folder === 'string' ? dr.folder.slice(0, 1024) : '' }, // File Sharing › TwinDesk Drive (shared/drive-host.js); '' = ~/TwinDesk Drive
     // Calls, Messages, Photos and Files from a phone (shared/phonehub.js), each off until switched on.
@@ -242,6 +244,8 @@ function normalize(s) {
     windows: s.windows && typeof s.windows === 'object' ? s.windows : {},
     modules: require('../shared/modules.js').normalize(s.modules), // General › Modules
     deck: s.deck && typeof s.deck === 'object' && JSON.stringify(s.deck).length < 400000 ? s.deck : null, // the Deck's layout (shared/deck-model.js normalizes it when read)
+    // OBS Studio for the Deck's OBS tiles (shared/obs.js): its port and the password, sealed.
+    deckObs: s.deckObs && typeof s.deckObs === 'object' ? { port: Number.isInteger(s.deckObs.port) && s.deckObs.port > 0 && s.deckObs.port < 65536 ? s.deckObs.port : 4455, pass: typeof s.deckObs.pass === 'string' && s.deckObs.pass.length < 2000 ? s.deckObs.pass : '' } : null,
   };
 }
 

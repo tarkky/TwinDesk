@@ -88,11 +88,20 @@
       },
       error: (e) => {
         console.warn('decoder', e.message);
+        // The GPU's decoder refused this stream (some drivers, a high H.264 level): the window waited
+        // for the picture for good (#233), as a closed decoder takes nothing more. Software from then on.
+        if (hwDecode) {
+          hwDecode = false;
+          console.warn('decoder: trying software decoding');
+          setTimeout(() => { makeDecoder(codec); waitingKey = true; needKey(); }, 0);
+          return;
+        }
         needKey();
       },
     });
-    decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
+    decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: hwDecode ? 'prefer-hardware' : 'prefer-software' });
   }
+  let hwDecode = true;
 
   api.on('video', (p) => {
     const data = p.data instanceof Uint8Array ? p.data : new Uint8Array(p.data);
@@ -162,7 +171,7 @@
     if (kind === 'app') {
       clearTimeout(fit.timer);
       const stage = document.getElementById('stage');
-      fit.timer = setTimeout(() => api.send({ t: 'resize', w: stage.clientWidth * appScale(), h: stage.clientHeight * appScale() }), 250);
+      fit.timer = setTimeout(() => api.send({ t: 'resize', w: stage.clientWidth * appScale(), h: stage.clientHeight * appScale(), cw: stage.clientWidth, ch: stage.clientHeight }), 250);
     }
   }).observe(document.getElementById('stage'));
 
@@ -449,5 +458,10 @@
   if (bZoomIn) bZoomIn.onclick = () => api.send({ t: 'cameraZoomIn' });
   const bZoomOut = document.getElementById('b-zoomout');
   if (bZoomOut) bZoomOut.onclick = () => api.send({ t: 'cameraZoomOut' });
+  // The side rail (shared/mirror-rail.js): Screenshot, Record, volume, Rotate, Power; the title bar's
+  // rail button shows or hides it. Not in the hidden sound and mic windows.
+  if (window.MirrorRail && kind !== 'sound' && kind !== 'mic' && kind !== 'netsound') {
+    window.MirrorRail({ api, canvas, kind, sound: () => (actx && player ? { actx, node: player } : null) }).mount(document.querySelector('#bar .tools'));
+  }
   canvas.focus();
 })();

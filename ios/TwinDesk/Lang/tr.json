@@ -950,5 +950,18 @@
   "{shown} shown this session": "Bu oturumda {shown} gösterildi",
   "{systemName} {systemVersion}": "{systemName} {systemVersion}",
   "{what}. Save to this {device}?": "{what}. Bu {device} cihazına kaydedilsin mi?",
-  "Search button": "Arama düğmesi"
+  "Search button": "Arama düğmesi",
+  "Not live": "Yayında değil",
+  "Not recording": "Kaydetmiyor",
+  "OBS is off": "OBS kapalı",
+  "Open OBS Studio on the computer to choose. Its connection is set on the computer’s Deck page.": "Seçmek için bilgisayarda OBS Studio’yu açın. Bağlantısı bilgisayarın Deck sayfasında ayarlanır.",
+  "Paused": "Duraklatıldı",
+  "Recording": "Kaydediliyor",
+  "Showing": "Gösteriliyor",
+  "Loading…": "Yükleniyor…",
+  "Auto-rotate": "Otomatik döndür",
+  "Screenshot": "Ekran görüntüsü",
+  "Couldn’t take the screenshot": "Ekran görüntüsü alınamadı",
+  "Screenshot saved in Photos": "Ekran görüntüsü Fotoğraflar’a kaydedildi",
+  "Allow TwinDesk to add photos in Settings": "Ayarlar’da TwinDesk’in fotoğraf eklemesine izin verin"
 }

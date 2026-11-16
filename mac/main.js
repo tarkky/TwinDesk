@@ -216,7 +216,7 @@ function pushState() {
     state.client = c ? { id: c.deviceId, name: c.name, os: c.os, role: c.role, address: c.address, rttMs: c.rttMs, transport: c.transport || 'ip' } : null;
     if (svc && svc.net) {
       const hs = c && settings.net.hotspots[c.deviceId];
-      state.net = { ...svc.net.view, ble: settings.net.ble !== false, blePc: settings.net.blePc === true, bleWifiOff: settings.net.bleWifiOff !== false, bleOff, radio: svc.ble.state, hotspotSsid: hs ? hs.ssid : '', hotspotSaved: !!(hs && hs.pass), lan: lanType(c && c.address), tailscale: settings.net.tailscale !== false, tailnet: require('../shared/tailnet.js').mine(), bleInput: settings.net.bleInput === true };
+      state.net = { ...svc.net.view, ble: settings.net.ble !== false, blePc: settings.net.blePc === true, bleWifiOff: settings.net.bleWifiOff !== false, bleOff, radio: svc.ble.state, hotspotSsid: hs ? hs.ssid : '', hotspotSaved: !!(hs && hs.pass), lan: lanType(c && c.address), tailscale: settings.net.tailscale !== false, tailnet: require('../shared/tailnet.js').mine(), bleInput: settings.net.bleInput === true, relay: { ...require('../shared/relay.js').clean(settings.net.relay), ...require('../shared/relay.js').view() } };
     }
     const { helper, displays, stream, clipboard: clip, kvm } = svc || {};
     state.helper.running = !!(helper && helper.running);
@@ -293,6 +293,7 @@ function pushState() {
     // Calls, Messages and Photos: the settings alone until the hub is loaded (setupHub).
     state.hub = phoneHub ? phoneHub.view : { ...settings.hub, connected: false };
     if (updates) state.updates = updates.view;
+    state.localApi = svc && svc.localApi ? svc.localApi.view() : null;
     state.web = web ? web.view() : { cfg: { ...settings.web }, devices: [] }; // TwinDesk Web (shared/web/webwire.js)
     if (pairSync) pairSync.check();
     sendScreenState();
@@ -378,7 +379,7 @@ function shareAs(mode) {
 function displayMode() {
   const t = svc && svc.displays.target();
   if (!t) return 'custom';
-  if (t.virtual) return 'extend';
+  if (t.virtual) return svc.displays.fallbackOnly() ? 'mirror' : 'extend';
   return t.primary && !settings.virtual.enabled ? 'mirror' : 'custom';
 }
 
@@ -621,6 +622,7 @@ app.whenReady().then(() => {
 
   server = new Server(id, { hold: true }); // listens once the helper's input lane is settled (afterLane below)
   server.on('listening', () => console.log(`[server] listening on 0.0.0.0:${server.port}`));
+  applyRelay();
   server.on('listenError', (err) => {
     state.serverError = `Cannot listen on port ${P.PORT}: ${err.code || err.message}`;
     console.error(`[server] ${state.serverError}`);
@@ -679,6 +681,32 @@ app.whenReady().then(() => {
 
   svc = startServices({ server: peer, getSettings: () => settings, pushState, onHelperReady: refreshPermissions });
   svc.kvm.laneReady.then(laneGo);
+  // Camera › Take a photo with the phone (shared/phonephoto.js): its photo onto the clipboard.
+  {
+    const { PhonePhoto, copyPicture } = require('../shared/phonephoto.js');
+    const pp = new PhonePhoto({
+      send: (m) => peer.sendToClient(m),
+      phoneOn: () => !!peer.current && peer.current.os === P.OS.ANDROID,
+      popup: (key, vars) => hud && hud.show('driven', { key, vars }),
+      copy: (f) => copyPicture(require('electron'), f),
+    });
+    peer.on('t:cam.capture', (m) => { if (m && m.on === false) pp.ended(); });
+    svc.phonePhoto = pp;
+    svc.takePhoto = () => pp.take();
+  }
+  // General › Local API (shared/localapi.js): off unless switched on.
+  {
+    const { LocalApi } = require('../shared/localapi.js');
+    const api = new LocalApi({ dir: app.getPath('userData'), actions: {
+      status: () => ({ connected: !!peer.current, device: peer.current ? peer.current.name : '' }),
+      send: (paths) => svc.fileSend.send(paths),
+      clipboard: (text) => require('electron').clipboard.writeText(text),
+    } });
+    svc.localApi = api;
+    svc.applyLocalApi = () => api.apply(!!settings.app.localApi).catch((e) => console.error('[api] ' + e.message)).then(() => pushState());
+    if (settings.app.localApi) svc.applyLocalApi();
+    app.on('will-quit', () => { api.stop(); });
+  }
   // File Sharing › TwinDesk Drive (shared/drive-host.js, docs/drive.md): nothing of it is loaded until it's on.
   svc.loadDrive = () => svc.drive || (svc.drive = require('../shared/drive-host.js').create({
     settings, save: () => store.saveSettings(settings), me: id.macId, meName: id.macName, userData: app.getPath('userData'),
@@ -739,6 +767,8 @@ app.whenReady().then(() => {
   const { DevCtl } = require('../shared/devctl.js');
   const { DevLocal } = require('../shared/devlocal.js');
   svc.devctl = new DevCtl({
+    watching: () => !!(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()), // Overview may show the other side's controls (shared/devctl.js Looking)
+   
     link: {
       on: (ev, fn) => (ev === 'welcome' ? peer.on('client', fn) : ev === 'closed' ? peer.on('closed', fn) : peer.on('t:' + ev, fn)),
       send: (m) => peer.sendToClient(m),
@@ -752,6 +782,7 @@ app.whenReady().then(() => {
     },
   });
   svc.devctl.on('change', pushState);
+  app.on('browser-window-focus', () => svc.devctl && svc.devctl.look()); // back on screen: a fresh state of the other side now
   // TwinDesk iPhone (shared/iossign.js): TwinDesk for iPhone signed with the person's Apple ID.
   if (!modulesAtStart.includes('iossign')) svc.iosSign = require('../shared/iossign-host.js').create({ // off in General › Modules: not loaded
     app, safeStorage: require('electron').safeStorage,
@@ -1059,7 +1090,7 @@ app.whenReady().then(() => {
   // The system accent colour changed (General › Appearance › System follows it).
   try { systemPreferences.subscribeNotification('AppleColorPreferencesChangedNotification', () => pushState()); } catch {}
   setupWeb();
-  actions = setupIpc({ state, settings, pushState, onLanguage: changeLanguage, onLook: applyLook, t, server: peer, pairing, discovery, link, ...svc, hub: loadHub, login, refreshPermissions, updates });
+  actions = setupIpc({ state, settings, pushState, onLanguage: changeLanguage, onLook: applyLook, t, server: peer, pairing, discovery, link, ...svc, hub: loadHub, login, refreshPermissions, updates, applyRelay });
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'assets', 'trayTemplate.png'))); // "Template": macOS tints it
   hud = new Hud(() => settings);
   hud.keep = () => !!peer.current; // the popup's window lives while a session is on (mac/hud.js)
@@ -1125,6 +1156,7 @@ app.whenReady().then(() => {
   });
   svc.drop.on('batch', (b) => {
     liveDone('recv', b.files ? t(b.files === 1 ? 'Received {count} file' : 'Received {count} files', { count: b.files }) : t('Nothing arrived'), b.files ? t('From {name}', { name: peerLabel() }) : '');
+    if (b.kind === 'send' && svc.phonePhoto && svc.phonePhoto.arrived(b.placed)) return; // Take a photo: copied
     if (svc.rz && svc.rz.received(b)) return; // a document taken here: it opens
     if (b.kind === 'send') hud.show('driven', { key: b.files === 1 ? 'Received {count} file from {name}' : 'Received {count} files from {name}', vars: { count: b.files, name: peer.current ? peer.current.name : { key: 'the other computer' } } });
   });
@@ -1523,3 +1555,9 @@ app.on('before-quit', () => {
   if (link) link.stop();
   if (server) server.close();
 });
+
+// Your own relay (General › Your own relay, shared/relay.js): started, changed or stopped with its setting.
+function applyRelay() {
+  if (!server || !state.fp) return;
+  require('../shared/relay.js').apply({ server, fp: state.fp, relay: settings.net && settings.net.relay, onState: () => pushState() });
+}

@@ -61,6 +61,7 @@ const DEFAULT_SETTINGS = {
     reverseScroll: false,
     linked: true, // mouse and keyboard sharing on (the hotkey's double-tap switches it); synced with the peer
     linkedBy: {}, // The last `linked` per paired device id, restored on connect
+    portalsByPeer: {}, // opt-in directional display-edge portals, stored per paired device
     gestures: true, // Trackpad gestures work on the other computer (synced per pair)
     shakeHome: false, // shake this Mac's mouse while driving: the pointer comes home (the helper's Shake.swift)
     syncPads: false, // every mouse and trackpad moves the one pointer; off: a computer's own takes it back (synced per pair)
@@ -83,7 +84,7 @@ const DEFAULT_SETTINGS = {
   // setupSkipped: the missing items when Setup was skipped; setupDone: Setup has been through once
   // (everything allowed, or skipped), so it never takes over the window again (General shows the rest).
   ui: { tab: 'overview', setupSkipped: '', setupDone: false, language: '', style: 'glass', theme: 'system', accent: '' }, // style/theme/accent: General › Appearance
-  app: { openAtLogin: false, keepAwake: true, hud: true, inputProtocol: 'udp', keepPinging: false }, // inputProtocol: udp = tdv2 input lane, tcp = tdv1 // hud = popup when switching computers
+  app: { openAtLogin: false, keepAwake: true, hud: true, inputProtocol: 'udp', keepPinging: false, localApi: false }, // localApi: General › Local API (shared/localapi.js), off // inputProtocol: udp = tdv2 input lane, tcp = tdv1 // hud = popup when switching computers
   updates: { auto: true, notified: '', skipped: '', install: false }, // check GitHub for new releases; notified = last version announced, skipped = version ignored
   audio: { send: false, receive: false, muteLocal: false, engine: 'helper', volume: 1, phoneMedia: false, micSend: false, micReceive: false, micDevice: '', micOut: '' }, // Independent, both ways; phoneMedia: a phone's media controls on Overview
   rezume: require('../shared/rezume.js').DEFAULTS, // ReZume tab (shared/rezume.js): off until turned on; what goes, which ways, where it shows
@@ -91,6 +92,8 @@ const DEFAULT_SETTINGS = {
   camera: { on: false, share: false, device: '', virtual: false, rotate: 0, target: 'obs' }, // Camera tab (shared/camshare.js): this Mac's camera to the other computer, off until turned on; virtual: the running camera's picture also goes to the virtual camera (shared/vcam.js); rotate: its picture turned clockwise; target: the virtual camera it feeds, 'obs' (OBS Virtual Camera, the default) or 'twindesk'
   terminal: { allowPc: false, connectPc: false }, // the other computer -> this Mac shell; this Mac -> the other one (`ssh twindesk`)
   files: { acceptDrops: false, folder: '', reveal: true, dragEdge: false, // '' = Downloads; dragEdge = drag.policy
+    clipReceived: false, // Put received files on the clipboard (drop.js), off unless switched on
+    outboxHours: 24, // Keep files to send: hours they wait for the other device (shared/outbox.js), 0 = off
     plain: false, // Encrypt file transfers off: plain HTTP for file bytes where both allow it (shared/fastfile.js fxPlain)
     shortcuts: false, copyKeys: 'Control+Alt+C', pasteKeys: 'Control+Alt+V' }, // Copy/paste files
   notifs: { send: false, receive: false, hideText: false, muted: [], style: '', otpCopy: false, quiet: { on: false, from: '22:00', to: '07:00' }, phoneApps: {} }, // style…phoneApps: how a phone's show here (shared/notifrules.js)

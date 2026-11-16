@@ -422,7 +422,8 @@ class PhoneBridge extends EventEmitter {
     const usb = this.wired && this.server.current && this.wired.serialOf(this.server.current.deviceId);
     if (usb && list.some((x) => x.serial === usb && x.state === 'device')) return usb;
     const d = (address && list.find((x) => x.state === 'device' && x.serial.startsWith(`${address}:`)))
-      || (address && list.find((x) => x.state === 'device' && x.serial.includes(address)))
+      // The address as a whole (an IPv6 one in brackets…): 192.168.8.17 isn't 192.168.8.175, another phone (#239).
+      || (address && list.find((x) => x.state === 'device' && new RegExp(`(^|[^0-9a-f.])${address.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9a-f.])`, 'i').test(x.serial)))
       || (process.env.TWINDESK_ADB_SERIAL && list.find((x) => x.serial === process.env.TWINDESK_ADB_SERIAL && x.state === 'device'));
     if (d) return d.serial;
     // Plugged in with a USB cable: the same phone if its Wi-Fi address is the one on the link.
@@ -523,6 +524,7 @@ class PhoneBridge extends EventEmitter {
     });
     await s.start();
     this.control = s;
+    if (!this.clipWatch) this.clipWatch = require('../../shared/clippoll.js').clipWatch(this); // copies a missing listener doesn't report (#257)
     // A session that ended without its hover exit (the Wi-Fi gone, the app quit) left Android a mouse
     // hovering over the status bar or the gesture area: edges and gesture navigation stop answering
     // until the phone restarts. Any hover exit from here clears it.

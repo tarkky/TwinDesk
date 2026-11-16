@@ -9,6 +9,113 @@ switches on only when both sides have it ([how that's decided](docs/capabilities
 Numbers like (#143) are [issues and pull requests](https://github.com/InukaAsith/TwinDesk/issues).
 Everyone who sent code, reported a problem or tested is thanked under their version.
 
+## Next (unreleased)
+
+### New
+
+- **Sound › Only on the computer** (Android, on by default): without wireless debugging, the phone's
+  speaker goes quiet while its sound plays on the computer, and its volume comes back after.
+- **A laptop's battery** on the other computer's page.
+- **Waiting to send:** files sent while the other device isn't connected wait for it and go when it
+  connects. Files › Keep files to send sets how long (1 hour, 1 day, 1 week, or off). On every
+  computer and on Android, phone ↔ computer and computer ↔ computer.
+- **Pause and Resume** a Send files batch: the files that hadn't arrived wait under Waiting to send.
+  If the connection drops in the middle, the rest goes again by itself when it's back, into the same
+  folders.
+- **Phone window side rail** (Mac and Linux; Windows' side panel gets the same): Screenshot (copied,
+  and saved in Pictures › TwinDesk), Record (the picture and the phone's sound, as MP4 in Movies ›
+  TwinDesk; WebM where MP4 can't be made), the volume keys, Rotate, Power and Phone screen off. Its
+  button in the title bar shows or hides it; on Windows it switches the side panel.
+- **Banking pause, gentler** (Android): debugging comes back on by itself a few minutes after you
+  leave the banking app (needs Usage access; Settings › Banking pause › Turn back on after the
+  banking app), and its notice has Turn back on. **Open with banking pause** puts a home-screen
+  shortcut for a banking app that switches debugging off first, then opens it.
+- **Linked with Android** (General): link a computer through Android's own companion device
+  chooser, and Android keeps TwinDesk running and connected in the background, with no battery
+  optimization prompt. **Start TwinDesk when it's near** (off unless switched on, Android 12+):
+  Android watches for the computer over Bluetooth and TwinDesk starts and connects when it shows up.
+- **Open, Email and Call** in Clipboard › Recent: a copied link, email address or phone number gets
+  a button that opens it in the computer's own app (on every computer, and the phone's page in
+  Multi-device).
+- **Put received files on the clipboard** (Files, off unless switched on): files sent to this
+  computer are ready to paste with ⌘V or Ctrl+V.
+- **Take a photo with the phone** (Camera, with an Android phone): the phone's camera opens, and
+  the photo comes to the computer already copied, ready to paste into a document or a chat.
+- **Voice note** (Android, a notification button to choose in General › Notification buttons):
+  records on the phone, and Send puts it on the computer (it waits if the computer isn't
+  connected). A copy stays in Recordings › TwinDesk.
+- **Local API** (General, off unless switched on; Mac, Windows, Linux): your own scripts on this
+  computer can send files and set the clipboard, with a key that changes each start; nothing from
+  a browser ([docs/local-api.md](docs/local-api.md)).
+- **Live Updates on Android 16:** a file transfer's progress shows on the lock screen and as a chip
+  in the status bar, with Pause and Cancel.
+- **Deck › OBS Studio:** record, pause, stream, switch scenes, mute a source, save a replay and
+  turn on the virtual camera, with the tile showing what OBS is doing. Uses OBS's own WebSocket
+  server on the computer.
+- **Auto-rotate** on the phone window's side rail and Windows' side panel: an app window turns with
+  its app (a video in full screen), the phone's screen with the phone; switch it off to keep the
+  window's shape. On Android, the computer's screen and another phone's screen get a side rail too
+  (a tab at the right edge): Auto-rotate and Screenshot.
+- **iPhone and iPad:** the computer's screen gets Auto-rotate and Screenshot (into Photos) in its bar.
+
+- **Cursor portals** (Mac): a stretch of one display's edge leads to a chosen stretch of the other
+  computer's screen, and the pointer comes back through it (#177 by [@pengusto](https://github.com/pengusto)).
+- **Share screen › Capture** (Windows): Original (Chromium, the default), Automatic, Desktop
+  Duplication or Windows Graphics Capture; the pointer is shared at its real size, an enlarged
+  accessibility pointer too (#235 by MOVE).
+- **Several networks** (Windows): with a cable and Wi-Fi (or a VPN) on both computers, Found nearby
+  lists each network, and a paired computer has a Network menu: Automatic or one of them (#236 by MOVE).
+- **Mac with no display** (lid closed, monitor unplugged): screen sharing goes on through a TwinDesk
+  virtual display until a real one is back (#219 by [@alexfoxtm](https://github.com/alexfoxtm), #184).
+
+### Fixes
+
+- **Copy code** no longer takes a card's last digits, a price, an account, order or tracking number,
+  a date, a phone number or a zip, promo or error code for a one-time code.
+- **Phone app windows:** a video in full screen came in landscape into a portrait window, small
+  between bars (#258); an app opened on an asleep phone waited for a picture that never came (#247,
+  #239), and its window has Phone screen off too.
+- **Mac:** Ctrl+Space and Ctrl+Option+Space reach apps on a controlled Mac unless they are its
+  input-source shortcut with two or more sources (#241, #243 by [@hughesyadaddy](https://github.com/hughesyadaddy)).
+- **Multi-device:** moving the pointer to another computer no longer stops the sound playing to a
+  third one, and one computer without cursor sharing no longer blocks the rest (#245, #220, #246 by
+  [@icariantk](https://github.com/icariantk)). Move windows sends a window to the computer the pointer went to, also back to the
+  one driving this one (#250, #251); Monitor 2 follows a computer that starts sharing (#256).
+- **Move windows:** a window brought back returns where it was (Windows Multi-device and Linux,
+  #252); the Apps page says when the other computer's Move windows is off (#253), and that Wayland
+  can't move windows (#249).
+- **Extend to a Linux or Windows viewer** is the viewer's size and shape, portrait too, instead of
+  1920 × 1080 (#254), and Monitor 2 takes the shape of what it shows (#255).
+- **Linux:** the phone's Media page shows what plays without playerctl (MPRIS over D-Bus, #242); on
+  COSMIC the pointer from another computer reaches every monitor (#244); Bluetooth that BlueZ
+  refused once is tried again instead of staying off until a restart.
+- **Android clipboard:** on a phone whose copies didn't reach the computer in the background
+  (Android 17), they do now (#257). A Pixel on the USB cable is no longer asked again and again to
+  turn on wireless debugging (#239).
+- **Phone windows** no longer wait for the picture for good when the computer's video decoder fails
+  on the phone's stream: they switch to software decoding (#233).
+- **Several phones on adb:** one phone's address no longer matches another's that starts the same
+  (192.168.8.17 and 192.168.8.175), so screens, apps and the camera come from the right phone (#239).
+- **The log** can't fill the disk: a line repeated in a loop is written once and counted, and a
+  packaged Linux app started from the menu no longer copies everything to the desktop's own log (#239).
+- **Linux on Wayland** (Hyprland, niri): the log says why a push against the screen's edge didn't cross (#237).
+- **Windows:** a key held while the pointer comes home no longer stays down (#248); the pointer
+  coming home always gets its cursors back (#238).
+- **Android 15 and later:** one-time codes reach Copy code (the phone setup over wireless debugging
+  lets TwinDesk read the codes Android hides).
+- **Passwords copied on an Android phone** (marked sensitive by the password manager) stay on the
+  phone, as the computers' already did.
+- **Idle sessions use less:** a computer no longer reads its volume, Bluetooth and Do not disturb
+  every minute for the whole session (two PowerShell runs a minute on Windows), only while the
+  other computer shows them; and no `adb` process every 2 seconds while a phone is linked.
+- A phone on wireless debugging found by name (`adb-…(2)._adb-tls-connect`) kept its state, and
+  Mount no longer took it for a phone on the USB cable.
+
+### Fixed
+
+- Phone app windows open and resize to a phone-like size (a multiple of 16, no shape past 22:9):
+  some apps, a phone maker's Camera among them, stopped on odd sizes.
+
 ## 3.2.1 (unreleased)
 
 Ideas from [@rahulpatel902](https://github.com/rahulpatel902)'s list of suggestions (#231), in

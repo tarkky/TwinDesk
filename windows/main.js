@@ -163,6 +163,7 @@ let helper = null;
 let terminal = null; // only while Terminal is on (loadTerminal)
 let phoneServer = null; // the phones' session (PhoneLink), for features loaded later
 let fileDrop = null;
+let localApi = null; // General › Local API (shared/localapi.js), made with fileDrop
 let smb = null;
 let apps = null;
 let sound = null;
@@ -274,11 +275,14 @@ function start() {
     pushState();
   });
   clip = new Clip(link, () => settings.clipboard, pushState, { popup: (kind, text) => hud && hud.show(kind, text), peerName });
-  devctl = new DevCtl({ link, local: new DevLocal(), version: app.getVersion(), peerName, adb: () => {
+  devctl = new DevCtl({
+    watching: () => !!(mainWin && !mainWin.isDestroyed() && mainWin.isVisible() && !mainWin.isMinimized()), // Overview may show the other side's controls (shared/devctl.js Looking)
+    link, local: new DevLocal(), version: app.getVersion(), peerName, adb: () => {
     const br = phone && phone.bridge;
     return br && br.state === 'ready' && br.serial ? { adb: br.adb, serial: br.serial } : null;
   } });
   devctl.on('change', pushState);
+  app.on('browser-window-focus', () => devctl && devctl.look()); // back on screen: a fresh state of the other side now
   // TwinDesk iPhone (shared/iossign.js): TwinDesk for iPhone signed with the person's Apple ID.
   if (!modulesAtStart.includes('iossign')) iosSign = require('../shared/iossign-host.js').create({ // off in General › Modules: not loaded
     app, safeStorage: require('electron').safeStorage, link,
@@ -312,7 +316,16 @@ function start() {
   });
   loadTerminal(); // only while it's on
   sshd = new Sshd({ link, settings, save: saveSettings, onChange: pushState });
-  fileDrop = new FileDrop({ link, settings, onProgress: (v) => { screen.sendDropProgress({ ...v, peerName: peerName() }); pushState(); } });
+  fileDrop = new FileDrop({ link, settings, outboxFile: path.join(app.getPath('userData'), 'outbox.json'), peer: () => { const v = link.snapshot().session; return v ? { id: v.id || v.name || '', name: v.name || '' } : null; }, onProgress: (v) => { screen.sendDropProgress({ ...v, peerName: peerName() }); pushState(); } });
+  {
+    const { LocalApi } = require('../shared/localapi.js');
+    localApi = new LocalApi({ dir: app.getPath('userData'), actions: {
+      status: () => ({ connected: link.snapshot().link.state === 'connected', device: link.snapshot().link.state === 'connected' ? peerName() : '' }),
+      send: (paths) => fileDrop.send(paths),
+      clipboard: (text) => require('electron').clipboard.writeText(text),
+    } });
+    if (settings.app.localApi) applyLocalApi();
+  }
   screen.fileDrop = fileDrop;
   apps = new Apps({ link, allowed: () => settings.macApps.on, getLanguage: () => i18n.locale, getMonitor: () => screen.win, popup: (kind, text) => hud && hud.show(kind, text), peerName, onChange: pushState, onWatch: () => screen.policy() });
   screen.apps = apps;
@@ -320,6 +333,7 @@ function start() {
   loadMic();
   smb = new Smb({ link, settings, save: saveSettings, onChange: pushState });
   helper = new Helper();
+  require('../shared/web/pcmedia.js').PcMedia.useHelper((cmd, args) => helper.request(cmd, args, 8000)); // what plays, without PowerShell
   if (require('../shared/edition.js').fullKvm()) require('./fullkvm/manager.js').attach({ helper }); // the Full KVM build: its tab and service (docs/full-kvm.md)
   screen.helper = helper; // Wi-Fi low-latency mode while a screen is shown (Wlan.cs)
   clip.useHelper(helper); // its "clipboard" event: something was copied
@@ -416,6 +430,7 @@ function start() {
   });
   fileRecv.onBatch = (b) => {
     liveDone('recv', b.files ? t(b.files === 1 ? 'Received {count} file' : 'Received {count} files', { count: b.files }) : t('Nothing arrived'), b.files ? t('From {name}', { name: peerName() }) : '');
+    if (b.kind === 'send' && phonePhoto && phonePhoto.arrived(b.placed)) return; // Take a photo: copied
     if (rezume && rezume.received(b)) return; // a document taken here: it opens
     if (b.kind === 'paste') fileClip.pasted(b);
     else if (b.files) hud.show('driven', { key: b.files === 1 ? 'Received {count} file from {name}' : 'Received {count} files from {name}', vars: { count: b.files, name: peerName() } });
@@ -424,6 +439,7 @@ function start() {
   const sender = new Sender(link); // every rtc2 video session we send (screen, app windows)
   sender.on('stats', (_, s) => { screenStats = { codec: s.codec, encoder: s.encoder, at: Date.now() }; }); // Engines in use
   sender.codec = () => settings.pcScreen.codec; // Share screen › Encoder
+  require('./native-screen').setting = () => settings.pcScreen.capture; // Share screen › Capture
   pcScreen = new PcScreen({ link, helper, sender, vdd, settings, inputAllowed: () => kvm.mode === 'home', onChange: pushState, needDriver: () => goTab('pc-mac') });
   pcApps = new PcApps({ link, helper, sender, settings, inputAllowed: () => kvm.mode === 'home', onChange: pushState });
   peerApps = new PeerApps({ link, settings, popup: (kind, text) => hud.show(kind, text), peerName, onChange: pushState });
@@ -455,12 +471,12 @@ function start() {
   // TwinDesk Web (web.js): an iPhone's (or any browser's) own pages here, beside the one session.
   web = require('./web').setupWeb({ deck: (bus) => (loadDeck() ? deck.web(bus) : null), settings: () => settings, save: saveSettings, pushState, t, device: () => device, helper, smb, notifs, fileClip, vdd, pcScreen,
     kvm: () => kvm, devctl: () => devctl, loadVcam });
-  const ipc = setupIpc({ loadDrive, getDrive: () => drive, history: (r) => historyKeeper && historyKeeper.act(r), deck: () => loadDeck(), clearFiles: () => { fileDrop.last = null; if (fileRecv) fileRecv.last = null; if (kvm && kvm.dragRecv) kvm.dragRecv.last = null; pushState(); }, // Files › Recent › Clear: only the list
+  const ipc = setupIpc({ takePhoto: () => !!phonePhoto && phonePhoto.take(), loadDrive, getDrive: () => drive, history: (r) => historyKeeper && historyKeeper.act(r), deck: () => loadDeck(), clearFiles: () => { fileDrop.last = null; if (fileRecv) fileRecv.last = null; if (kvm && kvm.dragRecv) kvm.dragRecv.last = null; pushState(); }, // Files › Recent › Clear: only the list
     iosSign: () => iosSign, devctl: () => devctl, chats: () => chats, explorer: () => explorer, qrPair: qrPairView, adbQr: adbQrDo, link, discovery, screen, clip, kvm, sshd, fileDrop, smb, apps, sound, pcScreen, pcApps, peerApps, vdd, notifs, fileClip, wake, updates, settings, save: saveSettings, push: pushState, buildState,
     get rezume() { return rezume; }, loadReZume,
     get phone() { return phone; }, get phoneViews() { return phoneViews; }, get camShare() { return camShare; }, get vcam() { return vcam; }, get phoneRemote() { return phoneRemote; }, get nowPlaying() { return nowPlaying; }, get btAudio() { return btAudio; }, get phoneDrive() { return phoneDrive; }, get terminal() { return terminal; }, loadRemote, setCamera, loadNowPlaying, loadBtAudio, loadMic, loadTerminal, connectPhoneDev, cancelPhoneInvite, hub: loadHub,
     get net() { return net; }, applyNet, joinHotspot,
-    checkFirewall, fixFirewall, setStartup, onApp: updateTray, onLanguage: changeLanguage, onLook: () => Look.applyTheme(nativeTheme, settings.ui.theme) });
+    checkFirewall, fixFirewall, setStartup, onApp: () => { updateTray(); applyLocalApi(); }, onLanguage: changeLanguage, onLook: () => Look.applyTheme(nativeTheme, settings.ui.theme) });
   Look.applyTheme(nativeTheme, settings.ui.theme);
   systemPreferences.on('accent-color-changed', () => pushState());
   pairSync = new PairSync({ link, settings, save: saveSettings, set: ipc.set }); // Two-way switches per pair
@@ -499,6 +515,7 @@ async function startHost(guest) {
     pairing.on('request', showMain); // a code to compare: bring the window up
     link.attachHost(server, pairing);
     hostServer = server;
+    applyNet(); // your own relay, now that there's a server to hand its connections to
     bleHost = new BleHost({
       helper, server,
       info: () => ({ id: device.id, name: device.name.slice(0, 40), os: P.OS.WIN, port: server.port, fp: id.fp }),
@@ -529,6 +546,16 @@ async function startHost(guest) {
 // screen and apps in windows here (phoneview.js).
 function startPhone(server, pairing) {
   const pl = new PhoneLink(link, server);
+  {
+    const { PhonePhoto, copyPicture } = require('../shared/phonephoto.js');
+    phonePhoto = new PhonePhoto({
+      send: (m) => pl.sendToClient(m),
+      phoneOn: () => !!(pl.current && pl.current.os === P.OS.ANDROID),
+      popup: (key, vars) => hud && hud.show('driven', { key, vars }),
+      copy: (f) => copyPicture(require('electron'), f),
+    });
+    pl.on('t:cam.capture', (m) => { if (m && m.on === false) phonePhoto.ended(); });
+  }
   phone = new Phone({ server: pl, raw: server, discovery, pairing });
   setupHub(pl);
   phone.on('change', pushState);
@@ -613,6 +640,7 @@ function startPhone(server, pairing) {
 // listener, nothing sent to the phone. The call window (shared/callwin.js) only with a call.
 let hub = null;
 let phoneLink = null; // phone-link.js, the phone's session (startPhone)
+let phonePhoto = null; // Camera › Take a photo with the phone (shared/phonephoto.js), made in startPhone
 let callwin = null;
 // Features loaded only while their switch is on: made (and applied) when it's first turned on.
 // Audio › Media controls: what plays on the phone.
@@ -1013,6 +1041,8 @@ function applyQuiet(off) {
 
 // Bluetooth on or off (General), or the helper restarted.
 function applyNet() {
+  // Your own relay (shared/relay.js): started, changed or stopped with its setting.
+  if (hostServer) require('../shared/relay.js').apply({ server: hostServer, fp: discovery && discovery.self && discovery.self.fp, relay: settings.net.relay, onState: () => pushState() });
   if (!settings.net.bleWifiOff || settings.net.bleInput) applyQuiet(false);
   if (bleHost) bleHost.apply();
   if (bleGuest && !settings.net.blePc) bleGuest.scan(false);
@@ -1240,6 +1270,12 @@ function enginesView() {
   });
 }
 
+// General › Local API switched (setApp → onApp).
+function applyLocalApi() {
+  if (!localApi) return;
+  localApi.apply(!!settings.app.localApi).catch((e) => console.error('[api] ' + e.message)).then(() => pushState());
+}
+
 function buildState() {
   const miss = missing();
   return {
@@ -1275,6 +1311,7 @@ function buildState() {
     version: app.getVersion(),
     about: about || (about = aboutInfo(app)), // About page: this app and this computer
     updates: updates ? updates.view : null,
+    localApi: localApi ? localApi.view() : null,
     firewall: fw,
     audio: { ...settings.audio, ...sound.view(), mic: mic ? mic.view() : null },
     pcScreen: pcScreen.view(),
@@ -1297,7 +1334,7 @@ function buildState() {
     drive: drive ? drive.view() : { on: false, folder: settings.drive.folder || path.join(os.homedir(), 'TwinDesk Drive'), custom: !!settings.drive.folder },
     // Calls, Messages and Photos: the settings alone until the hub is loaded (setupHub).
     hub: hub ? hub.view : { ...settings.hub, connected: false },
-    net: { ...(net ? net.view : {}), ...hotspotView(), location: !!wifi && wifi.refusedLocation, ble: settings.net.ble, blePc: settings.net.blePc, bleWifiOff: settings.net.bleWifiOff, bleOff, radio: bleHost ? bleHost.state : bleGuest ? bleGuest.state : 'off', transport: link.current ? link.current.transport : '', lan: lanType(link.current && link.current.address), tailscale: settings.net.tailscale !== false, tailnet: require('../shared/tailnet.js').mine(), bleInput: settings.net.bleInput === true },
+    net: { ...(net ? net.view : {}), relay: { ...require('../shared/relay.js').clean(settings.net.relay), ...require('../shared/relay.js').view() }, ...hotspotView(), location: !!wifi && wifi.refusedLocation, ble: settings.net.ble, blePc: settings.net.blePc, bleWifiOff: settings.net.bleWifiOff, bleOff, radio: bleHost ? bleHost.state : bleGuest ? bleGuest.state : 'off', transport: link.current ? link.current.transport : '', lan: lanType(link.current && link.current.address), tailscale: settings.net.tailscale !== false, tailnet: require('../shared/tailnet.js').mine(), bleInput: settings.net.bleInput === true },
   };
 }
 
@@ -1586,6 +1623,7 @@ function loadMic() {
 }
 
 app.on('before-quit', () => {
+  if (localApi) localApi.stop();
   if (web) web.shutdown();
   if (mic) mic.shutdown();
   quitting = true;

@@ -23,6 +23,7 @@ const iosusb = require('./iosusb.js'); // an iPhone's screen over its cable
 const { uhidKey } = require('../shared/uhidkbd.js');
 const { KeyState, ANDROID } = require('./android-keys');
 const chat = require('../shared/phonechat.js');
+const { MirrorSave } = require('../shared/mirror-save.js');
 const { DockStub, addToDock } = require('./dockstub');
 
 const T = P.T;
@@ -72,8 +73,15 @@ class PhoneViews extends EventEmitter {
     });
     bridge.on('change', () => this._openNotified());
     server.on('closed', () => { this.notified = null; });
+    // The side rail's Screenshot and Record (shared/mirror-rail.js): copied and saved here.
+    this.saver = new MirrorSave({
+      electron: require('electron'),
+      popup: (key, vars) => this.bridge.emit('popup', 'away', { key, vars }),
+      name: () => (this.server.current && this.server.current.name) || this._i18n().t('Phone'),
+    });
     ipcMain.on('phoneview:in', (e, m) => {
       const v = [...this.views.values()].find((x) => x.win && !x.win.isDestroyed() && x.win.webContents === e.sender);
+      if (v && this.saver.handle(v.id, m)) return;
       if (v && m && typeof m === 'object') this._input(v, m);
     });
     // Files dropped on a phone window go to the phone (its Downloads).
@@ -279,7 +287,8 @@ class PhoneViews extends EventEmitter {
     // At least 2 pixels per point (sharp at 100% scaling); the dpi keeps 1 dp = 1 point, so the
     // app's text is as big as this computer's. The window's resizes use the same rule.
     const scale = Math.max(2, screen.getPrimaryDisplay().scaleFactor || 1);
-    const newDisplay = `${Math.round(w * scale)}x${Math.round((h - 32) * scale)}/${Math.round(160 * scale)}`;
+    const [dw, dh] = require('../shared/appsize.js').appSize(w * scale, (h - 32) * scale); // a phone-like size (shared/appsize.js)
+    const newDisplay = `${dw}x${dh}/${Math.round(160 * scale)}`;
     this._open({ kind: 'app', app: pkg, title: name || pkg, width: w, height: h, opts: this.bridge.sessionOpts('app', { newDisplay }) });
   }
 
@@ -387,6 +396,7 @@ class PhoneViews extends EventEmitter {
         try { v.session.setDisplayPower(true); } catch {}
       }
       if (v.session) v.session.stop();
+      this.saver.closed(id); // a recording keeps what it has
       this.views.delete(id);
       this._stubs();
       this.emit('change');
@@ -414,7 +424,10 @@ class PhoneViews extends EventEmitter {
     s.on('size', (size) => {
       v.size = size;
       this._send(v, 'phoneview:size', size);
-      if ((v.kind === 'screen' || v.kind === 'camera') && v.win && !v.win.isDestroyed()) v.win.setAspectRatio(size.width / size.height);
+      const auto = require('../shared/appturn.js').autoRotate(this.getSettings());
+      if (v.kind === 'app') require('../shared/appturn.js').appSized(v, size, auto); // the app turned its display round (#258)
+      else if ((v.kind === 'camera' || auto || !v.shaped) && v.win && !v.win.isDestroyed()) v.win.setAspectRatio(size.width / size.height); // Auto-rotate off: the window keeps its shape
+      v.shaped = true;
     });
     s.on('video', (p) => this._send(v, 'phoneview:video', p));
     s.on('audio', (p) => !p.config && this._send(v, 'phoneview:audio', p.data));
@@ -427,6 +440,9 @@ class PhoneViews extends EventEmitter {
       }
     });
     await s.start();
+    // An app window on an asleep phone waited for a picture that never came (#247, #239): the phone
+    // wakes first (a phone that's awake ignores it), so its new display draws.
+    if (v.app && !v.native) s.tap(ANDROID.WAKEUP);
     if (v.app) setTimeout(() => s.startApp(v.app), 300);
     this._send(v, 'phoneview:status', { ready: true, via });
   }
@@ -434,7 +450,7 @@ class PhoneViews extends EventEmitter {
   // The window's switches as they are now (its buttons light up).
   _opts(v) {
     const ph = this.getSettings().phone || {};
-    return { enterSends: ph.enterSends !== false, arrowSwipe: ph.arrowSwipe === true, screenOff: !!v.screenOff, pinned: !!(v.win && !v.win.isDestroyed() && v.win.isAlwaysOnTop()) };
+    return { enterSends: ph.enterSends !== false, autoRotate: ph.autoRotate !== false, arrowSwipe: ph.arrowSwipe === true, screenOff: !!v.screenOff, pinned: !!(v.win && !v.win.isDestroyed() && v.win.isAlwaysOnTop()) };
   }
 
   // Return sends / Arrow keys swipe changed (here, or on the Phone page): every window shows it.
@@ -477,9 +493,9 @@ class PhoneViews extends EventEmitter {
       v.win.setAlwaysOnTop(on, 'floating');
       return this._send(v, 'phoneview:opts', { pinned: on });
     }
-    if (m.t === 'toggle' && (m.what === 'enterSends' || m.what === 'arrowSwipe')) {
+    if (m.t === 'toggle' && (m.what === 'enterSends' || m.what === 'arrowSwipe' || m.what === 'autoRotate')) {
       const ph = this.getSettings().phone;
-      ph[m.what] = m.what === 'enterSends' ? ph.enterSends === false : ph.arrowSwipe !== true;
+      ph[m.what] = m.what === 'arrowSwipe' ? ph.arrowSwipe !== true : ph[m.what] === false; // the others are on unless switched off
       this.bridge.emit('save');
       this.applyOpts();
       return this.emit('change');
@@ -511,12 +527,12 @@ class PhoneViews extends EventEmitter {
         break;
       }
       case 'nav': {
-        const k = { back: ANDROID.BACK, home: ANDROID.HOME, recents: ANDROID.APP_SWITCH, power: ANDROID.POWER }[m.key];
+        const k = { back: ANDROID.BACK, home: ANDROID.HOME, recents: ANDROID.APP_SWITCH, power: ANDROID.POWER, volumeUp: ANDROID.VOLUME_UP, volumeDown: ANDROID.VOLUME_DOWN }[m.key];
         if (m.key === 'back') { s.backOrScreenOn(ACTION.DOWN); s.backOrScreenOn(ACTION.UP); } else if (k) s.tap(k);
         if (m.key === 'notifications') s.simple(TYPE.EXPAND_NOTIFICATIONS);
         if (m.key === 'rotate') s.simple(TYPE.ROTATE);
         // The phone's own screen off, its picture still here (scrcpy's display power).
-        if (m.key === 'screenPower' && v.kind === 'screen' && !v.native) {
+        if (m.key === 'screenPower' && (v.kind === 'screen' || v.kind === 'app') && !v.native) { // an app window too: its app runs with the phone dark (#247)
           v.screenOff = !v.screenOff;
           s.setDisplayPower(!v.screenOff);
           this._send(v, 'phoneview:opts', { screenOff: v.screenOff });
@@ -541,7 +557,7 @@ class PhoneViews extends EventEmitter {
         break;
       }
       case 'resize': // an app window changed size: its virtual display follows (flex)
-        if (v.kind === 'app' && m.w > 50 && m.h > 50) s.resizeDisplay(Math.round(m.w), Math.round(m.h));
+        if (v.kind === 'app' && m.w > 50 && m.h > 50) s.resizeDisplay(...require('../shared/appturn.js').appResized(v, m)); // a phone-like size (shared/appsize.js), swapped back while the app has it turned (#258)
         break;
       case 'swipe':
         if (typeof m.dir === 'string') this._swipe(v, m.dir);

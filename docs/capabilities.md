@@ -57,6 +57,13 @@ session, naming the feature.
 A device that sends no `app` at all is older than 2.5, and the app can't tell which features it
 lacks, so it shows only that it's older.
 
+## Lighter Overview controls (dev.state)
+
+| Field | Sent in | Meaning | An app without it |
+|---|---|---|---|
+| `battery`, `charging` | `dev.state` (a computer's) | A laptop's battery, shown on its page on the other computer (read with the rest of the state, so only while that page may be looked at) | no battery shown |
+| `asks: 1` | `dev.state` | This computer asks for the other side's controls (`ask: true`) while its window is on screen, at once and every minute. The other side then reads its own volume, Bluetooth and Do not disturb only while asked in the last 2½ minutes, not every minute of the session (`shared/devctl.js`) | the other side reads them every minute, as before |
+
 ## Features that say hello on their own
 
 Some features don't wait for hello and welcome. They send their own first message once switched on,
@@ -93,6 +100,7 @@ all of them, and an older iPhone has no `messages`, `fs` or `sound`.
 | Message | Fields | Used for |
 |---|---|---|
 | `net.caps` | `host`, `join`, `hotspot`, `band5` | Which side can host a Wi-Fi Direct group or a hotspot, and whether it joins 5 GHz, when a Bluetooth session needs more bandwidth (`shared/netlink.js`) |
+| `deck.state` (ask) | `obs: true` | An OBS tile's editor wants OBS Studio's scenes and sources; the answer's `state.obs` is `{on, record, paused, stream, vcam, scene, scenes, inputs}` or `{on: false, why}`. Sent without the ask only when a tile uses OBS. A computer without OBS tiles ignores it |
 | `deck.layout` | `can`, `caps` | Which Deck actions this computer can run, so the phone's tile editor offers only those |
 
 ## Per-device pages

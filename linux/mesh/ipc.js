@@ -157,6 +157,11 @@ function setupIpc(ctx) {
   handle('setMonitor', (partial) => change('monitor', partial, () => { screen.applyAudio(); pcScreen.apply(); })); // apply(): Playback › Steady takes a new session (pcscreen.js)
   handle('setClipboard', (partial) => change('clipboard', partial, () => clip.applySettings()));
   handle('copyHistory', (index) => clip.copyHistory(Number(index)));
+  handle('openClip', (index) => { // Recent's Open / Email / Call (shared/clipact.js): from the app's own copy
+    const h = (clip.history || [])[Number(index)];
+    const a = h && !h.image && require('../../shared/clipact.js').of(h.text);
+    if (a) shell.openExternal(a.url);
+  });
   handle('clearHistory', () => clip.clearHistory());
   handle('setTab', (tab) => change('ui', { tab }));
   handle('setChats', (on) => { change('ui', { chats: on === true }); if (ctx.chats && ctx.chats()) ctx.chats().sync(); }); // Messages: WhatsApp, Telegram and Instagram there too
@@ -191,7 +196,7 @@ function setupIpc(ctx) {
   handle('setFiles', (partial) => {
     // shareOn/shareFolder only change through share()/unshare()
     const p = partial && typeof partial === 'object' ? { dropToMac: partial.dropToMac, mountMac: partial.mountMac, acceptFromMac: partial.acceptFromMac, edgeDrag: partial.edgeDrag,
-      shortcuts: partial.shortcuts, copyKeys: partial.copyKeys, pasteKeys: partial.pasteKeys } : {};
+      shortcuts: partial.shortcuts, copyKeys: partial.copyKeys, pasteKeys: partial.pasteKeys, outboxHours: [0, 1, 24, 168].includes(partial.outboxHours) ? partial.outboxHours : undefined, clipReceived: typeof partial.clipReceived === 'boolean' ? partial.clipReceived : undefined } : {};
     Object.keys(p).forEach((k) => p[k] === undefined && delete p[k]);
     change('files', p, () => { smb.applyMount(); kvm.applyConfig(); fileClip.apply(); });
   });
@@ -234,7 +239,7 @@ function setupIpc(ctx) {
   // Send files (paths from the drop zone or Choose…), notifications.
   const sendFiles = (paths) => {
     const list = (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && path.isAbsolute(p)).slice(0, 1000);
-    if (list.length) fileDrop.sendBatch(list, 'send');
+    if (list.length) fileDrop.send(list); // now, or when the device is back (shared/outbox.js)
   };
   handle('sendFiles', sendFiles);
   handle('chooseSendFiles', async () => {
@@ -250,6 +255,9 @@ function setupIpc(ctx) {
   });
   handle('muteNotifApp', (arg) => arg && typeof arg.app === 'string' && notifs.setMuted(arg.app.slice(0, 300), arg.muted === true));
   handle('cancelDrop', () => fileDrop.cancel());
+  handle('pauseSend', (batch) => typeof batch === 'string' && fileDrop.pause(batch));
+  handle('resumeSend', (id) => typeof id === 'string' && fileDrop.resume(id));
+  handle('forgetSend', (id) => typeof id === 'string' && fileDrop.forget(id));
   handle('clearFiles', () => ctx.clearFiles && ctx.clearFiles());
   handle('setPcScreen', (partial) => {
     const size = settings.pcScreen.extendSize;
@@ -315,7 +323,7 @@ function setupIpc(ctx) {
     return r.canceled || !r.filePaths.length ? '' : r.filePaths[0];
   });
   handle('deckRun', (a) => { const d = ctx.deck && ctx.deck(); return d && a && typeof a === 'object' ? d.exec(a).then(() => ({ ok: true }), (e) => ({ ok: false, why: e.message })) : { ok: false }; }); // Try
-  handle('deckState', () => { const d = ctx.deck && ctx.deck(); return d ? d.state().catch(() => ({})) : {}; }); // sound devices, Bluetooth devices, displays
+  handle('deckState', (o) => { const d = ctx.deck && ctx.deck(); return d ? d.state(false, o === 'mix').catch(() => ({})) : {}; }); // sound devices, Bluetooth devices, displays
   // Remote tab: each phone's Remote page here (shared/perphone.js phoneRemote).
   handle('setRemote', (m) => {
     if (!m || typeof m !== 'object') return;
