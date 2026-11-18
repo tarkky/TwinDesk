@@ -139,6 +139,7 @@ class PhoneHub extends EventEmitter {
 
   // A phone's session started (or this was loaded while one is connected).
   started() {
+    this.emit('unasked'); // a new connection does not keep the previous Save
     this.state = null;
     this.call = null;
     this.unread = 0;
@@ -149,6 +150,7 @@ class PhoneHub extends EventEmitter {
   }
 
   stopped() {
+    this.emit('unasked'); // Stop: the Save's files may no longer arrive on this session
     if (this.share) this.share.stopped();
     const had = this.call;
     this.state = null;
@@ -327,7 +329,9 @@ class PhoneHub extends EventEmitter {
     }
     // Photos › Save, Files › Save: the files come back as an ordinary Send (file.offer, drop 'send'),
     // taken even with Take files from {name} off, since they were asked for here (#239: stuck at 0%).
-    if (out.t === T.MEDIA_SAVE || out.t === T.FS_SAVE) this.emit('asked');
+    // The session goes with it. Mac allows that connection's one Send (shared/asked-send.js).
+    // Windows and Linux keep their own short window and ignore the session.
+    if (out.t === T.MEDIA_SAVE || out.t === T.FS_SAVE) this.emit('asked', this.phone);
     this.server.sendToClient(out);
   }
 
@@ -388,6 +392,7 @@ class PhoneHub extends EventEmitter {
         held: !!m.held,
         silenced: !!m.silenced,
         can: Array.isArray(m.can) ? m.can.filter((x) => ['hold', 'dtmf', 'silence'].includes(x)) : [], // an older phone app: none
+        app: str(m.app, 60), // a call in an app (WhatsApp, Instagram…): its name; '' for the phone line
       };
     }
     // A call under way with the hands-free link up: its sound comes here (the phone may keep it
@@ -474,6 +479,7 @@ class PhoneHub extends EventEmitter {
   // dropped (TwinDesk's own LE link fails on those), and this computer's Bluetooth settings open to
   // pair them again. The phone hears first: over Bluetooth LE the session may go with the pairing.
   forget(fromPhone) {
+    this.emit('unasked'); // Forget: drop the Save exception even when this computer has no call audio
     if (!this.audio) return;
     if (!fromPhone && this.phone) this.server.sendToClient({ t: T.HUB_BT, address: this.audio.view.address || '', unpair: true });
     if (this.audio.unpair) this.audio.unpair();
